@@ -9,7 +9,7 @@ import type { Hole } from '@shared/courses';
 import { parseHole } from '@shared/mapformat';
 import { type BallState, TICK_HZ, geomOf, newEvents, shotVelocity, stepBall } from '@shared/physics';
 import {
-  COLORS, DATABASE_NAME, EMOTES, EV, L_FINISHED, L_OPEN, L_RUNNING, MAX_PLAYERS,
+  COLORS, DATABASE_NAME, EMOTES, EV, L_FINISHED, L_OPEN, L_RUNNING, MAX_PLAYERS, POWER_MULS,
   PH_FINAL, PH_INTRO, PH_PLAY, PH_RESULTS, SPACETIMEDB_URI,
 } from './config';
 import {
@@ -240,7 +240,7 @@ const charOf = (p: Player): Character => CHARACTERS[p.characterId] ?? CHARACTERS
 // ---------------------------------------------------------------------------
 // Flow state
 // ---------------------------------------------------------------------------
-type Intent = 'create' | 'solo' | 'join' | 'change' | 'setchar' | null;
+type Intent = 'create' | 'join' | 'change' | 'setchar' | null;
 let intent: Intent = null;
 let joinCode = '';
 let selectedChar = Number(store.get('dg_char') ?? 0) || 0;
@@ -251,8 +251,10 @@ let rules = {
   maxStrokes: Number(store.get('dg_strokes') ?? 10) || 10,
   holeSecs: Number(store.get('dg_time') ?? 90) || 90,
   collisions: (store.get('dg_collide') ?? '1') === '1',
+  waterPenalty: (store.get('dg_water') ?? '1') === '1',
+  powerMul: Number(store.get('dg_power') ?? 100) || 100,
 };
-let soloAutoStarted = false;
+const saveRules = () => { store.set('dg_strokes', String(rules.maxStrokes)); store.set('dg_time', String(rules.holeSecs)); store.set('dg_collide', rules.collisions ? '1' : '0'); store.set('dg_water', rules.waterPenalty ? '1' : '0'); store.set('dg_power', String(rules.powerMul)); };
 let pendingJoin: string | null = null;
 {
   const code = new URLSearchParams(location.search).get('lobby');
@@ -280,14 +282,13 @@ function route() {
   if (!p) return;
   const lobby = myLobby();
   if (!lobby) {
-    if (intent === 'join' || intent === 'create' || intent === 'solo' || intent === 'setchar') {
+    if (intent === 'join' || intent === 'create' || intent === 'setchar') {
       if (overlayTarget === 'select-player' || overlayTarget === 'select-course') return;
     }
     if (overlayTarget !== 'menu') showOverlay('menu'); else renderMenu();
     return;
   }
   if (lobby.status === L_OPEN) {
-    if (intent === 'solo' && !soloAutoStarted && lobby.hostId.isEqual(p.identity)) { soloAutoStarted = true; rd().startGame({}); }
     if (intent === 'change' && overlayTarget === 'select-course') return;
     if (overlayTarget !== 'waiting') showOverlay('waiting'); else renderRoom();
     return;
@@ -360,7 +361,6 @@ function startJoin(code: string) {
   showOverlay('select-player');
 }
 $('create-btn').onclick = () => { unlockAudio(); intent = 'create'; showOverlay('select-player'); };
-$('solo-btn').onclick = () => { unlockAudio(); intent = 'solo'; showOverlay('select-player'); };
 $('join-btn').onclick = () => startJoin(($('code-input') as HTMLInputElement).value.trim().toUpperCase());
 $('code-input').addEventListener('keydown', e => { if (e.key === 'Enter') $('join-btn').click(); });
 $('code-input').addEventListener('input', () => $('code-input').classList.remove('bad'));
@@ -428,7 +428,7 @@ function renderCourseGrid(force = false) {
   const rows = coursesFor(courseTab);
   // rebuild only when something visible changed — a rebuild restarts the
   // cards' entrance animation, and hole rows trickle in one by one
-  const sig = [courseTab, String(selectedCourse), intent, rules.isPublic, rules.maxStrokes, rules.holeSecs, rules.collisions,
+  const sig = [courseTab, String(selectedCourse), intent, JSON.stringify(rules),
     ...rows.map(c => `${c.id}:${c.rev}:${c.plays}:${holeRows(c.id).length > 0 ? 1 : 0}`)].join('|');
   if (!force && sig === courseGridSig) return;
   courseGridSig = sig;
@@ -455,9 +455,9 @@ function renderCourseGrid(force = false) {
     } else if (rows.indexOf(c) < 6) subscribeCourse(c.id);
   }
   staggerChildren(grid);
-  $('visibility-section').classList.toggle('hidden', intent === 'solo' || intent === 'change');
+  $('mode-options').classList.toggle('hidden', intent === 'change');
   document.querySelectorAll('#visibility-grid .sel-card').forEach(b => b.classList.toggle('selected', ((b as HTMLElement).dataset.vis === '1') === rules.isPublic));
-  $('rules-summary').textContent = `MAX ${rules.maxStrokes} STROKES · ${rules.holeSecs} S PER HOLE · COLLISIONS ${rules.collisions ? 'ON' : 'OFF'}`;
+  renderRuleSegs();
   ($('course-confirm') as HTMLButtonElement).disabled = selectedCourse === null;
 }
 document.querySelectorAll('#course-tabs .sel-card').forEach(b => { (b as HTMLButtonElement).onclick = () => { courseTab = (b as HTMLElement).dataset.tab as any; selectedCourse = null; renderCourseGrid(true); }; });
@@ -468,13 +468,12 @@ $('course-confirm').onclick = () => {
   sfx.ui();
   if (intent === 'change') {
     const l = myLobby();
-    if (l) rd().setSettings({ courseId: selectedCourse, isPublic: l.isPublic, maxStrokes: l.maxStrokes, holeSecs: l.holeSecs, collisions: l.collisions });
+    if (l) rd().setSettings({ courseId: selectedCourse, isPublic: l.isPublic, maxStrokes: l.maxStrokes, holeSecs: l.holeSecs, collisions: l.collisions, waterPenalty: l.waterPenalty, powerMul: l.powerMul });
     intent = null;
     showOverlay('waiting');
     return;
   }
-  soloAutoStarted = false;
-  rd().createLobby({ courseId: selectedCourse, isPublic: intent === 'solo' ? false : rules.isPublic, maxStrokes: rules.maxStrokes, holeSecs: rules.holeSecs, collisions: rules.collisions });
+  rd().createLobby({ courseId: selectedCourse, isPublic: rules.isPublic, maxStrokes: rules.maxStrokes, holeSecs: rules.holeSecs, collisions: rules.collisions, waterPenalty: rules.waterPenalty, powerMul: rules.powerMul });
 };
 
 // rules modal (shared by the course screen and the host's lobby)
@@ -490,20 +489,14 @@ function seg(container: HTMLElement, opts: { label: string; value: any; selected
     container.appendChild(b);
   }
 }
-let rulesTarget: 'flow' | 'host' = 'flow';
-function renderRulesModal() {
-  const l = rulesTarget === 'host' ? myLobby() : undefined;
-  const cur = l ? { maxStrokes: l.maxStrokes, holeSecs: l.holeSecs, collisions: l.collisions } : rules;
-  const apply = (patch: Partial<typeof rules>) => {
-    if (l) rd().setSettings({ courseId: l.courseId, isPublic: l.isPublic, maxStrokes: patch.maxStrokes ?? l.maxStrokes, holeSecs: patch.holeSecs ?? l.holeSecs, collisions: patch.collisions ?? l.collisions });
-    else { Object.assign(rules, patch); store.set('dg_strokes', String(rules.maxStrokes)); store.set('dg_time', String(rules.holeSecs)); store.set('dg_collide', rules.collisions ? '1' : '0'); renderCourseGrid(); renderRulesModal(); }
-  };
-  seg($('strokes-grid'), STROKE_OPTS.map(v => ({ label: String(v), value: v, selected: cur.maxStrokes === v })), v => apply({ maxStrokes: v }));
-  seg($('time-grid'), TIME_OPTS.map(([v, label]) => ({ label, value: v, selected: cur.holeSecs === v })), v => apply({ holeSecs: v }));
-  seg($('collide-grid'), [{ label: 'ON', value: true, selected: cur.collisions, sub: 'BALLS BUMP' }, { label: 'OFF', value: false, selected: !cur.collisions, sub: 'GHOST BALLS' }], v => apply({ collisions: v }));
+function renderRuleSegs() {
+  const apply = (patch: Partial<typeof rules>) => { Object.assign(rules, patch); saveRules(); renderCourseGrid(); };
+  seg($('strokes-grid'), STROKE_OPTS.map(v => ({ label: String(v), value: v, selected: rules.maxStrokes === v })), v => apply({ maxStrokes: v }));
+  seg($('time-grid'), TIME_OPTS.map(([v, label]) => ({ label, value: v, selected: rules.holeSecs === v })), v => apply({ holeSecs: v }));
+  seg($('collide-grid'), [{ label: 'ON', value: true, selected: rules.collisions, sub: 'BALLS BUMP' }, { label: 'OFF', value: false, selected: !rules.collisions, sub: 'GHOST BALLS' }], v => apply({ collisions: v }));
+  seg($('water-grid'), [{ label: '+1 STROKE', value: true, selected: rules.waterPenalty, sub: 'CLASSIC' }, { label: 'FREE', value: false, selected: !rules.waterPenalty, sub: 'JUST RESET' }], v => apply({ waterPenalty: v }));
+  seg($('power-grid'), POWER_MULS.map(([v, label]) => ({ label, value: v, selected: rules.powerMul === v, sub: `${v}%` })), v => apply({ powerMul: v }));
 }
-$('rules-open').onclick = () => { rulesTarget = 'flow'; renderRulesModal(); modal('rules-modal', true); };
-$('rules-close').onclick = () => modal('rules-modal', false);
 
 // ---------------------------------------------------------------------------
 // Lobby (waiting room)
@@ -522,7 +515,8 @@ function renderRoom() {
   const pills = [
     ['COURSE', lobby.courseName], ['HOLES', String(lobby.holeCount)], ['PAR', String(course?.totalPar ?? '?')],
     ['BY', course?.authorName ?? '?'], ['MAX', `${lobby.maxStrokes} STROKES`], ['TIME', `${lobby.holeSecs} S / HOLE`],
-    ['COLLISIONS', lobby.collisions ? 'ON' : 'OFF'],
+    ['COLLISIONS', lobby.collisions ? 'ON' : 'OFF'], ['WATER', lobby.waterPenalty ? '+1 STROKE' : 'FREE RESET'],
+    ['POWER', POWER_MULS.find(([v]) => v === lobby.powerMul)?.[1] ?? 'NORMAL'],
   ];
   $('lobby-info').innerHTML = pills.map(([k, v]) => `<span class="info-pill">${k} <span class="v">${esc(v)}</span></span>`).join('');
   staggerChildren($('lobby-info'));
@@ -538,14 +532,16 @@ function renderRoom() {
         row.appendChild(b);
       }
     };
-    const set = (patch: Partial<{ maxStrokes: number; holeSecs: number; collisions: boolean; isPublic: boolean }>) =>
-      rd().setSettings({ courseId: lobby.courseId, isPublic: patch.isPublic ?? lobby.isPublic, maxStrokes: patch.maxStrokes ?? lobby.maxStrokes, holeSecs: patch.holeSecs ?? lobby.holeSecs, collisions: patch.collisions ?? lobby.collisions });
+    const set = (patch: Partial<{ maxStrokes: number; holeSecs: number; collisions: boolean; isPublic: boolean; waterPenalty: boolean; powerMul: number }>) =>
+      rd().setSettings({ courseId: lobby.courseId, isPublic: patch.isPublic ?? lobby.isPublic, maxStrokes: patch.maxStrokes ?? lobby.maxStrokes, holeSecs: patch.holeSecs ?? lobby.holeSecs, collisions: patch.collisions ?? lobby.collisions, waterPenalty: patch.waterPenalty ?? lobby.waterPenalty, powerMul: patch.powerMul ?? lobby.powerMul });
     rowBtns($('host-strokes'), STROKE_OPTS.map(v => ({ label: String(v), on: lobby.maxStrokes === v, pick: () => set({ maxStrokes: v }) })));
     rowBtns($('host-time'), TIME_OPTS.map(([v, label]) => ({ label, on: lobby.holeSecs === v, pick: () => set({ holeSecs: v }) })));
     rowBtns($('host-misc'), [
-      { label: 'COLLISIONS ON', on: lobby.collisions, pick: () => set({ collisions: !lobby.collisions }) },
+      { label: 'COLLISIONS', on: lobby.collisions, pick: () => set({ collisions: !lobby.collisions }) },
+      { label: 'WATER +1', on: lobby.waterPenalty, pick: () => set({ waterPenalty: !lobby.waterPenalty }) },
       { label: lobby.isPublic ? 'PUBLIC' : 'PRIVATE', on: lobby.isPublic, pick: () => set({ isPublic: !lobby.isPublic }) },
     ]);
+    rowBtns($('host-power'), POWER_MULS.map(([v, label]) => ({ label, on: lobby.powerMul === v, pick: () => set({ powerMul: v }) })));
   }
   const players = lobbyPlayers(lobby.id);
   $('roster-head').textContent = `GOLFERS ${players.length}/${MAX_PLAYERS}`;
@@ -842,7 +838,7 @@ function computePreview(angle: number, power: number) {
   const key = `${angle.toFixed(2)}|${power.toFixed(2)}|${p.x}|${p.y}`;
   if (key === previewKey) return;
   previewKey = key;
-  const v = shotVelocity(angle, power);
+  const v = shotVelocity(angle, power, lobby.powerMul / 100);
   const b: BallState = { x: p.x, y: p.y, z: 0, vx: v.vx, vy: v.vy, vz: 0, teleTicks: 0 };
   const geom = geomOf(gameHoleObj);
   const t0 = lobby.holeTick / TICK_HZ;
@@ -864,7 +860,7 @@ window.addEventListener('keydown', e => {
   const inInput = tag === 'INPUT' || tag === 'TEXTAREA';
   if (e.key === 'Escape') {
     if (inInput) { (e.target as HTMLElement).blur(); $('chat-input').classList.remove('open'); return; }
-    for (const m of ['settings-modal', 'rules-modal', 'mine-modal', 'scores-modal']) if (!$(m).classList.contains('hidden')) { modal(m, false); return; }
+    for (const m of ['settings-modal', 'mine-modal', 'scores-modal']) if (!$(m).classList.contains('hidden')) { modal(m, false); return; }
     if (overlayTarget === null) $('match-menu').classList.toggle('hidden');
     return;
   }
@@ -996,14 +992,18 @@ function renderHud(lobby: Lobby, p: Player, players: Player[], hole: Hole | null
     else cd.textContent = '';
   }
   // leaderboard
-  const ranked = [...players].sort((a, b) => a.total - b.total || a.seat - b.seat);
+  const rankedAll = [...players].sort((a, b) => a.total - b.total || a.seat - b.seat);
+  const ranked = rankedAll.slice(0, 8);
+  if (!ranked.some(q => isMe(q.identity))) { const mine = rankedAll.find(q => isMe(q.identity)); if (mine) ranked.push(mine); }
   const html = ranked.map(q => {
     const cur = q.holed ? `${q.holeScores[lobby.holeIndex] ?? q.strokes}` : `${q.strokes}`;
     const tot = q.holeScores.length ? relPar(q.total - parThrough(lobby, q.holeScores.length - 1)) : '—';
     return `<div class="r${q.holed ? ' done' : ''}${isMe(q.identity) ? ' me' : ''}"><span class="dot" style="background:${COLORS[q.color]}"></span><span class="nm">${esc(q.name)}${q.online ? '' : ' 💤'}</span><span class="sc">${q.holed ? '⛳' : ''}${cur} · ${tot}</span></div>`;
   }).join('');
   const board = $('board');
-  if (board.innerHTML !== html) board.innerHTML = html;
+  const more = rankedAll.length - ranked.length;
+  const boardHtml = html + (more > 0 ? `<div class="r"><span class="nm" style="color:var(--dim)">+${more} MORE · TAB</span></div>` : '');
+  if (board.innerHTML !== boardHtml) board.innerHTML = boardHtml;
   $('help').textContent = p.holed ? 'IN THE HOLE — WAITING FOR THE OTHERS' : lobby.phase === PH_PLAY
     ? (p.resting ? (p.strokes >= lobby.maxStrokes ? 'OUT OF STROKES' : 'DRAG BACK FROM YOUR BALL · RELEASE TO PUTT · ←/→ AIM · HOLD SPACE · TAB SCORECARD · ENTER CHAT · ESC MENU') : 'ROLLING…')
     : '';

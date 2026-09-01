@@ -67,6 +67,8 @@ export const Lobby = __t.object("Lobby", {
   round: __t.u16(),
   championName: __t.string(),
   createdAt: __t.timestamp(),
+  waterPenalty: __t.bool(),
+  powerMul: __t.u8(),
 });
 export type Lobby = __Infer<typeof Lobby>;
 

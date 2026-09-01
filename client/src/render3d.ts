@@ -2227,7 +2227,7 @@ function buildScene() {
 
   // eight golfers, eight balls
   playerRigs = [];
-  for (let i = 0; i < MAX_GOLFERS; i++) {
+  for (let i = 0; i < MAX_RIGS; i++) {
     const rig = makePlayerRig(0);
     rig.root.visible = false;
     rig.runSeed = i * 2.7;
@@ -2391,7 +2391,8 @@ function disposeScene() {
 // ---------------------------------------------------------------------------
 // Golf scene state: pooled golfers + balls, the built hole, aim props, camera
 // ---------------------------------------------------------------------------
-const MAX_GOLFERS = 8;
+const MAX_GOLFERS = 32; // balls
+const MAX_RIGS = 10; // full 3D golfers: you + the nearest nine
 const WALL_H = 1.1;
 const rigByPlayer = new Map<string, number>();
 interface BallProp { mesh: THREE.Mesh; blob: THREE.Mesh; mat: THREE.MeshLambertMaterial }
@@ -2805,10 +2806,20 @@ export function drawScene(scene: GolfScene) {
   }
 
   // --- golfers ---------------------------------------------------------------
-  for (const [id, slot] of [...rigByPlayer]) if (!seen.has(id)) { rigByPlayer.delete(id); playerRigs[slot].root.visible = false; }
+  // Only the nearest few players get a full 3D golfer (a 32-player tee would
+  // be a wall of bodies); everyone else is a ball with a name tag.
+  const meP = scene.players.find(p => p.me);
+  const rigged = new Set<string>();
+  if (meP) {
+    const byDist = [...scene.players].sort((a, b) => (a.me ? -1 : b.me ? 1 : 0) || (Math.hypot(a.x - meP.x, a.y - meP.y) - Math.hypot(b.x - meP.x, b.y - meP.y)));
+    for (const p of byDist.slice(0, MAX_RIGS)) rigged.add(p.id);
+  } else for (const p of scene.players.slice(0, MAX_RIGS)) rigged.add(p.id);
+  for (const [id, slot] of [...rigByPlayer]) if (!seen.has(id) || !rigged.has(id)) { rigByPlayer.delete(id); playerRigs[slot].root.visible = false; }
   let myBall: THREE.Vector3 | null = null;
   let myPlayer: GolfPlayer | null = null;
   for (const p of scene.players) {
+    if (p.me) { const bp = toThree(p.x, p.y, 0); bp.y += BALL_R; myBall = bp; myPlayer = p; }
+    if (!rigged.has(p.id)) continue;
     let slot = rigByPlayer.get(p.id);
     if (slot === undefined) {
       const used = new Set(rigByPlayer.values());
@@ -2825,7 +2836,6 @@ export function drawScene(scene: GolfScene) {
     applyCharacter(rig, character);
 
     const ballPos = toThree(p.x, p.y, 0);
-    if (p.me) { myBall = ballPos.clone(); myBall.y += BALL_R; myPlayer = p; }
     // stance: beside the ball, facing across the target line
     const facing = p.holed ? st.lastFacing : p.facing;
     st.lastFacing = facing;
@@ -2835,8 +2845,10 @@ export function drawScene(scene: GolfScene) {
     // group instead of one body inside another
     const side = p.seat % 2 ? -1 : 1;
     const fx = -sz * side, fz = sx * side;
+    // and spread along the line by seat, so a crowded tee fans out
+    const along = ((Math.floor(p.seat / 2) % 4) - 1.5) * 1.4;
     const anchor = p.holed ? toThree(hole.cup.x, hole.cup.y, 0) : ballPos;
-    const tx = anchor.x - fx * 1.9, tz = anchor.z - fz * 1.9;
+    const tx = anchor.x - fx * 1.9 + sx * along, tz = anchor.z - fz * 1.9 + sz * along;
     if (Number.isNaN(st.px)) { st.px = tx; st.pz = tz; }
     const ddx = tx - st.px, ddz = tz - st.pz;
     const dist = Math.hypot(ddx, ddz);

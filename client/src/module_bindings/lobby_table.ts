@@ -30,4 +30,6 @@ export default __t.row({
   round: __t.u16(),
   championName: __t.string().name("champion_name"),
   createdAt: __t.timestamp().name("created_at"),
+  waterPenalty: __t.bool().name("water_penalty"),
+  powerMul: __t.u8().name("power_mul"),
 });

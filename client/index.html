@@ -3683,11 +3683,8 @@
             <button id="char-chip" class="account-chip">BLAZE</button>
           </div>
           <div class="divider">PLAY</div>
-          <button id="create-btn" class="mode-btn gold tour-hero"><span class="mode-ico">⛳</span><span class="mode-name">New Round</span><span class="desc">up to 8 golfers · everyone putts at once · public or invite</span></button>
-          <div class="mode-grid">
-            <button id="solo-btn" class="mode-btn"><span class="mode-ico">🏌️</span><span class="mode-name">Solo</span><span class="desc">play any course alone</span></button>
-            <button id="editor-btn" class="mode-btn alt"><span class="mode-ico">🛠️</span><span class="mode-name">Course Editor</span><span class="desc">build · test · publish</span></button>
-          </div>
+          <button id="create-btn" class="mode-btn gold tour-hero"><span class="mode-ico">⛳</span><span class="mode-name">Select a Course</span><span class="desc">up to 32 golfers · everyone putts at once · solo, public or invite</span></button>
+          <button id="editor-btn" class="mode-btn alt tour-hero"><span class="mode-ico">🛠️</span><span class="mode-name">Course Editor</span><span class="desc">build · test · publish your own</span></button>
           <div class="divider">JOIN A ROUND</div>
           <div class="join-row">
             <input id="code-input" type="text" maxlength="5" placeholder="CODE" autocomplete="off" />
@@ -3755,27 +3752,15 @@
             <button class="sel-card" data-vis="1"><div class="cname">PUBLIC</div><div class="cmeta">LISTED ON THE MENU</div></button>
           </div>
         </div>
-        <div class="opt-row">
-          <div class="field-label">RULES</div>
-          <div class="rules-cta">
-            <span id="rules-summary" class="rules-summary">MAX 10 STROKES · 90 S PER HOLE · COLLISIONS ON</span>
-            <button id="rules-open">⚙ Edit</button>
-          </div>
-        </div>
+        <div class="opt-row"><div class="field-label">MAX STROKES</div><div class="seg" id="strokes-grid"></div></div>
+        <div class="opt-row"><div class="field-label">TIME PER HOLE</div><div class="seg" id="time-grid"></div></div>
+        <div class="opt-row"><div class="field-label">BALL COLLISIONS</div><div class="seg" id="collide-grid"></div></div>
+        <div class="opt-row"><div class="field-label">WATER</div><div class="seg" id="water-grid"></div></div>
+        <div class="opt-row"><div class="field-label">SHOT POWER</div><div class="seg" id="power-grid"></div></div>
       </div>
       <div class="action-bar">
         <button id="course-back" class="alt">◀ Back</button>
         <button id="course-confirm" class="primary">Confirm ▶</button>
-      </div>
-    </div>
-
-    <div id="rules-modal" class="hidden">
-      <div class="gfx-card">
-        <div class="gfx-head"><span class="gfx-title">ROUND RULES</span><button id="rules-close" class="gfx-close">✕</button></div>
-        <div class="opt-row"><div class="field-label">MAX STROKES</div><div class="seg" id="strokes-grid"></div></div>
-        <div class="opt-row"><div class="field-label">TIME PER HOLE</div><div class="seg" id="time-grid"></div></div>
-        <div class="opt-row"><div class="field-label">BALL COLLISIONS</div><div class="seg" id="collide-grid"></div></div>
-        <div class="gfx-foot">THE HOST CAN CHANGE THESE IN THE LOBBY TOO</div>
       </div>
     </div>
 
@@ -3795,6 +3780,7 @@
               <div class="setting-row"><span class="setting-label">COURSE</span><button class="setting-btn" id="change-course-btn">CHANGE COURSE</button></div>
               <div class="setting-row" id="host-strokes"><span class="setting-label">STROKES</span></div>
               <div class="setting-row" id="host-time"><span class="setting-label">TIME</span></div>
+              <div class="setting-row" id="host-power"><span class="setting-label">POWER</span></div>
               <div class="setting-row" id="host-misc"><span class="setting-label">RULES</span></div>
             </div>
           </section>

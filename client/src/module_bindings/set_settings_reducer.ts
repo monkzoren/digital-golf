@@ -16,4 +16,6 @@ export default {
   maxStrokes: __t.u8(),
   holeSecs: __t.u16(),
   collisions: __t.bool(),
+  waterPenalty: __t.bool(),
+  powerMul: __t.u8(),
 };

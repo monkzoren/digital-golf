@@ -12,7 +12,7 @@ TypeScript three.js game with a built-in course editor.
 
 ## What it plays like
 
-- **Everyone shoots at once.** Up to 8 players per room, no turns. Drag back
+- **Everyone shoots at once.** Up to 32 players per room, no turns. Drag back
   from your ball and release to putt (or aim with ←/→ and hold Space). Balls
   collide with each other — bump a rival off the line, or get bumped.
 - **Real hazards.** Bouncy walls, pinball bumpers, posts, sand, ice, water
@@ -20,7 +20,9 @@ TypeScript three.js game with a built-in course editor.
   ball over low walls and water, teleporters, spinning windmills and sliding
   doors. The cup pulls slow balls in and skips fast ones.
 - **Rounds, not holes.** A room plays a whole course: intro card, timed hole,
-  scorecard, next hole, podium. Stroke caps and hole timers keep it moving.
+  scorecard, next hole, podium. Round options: max strokes, time per hole,
+  ball collisions on/off, water penalty (+1 stroke or a free reset), shot
+  power (soft / normal / turbo). The host can change them in the lobby.
   Late joiners drop straight onto the tee. Refreshing mid-round keeps your
   seat for 25 s.
 - **Two built-in courses** (Sunny Park, a 9-hole tutorial gauntlet; Neon
@@ -134,7 +136,7 @@ makes them pinball bumpers), `tip`, `theme`. Limits and normalisation are in
 - Accounts and persistent stats (the tennis framework's Firebase +
   `profiles` sidecar port over directly).
 - Course ratings and a featured rotation; thumbnails in the picker.
-- Spectating, tournaments, bots.
+- Spectating.
 - More obstacle types (ramps with real height, portals with direction,
   fans, conveyor belts) — each is one `Zone`/`Block` kind in the shared
   physics plus a renderer and an editor tool.

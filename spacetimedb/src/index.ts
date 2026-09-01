@@ -42,7 +42,7 @@ const EV_LAND = 8;
 const EV_BOOST = 9;
 const EV_RESET = 10;
 
-const MAX_PLAYERS = 8;
+const MAX_PLAYERS = 32;
 const N_COLORS = 12;
 const N_CHARACTERS = 18; // mirrors client/src/characters.ts
 const INTRO_SECS = 3.5;
@@ -77,6 +77,9 @@ const Lobby = table(
     round: t.u16(), // how many games this room has played (play again bumps it)
     championName: t.string(),
     createdAt: t.timestamp(),
+    // NOTE: appended columns — more round options
+    waterPenalty: t.bool().default(true), // water = +1 stroke (off: free reset)
+    powerMul: t.u8().default(100), // shot power %, 80 soft · 100 normal · 130 turbo
   }
 );
 
@@ -301,6 +304,8 @@ function seedBuiltins(ctx: Ctx) {
 // Helpers
 // ---------------------------------------------------------------------------
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+const POWER_MULS = [80, 100, 130];
+const cleanPowerMul = (v: number) => (POWER_MULS.includes(v) ? v : 100);
 
 function getPlayer(ctx: Ctx): PlayerRow {
   const p = ctx.db.player.identity.find(ctx.sender);
@@ -526,8 +531,8 @@ export const set_color = spacetimedb.reducer({ color: t.u8() }, (ctx, { color })
 });
 
 export const create_lobby = spacetimedb.reducer(
-  { courseId: t.u64(), isPublic: t.bool(), maxStrokes: t.u8(), holeSecs: t.u16(), collisions: t.bool() },
-  (ctx, { courseId, isPublic, maxStrokes, holeSecs, collisions }) => {
+  { courseId: t.u64(), isPublic: t.bool(), maxStrokes: t.u8(), holeSecs: t.u16(), collisions: t.bool(), waterPenalty: t.bool(), powerMul: t.u8() },
+  (ctx, { courseId, isPublic, maxStrokes, holeSecs, collisions, waterPenalty, powerMul }) => {
     const course = playableCourse(ctx, courseId);
     const p = getPlayer(ctx);
     if (!p.name) throw new SenderError('Pick a name first');
@@ -552,6 +557,8 @@ export const create_lobby = spacetimedb.reducer(
       round: 0,
       championName: '',
       createdAt: ctx.timestamp,
+      waterPenalty,
+      powerMul: cleanPowerMul(powerMul),
     });
     const fresh = ctx.db.player.identity.find(ctx.sender)!;
     ctx.db.player.identity.update({
@@ -600,8 +607,8 @@ export const leave_lobby = spacetimedb.reducer(ctx => {
 });
 
 export const set_settings = spacetimedb.reducer(
-  { courseId: t.u64(), isPublic: t.bool(), maxStrokes: t.u8(), holeSecs: t.u16(), collisions: t.bool() },
-  (ctx, { courseId, isPublic, maxStrokes, holeSecs, collisions }) => {
+  { courseId: t.u64(), isPublic: t.bool(), maxStrokes: t.u8(), holeSecs: t.u16(), collisions: t.bool(), waterPenalty: t.bool(), powerMul: t.u8() },
+  (ctx, { courseId, isPublic, maxStrokes, holeSecs, collisions, waterPenalty, powerMul }) => {
     const p = getPlayer(ctx);
     const lobby = ctx.db.lobby.id.find(p.lobbyId);
     if (!lobby) throw new SenderError('Not in a room');
@@ -613,6 +620,8 @@ export const set_settings = spacetimedb.reducer(
       maxStrokes: clamp(maxStrokes, 3, 30),
       holeSecs: clamp(holeSecs, 30, 600),
       collisions,
+      waterPenalty,
+      powerMul: cleanPowerMul(powerMul),
     });
   }
 );
@@ -738,7 +747,7 @@ export const shoot = spacetimedb.reducer(
     if (p.strokes >= lobby.maxStrokes) return;
     if (!Number.isFinite(angle) || !Number.isFinite(power)) throw new SenderError('Bad shot');
     const pw = clamp(power, 0.02, 1);
-    const v = shotVelocity(angle, pw);
+    const v = shotVelocity(angle, pw, lobby.powerMul / 100);
     ctx.db.player.identity.update(
       withEvent(
         {
@@ -893,7 +902,7 @@ function tickPlay(ctx: Ctx, lobby: LobbyRow, players: PlayerRow[]) {
     if (ev.holed) {
       row = finishHoleFor(ctx, { ...lobby, holeTick }, row, row.strokes, true);
     } else if (ev.water || ev.oob) {
-      const penalty = ev.water && row.struck ? 1 : 0;
+      const penalty = ev.water && row.struck && lobby.waterPenalty ? 1 : 0;
       row = withEvent(
         {
           ...row, x: row.safeX, y: row.safeY, z: 0, vx: 0, vy: 0, vz: 0, teleTicks: 0,

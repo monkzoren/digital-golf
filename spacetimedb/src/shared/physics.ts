@@ -88,9 +88,10 @@ export function geomOf(hole: Hole): HoleGeom {
   return g;
 }
 
-export function shotVelocity(angle: number, power: number) {
+/** `mul` is the room's shot-power option (1 = normal, 1.3 = turbo). */
+export function shotVelocity(angle: number, power: number, mul = 1) {
   const p = Math.max(0, Math.min(1, power));
-  const speed = MIN_SHOT + (MAX_SHOT - MIN_SHOT) * p;
+  const speed = Math.min(MAX_SPEED, (MIN_SHOT + (MAX_SHOT - MIN_SHOT) * p) * mul);
   return { vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed };
 }
 
