@@ -1,11 +1,14 @@
 # Digital Golf
 
 A Golf It-style online minigolf arcade game for the browser, built on the
-[Digital Tennis](https://github.com/monkzoren/digital-tennis) framework.
-SpacetimeDB is the entire backend — rooms, the authoritative 30 Hz ball
-simulation, scoring, chat and the course library all live in one SpacetimeDB
-module. The client is a Vite + TypeScript canvas game with a built-in course
-editor.
+[Digital Tennis](https://github.com/monkzoren/digital-tennis) framework —
+and it looks like it: the same Virtua Tennis-style stadium (crowd, sponsor
+hoardings, jumbotron, floodlights), the same 18-character roster rendered as
+real 3D rigs (now holding putters), the same behind-the-player camera and
+the same navy-and-gold broadcast UI. SpacetimeDB is the entire backend —
+rooms, the authoritative 30 Hz ball simulation, scoring, chat and the
+course library all live in one SpacetimeDB module. The client is a Vite +
+TypeScript three.js game with a built-in course editor.
 
 ## What it plays like
 
@@ -29,6 +32,14 @@ editor.
   save drafts, publish to everyone. Built-in courses can be duplicated as a
   starting point. Published courses appear under *Community* when creating a
   room, sorted by plays.
+- **The tennis presentation, one to one.** Menu → SELECT A GOLFER (live
+  animated 3D previews on every card) → SELECT A COURSE → lobby → play,
+  with the broadcast wipe between screens, HUD plates, gold toasts for
+  birdies and holes-in-one, name tags and emote pops over the balls, the
+  settings panel (resolution, shadows, MSAA, particles, crowd detail, film
+  grade, VHS, FPS cap) and the 4:3 stage. Every hole is built as meshes on
+  the arena floor: felt slabs, wooden walls, extruded blocks, textured
+  hazards, spinning windmills, sliding doors, the cup with its flag.
 - Public room browser, live-now list, invite links (`?lobby=CODE`), room
   chat, emotes, scorecard, fullscreen, synthesized SFX (no assets).
 

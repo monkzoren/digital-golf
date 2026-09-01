@@ -10,9 +10,18 @@ README.md for architecture and run instructions. Key facts:
   geometry helpers, built-in courses), `physics.ts` (the simulation),
   `mapformat.ts` (hole JSON validation/limits). Keep them pure — no
   SpacetimeDB, DOM, timers or randomness.
-- `client/src/main.ts` owns connection, menus, room, game loop, HUD.
-  `render.ts` draws holes/balls/effects (shared by game + editor).
-  `editor.ts` is the course editor (local test mode uses `stepBall`).
+- `client/src/main.ts` owns connection, screens (tennis-style overlays +
+  wipe), room, game loop, HUD. `render3d.ts` is the three.js renderer
+  copied from Digital Tennis and adapted: stadium/crowd/lighting/rigs/body
+  builder/previews are the tennis code verbatim; `setHole` builds a hole
+  as meshes, `drawScene` takes a `GolfScene`. Golf world (x, y-down, z-up)
+  maps to three as `(x - cx, FLOOR_Y + z, y - cy)` with the hole centred.
+  `render.ts` is the 2D top-down renderer (editor + course thumbnails).
+  `characters.ts` and `graphics.ts` are copied from tennis — keep the
+  roster order in sync with `N_CHARACTERS` in the module.
+- `index.html` carries the ENTIRE Digital Tennis stylesheet plus a golf
+  block at the end; reuse its classes (`.overlay`, `.menu-card`,
+  `.sel-card`, `.plate`, `.gfx-card`, …) rather than adding new ones.
 - After editing the module: `spacetime publish digital-golf --module-path
   spacetimedb -y`, then `spacetime generate --lang typescript --out-dir
   client/src/module_bindings --module-path spacetimedb -y`. Never hand-edit

@@ -44,6 +44,7 @@ import SaveCourseReducer from "./save_course_reducer";
 import SeedBuiltinsReducer from "./seed_builtins_reducer";
 import SendChatReducer from "./send_chat_reducer";
 import SendEmoteReducer from "./send_emote_reducer";
+import SetCharacterReducer from "./set_character_reducer";
 import SetColorReducer from "./set_color_reducer";
 import SetNameReducer from "./set_name_reducer";
 import SetSettingsReducer from "./set_settings_reducer";
@@ -156,6 +157,7 @@ const reducersSchema = __reducers(
   __reducerSchema("seed_builtins", SeedBuiltinsReducer),
   __reducerSchema("send_chat", SendChatReducer),
   __reducerSchema("send_emote", SendEmoteReducer),
+  __reducerSchema("set_character", SetCharacterReducer),
   __reducerSchema("set_color", SetColorReducer),
   __reducerSchema("set_name", SetNameReducer),
   __reducerSchema("set_settings", SetSettingsReducer),

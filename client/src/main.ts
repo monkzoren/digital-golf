@@ -1,21 +1,26 @@
-// Digital Golf client: connection, menus, the room, the game loop and HUD.
-// The server owns the world; this file sends intent (shots, chat, settings)
-// and renders rows. The course editor lives in editor.ts.
+// Digital Golf client — connection, screens, the room, the 3D game view and
+// HUD. Built on the Digital Tennis client: same screen flow (menu → player
+// select → course select → lobby → play), same broadcast skin, same three.js
+// stadium + character rigs (render3d.ts). The course editor is editor.ts.
 import { DbConnection } from './module_bindings';
 import type { Player, Lobby, Course, Hole as HoleRow, Chat } from './module_bindings/types';
 import type { Identity } from 'spacetimedb';
 import type { Hole } from '@shared/courses';
 import { parseHole } from '@shared/mapformat';
+import { type BallState, TICK_HZ, geomOf, newEvents, shotVelocity, stepBall } from '@shared/physics';
 import {
-  type BallState, BALL_R, TICK_HZ, geomOf, newEvents, shotVelocity, stepBall,
-} from '@shared/physics';
-import {
-  COLORS, COLOR_NAMES, DATABASE_NAME, EMOTES, EV, L_FINISHED, L_OPEN, L_RUNNING, MAX_PLAYERS,
+  COLORS, DATABASE_NAME, EMOTES, EV, L_FINISHED, L_OPEN, L_RUNNING, MAX_PLAYERS,
   PH_FINAL, PH_INTRO, PH_PLAY, PH_RESULTS, SPACETIMEDB_URI,
 } from './config';
-import { type Camera, Particles, drawAim, drawBall, drawHole, fitCamera, s2w, themeFor, w2s } from './render';
+import {
+  type GolfPlayer, type GolfScene, addShake, ballScreenPos, burstAt, drawScene, groundPointAt,
+  initCharacterPreviews, initRenderer, resetScene,
+} from './render3d';
+import { CHARACTERS, type Character } from './characters';
+import { type GraphicsSettings, type PresetName, applyPreset, getGraphics, onGraphicsChange, presetOf, setGraphics } from './graphics';
 import { isMuted, setMuted, sfx, unlockAudio } from './audio';
 import { openEditor, closeEditor, editorIsOpen } from './editor';
+import { drawHole, fitCamera, themeFor } from './render';
 
 declare const __BUILD_ID__: string;
 
@@ -23,15 +28,14 @@ declare const __BUILD_ID__: string;
 // DOM helpers
 // ---------------------------------------------------------------------------
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
-const screens = ['connecting', 'name-modal', 'menu', 'profile-modal', 'picker', 'room', 'game', 'editor', 'mine-modal'] as const;
-type Screen = (typeof screens)[number];
-let currentScreen: Screen = 'connecting';
-function show(id: Screen) {
-  for (const s of screens) $(s).classList.toggle('hidden', s !== id);
-  currentScreen = id;
-  if (id === 'game') resizeCanvas();
-}
-function toast(msg: string, error = false) {
+const esc = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+const store = {
+  get: (k: string) => { try { return localStorage.getItem(k); } catch { return null; } },
+  set: (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* ignore */ } },
+  del: (k: string) => { try { localStorage.removeItem(k); } catch { /* ignore */ } },
+};
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+function notify(msg: string, error = false) {
   const el = document.createElement('div');
   el.className = 'toast' + (error ? ' error' : '');
   el.textContent = msg;
@@ -39,13 +43,70 @@ function toast(msg: string, error = false) {
   if (error) sfx.error();
   setTimeout(() => el.remove(), 3200);
 }
-const esc = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
-const store = {
-  get: (k: string) => { try { return localStorage.getItem(k); } catch { return null; } },
-  set: (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* ignore */ } },
-  del: (k: string) => { try { localStorage.removeItem(k); } catch { /* ignore */ } },
-};
-$('build-id').textContent = `build ${__BUILD_ID__.slice(0, 16)} · db ${DATABASE_NAME}`;
+function staggerChildren(container: HTMLElement) {
+  let i = 0;
+  for (const el of container.children) (el as HTMLElement).style.setProperty('--i', String(i++));
+}
+$('build-chip').textContent = `DIGITAL GOLF · ${__BUILD_ID__.slice(0, 10)}`;
+
+// ---------------------------------------------------------------------------
+// Screens: the tennis broadcast wipe between overlays
+// ---------------------------------------------------------------------------
+type OverlayName = 'connecting' | 'menu' | 'select-player' | 'select-course' | 'waiting' | 'gameover';
+const OVERLAYS: OverlayName[] = ['connecting', 'menu', 'select-player', 'select-course', 'waiting', 'gameover'];
+let overlayTarget: OverlayName | null | undefined = undefined;
+let appliedOverlay: OverlayName | null | undefined = undefined;
+const wipeEl = $('wipe');
+const wipeBar1 = wipeEl.querySelector('.b1') as HTMLElement;
+let wipeRunning = false;
+let wipeWatchdog = 0;
+const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+
+function applyOverlay(name: OverlayName | null) {
+  appliedOverlay = name;
+  for (const o of OVERLAYS) $(o).classList.toggle('hidden', o !== name);
+  const inGame = name === null;
+  $('hud').classList.toggle('hidden', !inGame);
+  if (inGame) { $('hud').classList.add('enter'); window.setTimeout(() => $('hud').classList.remove('enter'), 800); }
+  $('help').classList.toggle('hidden', !inGame);
+  $('emote-bar').classList.toggle('hidden', !inGame);
+  $('chat-feed').classList.toggle('hidden', !inGame);
+  if (!inGame) { $('chat-input').classList.remove('open'); $('hole-intro').classList.add('hidden'); $('results-card').classList.add('hidden'); $('match-menu').classList.add('hidden'); $('scores-modal').classList.add('hidden'); }
+  if (name === 'menu') renderMenu();
+  if (name === 'waiting') renderRoom();
+  if (name === 'select-player') refreshCharSelection();
+  if (name === 'select-course') renderCourseGrid();
+  if (name === 'gameover') renderGameOver();
+}
+function runWipe() {
+  if (wipeRunning) return;
+  wipeRunning = true;
+  wipeEl.classList.remove('out');
+  wipeEl.classList.add('run', 'in');
+  clearTimeout(wipeWatchdog);
+  wipeWatchdog = window.setTimeout(finishWipe, 2000);
+}
+function finishWipe() {
+  clearTimeout(wipeWatchdog);
+  wipeEl.classList.remove('run', 'in', 'out');
+  wipeRunning = false;
+  if (overlayTarget !== appliedOverlay) applyOverlay(overlayTarget ?? null);
+}
+wipeBar1.addEventListener('animationend', () => {
+  if (wipeEl.classList.contains('in')) {
+    applyOverlay(overlayTarget ?? null);
+    wipeEl.classList.remove('in');
+    wipeEl.classList.add('out');
+  } else if (wipeEl.classList.contains('out')) finishWipe();
+});
+function showOverlay(name: OverlayName | null) {
+  if (name === overlayTarget) return;
+  const firstShow = overlayTarget === undefined;
+  overlayTarget = name;
+  if (firstShow || reducedMotion || document.hidden) { applyOverlay(name); return; }
+  runWipe();
+}
+function modal(id: string, open: boolean) { $(id).classList.toggle('hidden', !open); }
 
 // ---------------------------------------------------------------------------
 // Connection
@@ -60,7 +121,6 @@ function scheduleReconnect() {
   if (reconnectTimer !== null) return;
   reconnectTimer = window.setTimeout(() => { reconnectTimer = null; connect(); }, 2000);
 }
-
 function connect() {
   const gen = ++connectGen;
   const token = store.get('dg_token') ?? undefined;
@@ -72,20 +132,16 @@ function connect() {
       if (gen !== connectGen) return;
       subscribed = false;
       $('connecting-sub').textContent = 'CONNECTION LOST — RECONNECTING…';
-      show('connecting');
+      showOverlay('connecting');
       scheduleReconnect();
     })
     .onConnect((_c, identity, tok) => {
-      console.log('[dg] connected as', identity.toHexString());
       if (gen !== connectGen) return;
+      console.log('[dg] connected as', identity.toHexString());
       myIdentity = identity;
       store.set('dg_token', tok);
       conn.subscriptionBuilder()
-        .onApplied(() => {
-          console.log('[dg] subscription applied');
-          subscribed = true;
-          try { onSubscribed(); } catch (e) { console.error('[dg] onSubscribed threw', e); }
-        })
+        .onApplied(() => { subscribed = true; try { onSubscribed(); } catch (e) { console.error('[dg] onSubscribed threw', e); } })
         .onError(e => { console.error('[dg] subscription error', e); $('connecting-sub').textContent = 'SUBSCRIPTION ERROR — VERSION MISMATCH?'; })
         .subscribe([
           'SELECT * FROM lobby',
@@ -101,7 +157,7 @@ function connect() {
       console.error('[dg] connect error', err);
       if (/verify token|unauthorized|401/i.test(String((err as any)?.message ?? err))) store.del('dg_token');
       $('connecting-sub').textContent = 'CONNECTION FAILED — IS THE SERVER RUNNING? RETRYING…';
-      show('connecting');
+      showOverlay('connecting');
       scheduleReconnect();
     })
     .build();
@@ -112,7 +168,7 @@ function connect() {
 const errMsg = (e: unknown) => String((e as any)?.message ?? e).replace(/^.*?SenderError:?\s*/i, '');
 function rd(): typeof conn.reducers {
   return new Proxy({} as any, {
-    get: (_t, k: string) => (args: any) => (conn.reducers as any)[k](args ?? {}).catch((e: unknown) => toast(errMsg(e), true)),
+    get: (_t, k: string) => (args: any) => (conn.reducers as any)[k](args ?? {}).catch((e: unknown) => notify(errMsg(e), true)),
   });
 }
 
@@ -179,10 +235,24 @@ function currentHole(lobby: Lobby): Hole | null {
   const row = conn.db.hole.id.find(lobby.holeId);
   return row ? parsedHole(row) : null;
 }
+const charOf = (p: Player): Character => CHARACTERS[p.characterId] ?? CHARACTERS[0];
 
 // ---------------------------------------------------------------------------
-// Boot / name gate
+// Flow state
 // ---------------------------------------------------------------------------
+type Intent = 'create' | 'solo' | 'join' | 'change' | 'setchar' | null;
+let intent: Intent = null;
+let joinCode = '';
+let selectedChar = Number(store.get('dg_char') ?? 0) || 0;
+let selectedCourse: bigint | null = null;
+let courseTab: 'featured' | 'community' | 'mine' = 'featured';
+let rules = {
+  isPublic: false,
+  maxStrokes: Number(store.get('dg_strokes') ?? 10) || 10,
+  holeSecs: Number(store.get('dg_time') ?? 90) || 90,
+  collisions: (store.get('dg_collide') ?? '1') === '1',
+};
+let soloAutoStarted = false;
 let pendingJoin: string | null = null;
 {
   const code = new URLSearchParams(location.search).get('lobby');
@@ -195,83 +265,57 @@ function onSubscribed() {
   const stored = (store.get('dg_name') ?? '').trim();
   if (!p.name && stored) rd().setName({ name: stored });
   else if (p.name && !stored) store.set('dg_name', p.name);
+  if (store.get('dg_char') !== null && p.characterId !== selectedChar) rd().setCharacter({ characterId: selectedChar });
+  else selectedChar = p.characterId;
   const storedColor = store.get('dg_color');
-  if (storedColor !== null && Number(storedColor) !== p.color && p.lobbyId === 0n) {
-    rd().setColor({ color: Number(storedColor) });
-  }
-  if (!p.name && !stored) { show('name-modal'); renderSwatches('name-swatches', p.color); return; }
-  if (pendingJoin) { const c = pendingJoin; pendingJoin = null; rd().joinLobby({ code: c }); }
+  if (storedColor !== null && Number(storedColor) !== p.color && p.lobbyId === 0n) rd().setColor({ color: Number(storedColor) });
+  if (!p.name && !stored) { modal('name-modal', true); ($('name-input') as HTMLInputElement).focus(); }
+  if (pendingJoin) { joinCode = pendingJoin; pendingJoin = null; intent = 'join'; showOverlay('select-player'); return; }
   route();
 }
 
 function route() {
   if (editorIsOpen()) return;
   const p = me();
-  if (!p || (!p.name && !(store.get('dg_name') ?? '').trim())) return; // the name gate owns the screen
+  if (!p) return;
   const lobby = myLobby();
-  if (!lobby) { if (currentScreen !== 'menu' && currentScreen !== 'profile-modal' && currentScreen !== 'picker' && currentScreen !== 'mine-modal') show('menu'); renderMenu(); return; }
-  if (lobby.status === L_OPEN) {
-    const changingCourse = currentScreen === 'picker' && pickerMode === 'change';
-    if (currentScreen !== 'room' && !changingCourse) show('room');
-    renderRoom();
+  if (!lobby) {
+    if (intent === 'join' || intent === 'create' || intent === 'solo' || intent === 'setchar') {
+      if (overlayTarget === 'select-player' || overlayTarget === 'select-course') return;
+    }
+    if (overlayTarget !== 'menu') showOverlay('menu'); else renderMenu();
     return;
   }
-  if (currentScreen !== 'game') { show('game'); enterGame(); }
+  if (lobby.status === L_OPEN) {
+    if (intent === 'solo' && !soloAutoStarted && lobby.hostId.isEqual(p.identity)) { soloAutoStarted = true; rd().startGame({}); }
+    if (intent === 'change' && overlayTarget === 'select-course') return;
+    if (overlayTarget !== 'waiting') showOverlay('waiting'); else renderRoom();
+    return;
+  }
+  if (lobby.status === L_FINISHED && lobby.phase === PH_FINAL) {
+    if (overlayTarget !== 'gameover') showOverlay('gameover'); else renderGameOver();
+    return;
+  }
+  if (overlayTarget !== null) { showOverlay(null); enterGame(); }
 }
 
-let selectedNameColor = 0;
-function renderSwatches(id: string, selected: number, taken: Set<number> = new Set(), onPick?: (c: number) => void) {
-  const el = $(id);
-  el.innerHTML = '';
-  COLORS.forEach((c, i) => {
-    const s = document.createElement('div');
-    s.className = 'swatch' + (i === selected ? ' selected' : '') + (taken.has(i) ? ' taken' : '');
-    s.style.background = c;
-    s.title = COLOR_NAMES[i];
-    s.onclick = () => { if (taken.has(i)) return; (onPick ?? ((n: number) => { selectedNameColor = n; renderSwatches(id, n, taken, onPick); }))(i); };
-    el.appendChild(s);
-  });
-  if (!onPick) selectedNameColor = selected;
-}
-
-$('name-form').onsubmit = e => {
-  e.preventDefault();
-  unlockAudio();
+// ---------------------------------------------------------------------------
+// Name gate + chips
+// ---------------------------------------------------------------------------
+function submitName() {
   const name = ($('name-input') as HTMLInputElement).value.trim().slice(0, 16);
   if (!name) return;
+  unlockAudio();
   store.set('dg_name', name);
-  store.set('dg_color', String(selectedNameColor));
   rd().setName({ name });
-  rd().setColor({ color: selectedNameColor });
+  modal('name-modal', false);
   sfx.ui();
-  if (pendingJoin) { const c = pendingJoin; pendingJoin = null; rd().joinLobby({ code: c }); }
-  show('menu');
   renderMenu();
-};
-
-// profile
-$('account-chip').onclick = () => {
-  const p = me();
-  if (!p) return;
-  ($('profile-name') as HTMLInputElement).value = p.name;
-  ($('profile-mute') as HTMLInputElement).checked = isMuted();
-  let pick = p.color;
-  renderSwatches('profile-swatches', p.color, new Set(), c => { pick = c; renderSwatches('profile-swatches', c, new Set(), undefined); (window as any).__pick = c; });
-  (window as any).__pick = pick;
-  show('profile-modal');
-};
-$('profile-cancel').onclick = () => { show('menu'); };
-$('profile-form').onsubmit = e => {
-  e.preventDefault();
-  const name = ($('profile-name') as HTMLInputElement).value.trim().slice(0, 16);
-  if (name) { rd().setName({ name }); store.set('dg_name', name); }
-  const pick = Number((window as any).__pick ?? me()?.color ?? 0);
-  store.set('dg_color', String(pick));
-  rd().setColor({ color: pick });
-  setMuted(($('profile-mute') as HTMLInputElement).checked);
-  show('menu');
-  renderMenu();
-};
+}
+$('name-ok').onclick = submitName;
+$('name-input').addEventListener('keydown', e => { if (e.key === 'Enter') submitName(); });
+$('name-edit').onclick = () => { ($('name-input') as HTMLInputElement).value = me()?.name ?? ''; modal('name-modal', true); $('name-input').focus(); };
+$('char-chip').onclick = () => { intent = 'setchar'; showOverlay('select-player'); };
 
 // ---------------------------------------------------------------------------
 // Menu
@@ -279,217 +323,309 @@ $('profile-form').onsubmit = e => {
 function renderMenu() {
   const p = me();
   if (!p) return;
-  $('account-name').textContent = p.name || 'GUEST';
-  $('account-dot').style.background = COLORS[p.color] ?? '#fff';
-  const pub = $('public-list'), live = $('live-list');
+  $('name-edit').textContent = p.name || 'GUEST';
+  $('char-chip').textContent = charOf(p).name;
+  ($('char-chip') as HTMLElement).style.borderColor = charOf(p).css;
+  const pub = $('lobby-list'), live = $('live-list');
   pub.innerHTML = ''; live.innerHTML = '';
-  let nPub = 0, nLive = 0;
   const lobbies = [...conn.db.lobby.iter()].filter(l => l.isPublic).sort((a, b) => (a.id < b.id ? 1 : -1));
   for (const l of lobbies) {
     const players = lobbyPlayers(l.id);
     const host = players.find(x => x.identity.isEqual(l.hostId));
-    const item = document.createElement('div');
-    item.className = 'item';
+    const row = document.createElement('div');
+    row.className = 'lobby-row' + (l.status === L_RUNNING ? ' live' : '');
     if (l.status === L_OPEN) {
-      nPub++;
-      item.innerHTML = `<span class="dot" style="background:${COLORS[host?.color ?? 0]}"></span><div class="grow"><div class="name">${esc(l.courseName)}</div><div class="tiny">HOST ${esc(host?.name ?? '?')} · ${l.holeCount} HOLES</div></div><span class="pill">${players.length}/${MAX_PLAYERS}</span>`;
-      item.onclick = () => rd().joinLobby({ code: l.code });
-      pub.appendChild(item);
+      row.innerHTML = `<div class="lobby-mode">⛳ ${esc(l.courseName)}</div><div class="lobby-meta"><span class="lobby-host">HOST ${esc(host?.name ?? '?')}</span> · ${l.holeCount} HOLES · ${players.length}/${MAX_PLAYERS}</div><button class="lobby-join">Join</button>`;
+      row.querySelector('button')!.onclick = () => startJoin(l.code);
+      pub.appendChild(row);
     } else if (l.status === L_RUNNING) {
-      nLive++;
-      const names = players.map(x => esc(x.name)).join(', ');
-      item.innerHTML = `<div class="grow"><div class="name">${esc(l.courseName)} <span class="pill lime">HOLE ${l.holeIndex + 1}/${l.holeCount}</span></div><div class="tiny">${names}</div></div><span class="pill">${players.length}/${MAX_PLAYERS}</span>`;
-      item.title = 'Join mid-round';
-      item.onclick = () => rd().joinLobby({ code: l.code });
-      live.appendChild(item);
+      row.innerHTML = `<div class="lobby-mode">● ${esc(l.courseName)} · HOLE ${l.holeIndex + 1}/${l.holeCount}</div><div class="lobby-meta">${players.map(x => esc(x.name)).join(', ')}</div><button class="lobby-join">Jump in</button>`;
+      row.querySelector('button')!.onclick = () => startJoin(l.code);
+      live.appendChild(row);
     }
   }
-  if (!nPub) pub.innerHTML = '<div class="empty">No public rooms right now — host one!</div>';
-  if (!nLive) live.innerHTML = '<div class="empty">Nobody is on the course.</div>';
+  if (!pub.childElementCount) pub.innerHTML = '<div class="lobby-empty">NO OPEN ROUNDS — CREATE ONE AND MAKE IT PUBLIC</div>';
+  if (!live.childElementCount) live.innerHTML = '<div class="lobby-empty">NOBODY ON THE COURSE RIGHT NOW</div>';
+  staggerChildren(pub); staggerChildren(live);
 }
-
-$('btn-new').onclick = () => { unlockAudio(); openPicker('create'); };
-$('join-form').onsubmit = e => {
-  e.preventDefault();
+function startJoin(code: string) {
   unlockAudio();
-  const code = ($('join-input') as HTMLInputElement).value.trim().toUpperCase();
-  if (code.length !== 5) { toast('Room codes are 5 letters', true); return; }
-  rd().joinLobby({ code });
-};
-$('btn-editor').onclick = () => { unlockAudio(); openMine(); };
-
-// ---------------------------------------------------------------------------
-// Course picker
-// ---------------------------------------------------------------------------
-let pickerMode: 'create' | 'change' = 'create';
-let pickerTab: 'featured' | 'community' | 'mine' = 'featured';
-let pickerSelected: bigint | null = null;
-
-function openPicker(mode: 'create' | 'change') {
-  pickerMode = mode;
-  pickerSelected = null;
-  $('picker-title').textContent = mode === 'create' ? 'Pick a course' : 'Change course';
-  $('picker-public-wrap').classList.toggle('hidden', mode !== 'create');
-  ($('picker-go') as HTMLButtonElement).textContent = mode === 'create' ? 'Create room' : 'Use this course';
-  show('picker');
-  renderPicker();
+  const lobby = [...conn.db.lobby.iter()].find(l => l.code === code);
+  if (!lobby) { $('status-msg').textContent = 'NO ROUND WITH THAT CODE'; ($('code-input') as HTMLInputElement).classList.add('bad'); sfx.error(); return; }
+  if (lobby.status === L_FINISHED) { $('status-msg').textContent = 'THAT ROUND IS OVER'; sfx.error(); return; }
+  if (lobbyPlayers(lobby.id).length >= MAX_PLAYERS) { $('status-msg').textContent = 'THAT ROUND IS FULL'; sfx.error(); return; }
+  $('status-msg').textContent = '';
+  joinCode = code;
+  intent = 'join';
+  showOverlay('select-player');
 }
-function pickerCourses(): Course[] {
+$('create-btn').onclick = () => { unlockAudio(); intent = 'create'; showOverlay('select-player'); };
+$('solo-btn').onclick = () => { unlockAudio(); intent = 'solo'; showOverlay('select-player'); };
+$('join-btn').onclick = () => startJoin(($('code-input') as HTMLInputElement).value.trim().toUpperCase());
+$('code-input').addEventListener('keydown', e => { if (e.key === 'Enter') $('join-btn').click(); });
+$('code-input').addEventListener('input', () => $('code-input').classList.remove('bad'));
+$('editor-btn').onclick = () => { unlockAudio(); openMine(); };
+$('menu-settings-btn').onclick = () => modal('settings-modal', true);
+$('menu-fullscreen-btn').onclick = toggleFullscreen;
+function toggleFullscreen() {
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  else $('app').requestFullscreen?.().catch(() => {});
+}
+
+// ---------------------------------------------------------------------------
+// Player select — live 3D previews on every card (render3d.ts)
+// ---------------------------------------------------------------------------
+function buildCharGrid() {
+  const grid = $('char-grid');
+  const slots: { char: Character; el: HTMLElement }[] = [];
+  for (const c of CHARACTERS) {
+    const card = document.createElement('button');
+    card.className = 'sel-card';
+    card.dataset.id = String(c.id);
+    card.innerHTML =
+      `<span class="preview-slot" style="--glow:${c.css}"></span>` +
+      `<div class="cname">${c.name}</div><div class="cmeta">${c.flag} ${c.country} · ${c.style}</div>`;
+    card.addEventListener('click', () => { selectedChar = c.id; sfx.ui(); refreshCharSelection(); });
+    grid.appendChild(card);
+    slots.push({ char: c, el: card.querySelector('.preview-slot')! });
+  }
+  staggerChildren(grid);
+  initCharacterPreviews($('char-preview') as HTMLCanvasElement, slots, grid);
+}
+function refreshCharSelection() {
+  document.querySelectorAll('#char-grid .sel-card').forEach(el => el.classList.toggle('selected', Number((el as HTMLElement).dataset.id) === selectedChar));
+  const c = CHARACTERS[selectedChar] ?? CHARACTERS[0];
+  $('char-style').textContent = `${c.name} · ${c.country} · ${c.style}`;
+  $('step-course').textContent = intent === 'join' ? '2 · JOIN' : '2 · COURSE';
+  document.querySelectorAll('#select-player .step')[2].textContent = '3 · PLAY';
+}
+$('char-back').onclick = () => { intent = null; showOverlay('menu'); };
+$('char-confirm').onclick = () => {
+  store.set('dg_char', String(selectedChar));
+  rd().setCharacter({ characterId: selectedChar });
+  sfx.ui();
+  if (intent === 'join') { rd().joinLobby({ code: joinCode }); intent = null; return; }
+  if (intent === 'setchar') { intent = null; showOverlay('menu'); return; }
+  showOverlay('select-course');
+};
+
+// ---------------------------------------------------------------------------
+// Course select
+// ---------------------------------------------------------------------------
+function coursesFor(tab: typeof courseTab): Course[] {
   const all: Course[] = [];
   for (const c of conn.db.course.iter()) all.push(c);
+  if (tab === 'featured') return all.filter(c => c.builtin).sort((a, b) => (a.id < b.id ? -1 : 1));
+  if (tab === 'community') return all.filter(c => !c.builtin && c.published).sort((a, b) => b.plays - a.plays || (a.id < b.id ? 1 : -1));
   const mine: Course[] = [];
   for (const c of conn.db.myCourses.iter()) mine.push(c as unknown as Course);
-  if (pickerTab === 'featured') return all.filter(c => c.builtin).sort((a, b) => (a.id < b.id ? -1 : 1));
-  if (pickerTab === 'community') return all.filter(c => !c.builtin && c.published).sort((a, b) => b.plays - a.plays || (a.id < b.id ? 1 : -1));
   return mine.sort((a, b) => (a.id < b.id ? 1 : -1));
 }
-function renderPicker() {
-  document.querySelectorAll('#picker-tabs button').forEach(b => b.classList.toggle('active', (b as HTMLElement).dataset.tab === pickerTab));
-  const list = $('picker-list');
-  list.innerHTML = '';
-  const rows = pickerCourses();
-  if (!rows.length) {
-    list.innerHTML = `<div class="empty">${pickerTab === 'mine' ? 'You have no courses yet — open the Course Editor.' : 'Nothing here yet. Be the first to publish a course!'}</div>`;
-  }
+let courseGridSig = '';
+function renderCourseGrid(force = false) {
+  document.querySelectorAll('#course-tabs .sel-card').forEach(b => b.classList.toggle('selected', (b as HTMLElement).dataset.tab === courseTab));
+  const grid = $('course-grid');
+  const rows = coursesFor(courseTab);
+  // rebuild only when something visible changed — a rebuild restarts the
+  // cards' entrance animation, and hole rows trickle in one by one
+  const sig = [courseTab, String(selectedCourse), intent, rules.isPublic, rules.maxStrokes, rules.holeSecs, rules.collisions,
+    ...rows.map(c => `${c.id}:${c.rev}:${c.plays}:${holeRows(c.id).length > 0 ? 1 : 0}`)].join('|');
+  if (!force && sig === courseGridSig) return;
+  courseGridSig = sig;
+  grid.innerHTML = '';
+  if (!rows.length) grid.innerHTML = `<div class="course-empty">${courseTab === 'mine' ? 'YOU HAVE NO COURSES YET — OPEN THE COURSE EDITOR' : 'NOTHING HERE YET — BE THE FIRST TO PUBLISH ONE'}</div>`;
+  if (selectedCourse === null || !rows.some(c => c.id === selectedCourse)) selectedCourse = rows[0]?.id ?? null;
   for (const c of rows) {
-    const item = document.createElement('div');
-    item.className = 'item' + (pickerSelected === c.id ? ' selected' : '');
-    item.innerHTML = `<div class="grow"><div class="name">${esc(c.name)} ${c.builtin ? '<span class="pill gold">FEATURED</span>' : ''}${!c.published ? '<span class="pill">DRAFT</span>' : ''}</div><div class="tiny">BY ${esc(c.authorName)} · ${c.holeCount} HOLES · PAR ${c.totalPar} · ${c.plays} PLAYS</div></div>`;
-    item.onclick = () => { pickerSelected = c.id; sfx.ui(); renderPicker(); };
-    list.appendChild(item);
+    const card = document.createElement('button');
+    card.className = 'sel-card' + (c.id === selectedCourse ? ' selected' : '');
+    card.innerHTML = `<span class="course-art${c.name.toLowerCase().includes('neon') ? ' neon' : ''}"></span><div class="cname">${esc(c.name)}</div><div class="cmeta">${c.holeCount} HOLES · PAR ${c.totalPar}</div><div class="cmeta">${c.builtin ? '★ FEATURED' : `BY ${esc(c.authorName)} · ${c.plays} PLAYS`}${c.published ? '' : ' · DRAFT'}</div>`;
+    card.onclick = () => { selectedCourse = c.id; sfx.ui(); renderCourseGrid(); };
+    grid.appendChild(card);
+    // live top-down thumbnail of hole 1 (drawn with the editor's renderer)
+    const first = holeRows(c.id)[0];
+    const h0 = first ? parsedHole(first) : null;
+    if (h0) {
+      const art = card.querySelector('.course-art') as HTMLElement;
+      const cv = document.createElement('canvas');
+      cv.width = 380; cv.height = 172;
+      const g = cv.getContext('2d')!;
+      drawHole(g, h0, fitCamera(h0, cv.width, cv.height, 2), cv.width, cv.height, { t: 0, theme: themeFor(h0, h0.theme) });
+      art.classList.add('has-art');
+      art.appendChild(cv);
+    } else if (rows.indexOf(c) < 6) subscribeCourse(c.id);
   }
-  ($('picker-go') as HTMLButtonElement).disabled = pickerSelected === null || !rows.some(c => c.id === pickerSelected && c.holeCount > 0);
+  staggerChildren(grid);
+  $('visibility-section').classList.toggle('hidden', intent === 'solo' || intent === 'change');
+  document.querySelectorAll('#visibility-grid .sel-card').forEach(b => b.classList.toggle('selected', ((b as HTMLElement).dataset.vis === '1') === rules.isPublic));
+  $('rules-summary').textContent = `MAX ${rules.maxStrokes} STROKES · ${rules.holeSecs} S PER HOLE · COLLISIONS ${rules.collisions ? 'ON' : 'OFF'}`;
+  ($('course-confirm') as HTMLButtonElement).disabled = selectedCourse === null;
 }
-document.querySelectorAll('#picker-tabs button').forEach(b => {
-  (b as HTMLButtonElement).onclick = () => { pickerTab = (b as HTMLElement).dataset.tab as any; pickerSelected = null; renderPicker(); };
-});
-$('picker-close').onclick = () => { show(myLobby() ? 'room' : 'menu'); route(); };
-$('picker-go').onclick = () => {
-  if (pickerSelected === null) return;
-  const isPublic = ($('picker-public') as HTMLInputElement).checked;
-  if (pickerMode === 'create') {
-    rd().createLobby({ courseId: pickerSelected, isPublic });
-  } else {
-    const l = myLobby();
-    if (l) rd().setSettings({ courseId: pickerSelected, isPublic: l.isPublic, maxStrokes: l.maxStrokes, holeSecs: l.holeSecs, collisions: l.collisions });
-    show('room');
-  }
+document.querySelectorAll('#course-tabs .sel-card').forEach(b => { (b as HTMLButtonElement).onclick = () => { courseTab = (b as HTMLElement).dataset.tab as any; selectedCourse = null; renderCourseGrid(true); }; });
+document.querySelectorAll('#visibility-grid .sel-card').forEach(b => { (b as HTMLButtonElement).onclick = () => { rules.isPublic = (b as HTMLElement).dataset.vis === '1'; renderCourseGrid(); }; });
+$('course-back').onclick = () => { if (intent === 'change') { intent = null; showOverlay('waiting'); } else showOverlay('select-player'); };
+$('course-confirm').onclick = () => {
+  if (selectedCourse === null) return;
   sfx.ui();
+  if (intent === 'change') {
+    const l = myLobby();
+    if (l) rd().setSettings({ courseId: selectedCourse, isPublic: l.isPublic, maxStrokes: l.maxStrokes, holeSecs: l.holeSecs, collisions: l.collisions });
+    intent = null;
+    showOverlay('waiting');
+    return;
+  }
+  soloAutoStarted = false;
+  rd().createLobby({ courseId: selectedCourse, isPublic: intent === 'solo' ? false : rules.isPublic, maxStrokes: rules.maxStrokes, holeSecs: rules.holeSecs, collisions: rules.collisions });
 };
 
+// rules modal (shared by the course screen and the host's lobby)
+const STROKE_OPTS = [6, 8, 10, 12, 15, 20];
+const TIME_OPTS: [number, string][] = [[45, '45 S'], [60, '60 S'], [90, '90 S'], [120, '2 MIN'], [180, '3 MIN'], [300, '5 MIN']];
+function seg(container: HTMLElement, opts: { label: string; value: any; selected: boolean; sub?: string }[], pick: (v: any) => void) {
+  container.innerHTML = '';
+  for (const o of opts) {
+    const b = document.createElement('button');
+    b.className = 'sel-card' + (o.selected ? ' selected' : '');
+    b.innerHTML = `<div class="cname">${o.label}</div>${o.sub ? `<div class="cmeta">${o.sub}</div>` : ''}`;
+    b.onclick = () => { pick(o.value); sfx.ui(); };
+    container.appendChild(b);
+  }
+}
+let rulesTarget: 'flow' | 'host' = 'flow';
+function renderRulesModal() {
+  const l = rulesTarget === 'host' ? myLobby() : undefined;
+  const cur = l ? { maxStrokes: l.maxStrokes, holeSecs: l.holeSecs, collisions: l.collisions } : rules;
+  const apply = (patch: Partial<typeof rules>) => {
+    if (l) rd().setSettings({ courseId: l.courseId, isPublic: l.isPublic, maxStrokes: patch.maxStrokes ?? l.maxStrokes, holeSecs: patch.holeSecs ?? l.holeSecs, collisions: patch.collisions ?? l.collisions });
+    else { Object.assign(rules, patch); store.set('dg_strokes', String(rules.maxStrokes)); store.set('dg_time', String(rules.holeSecs)); store.set('dg_collide', rules.collisions ? '1' : '0'); renderCourseGrid(); renderRulesModal(); }
+  };
+  seg($('strokes-grid'), STROKE_OPTS.map(v => ({ label: String(v), value: v, selected: cur.maxStrokes === v })), v => apply({ maxStrokes: v }));
+  seg($('time-grid'), TIME_OPTS.map(([v, label]) => ({ label, value: v, selected: cur.holeSecs === v })), v => apply({ holeSecs: v }));
+  seg($('collide-grid'), [{ label: 'ON', value: true, selected: cur.collisions, sub: 'BALLS BUMP' }, { label: 'OFF', value: false, selected: !cur.collisions, sub: 'GHOST BALLS' }], v => apply({ collisions: v }));
+}
+$('rules-open').onclick = () => { rulesTarget = 'flow'; renderRulesModal(); modal('rules-modal', true); };
+$('rules-close').onclick = () => modal('rules-modal', false);
+
 // ---------------------------------------------------------------------------
-// Room
+// Lobby (waiting room)
 // ---------------------------------------------------------------------------
-let roomChatSeen = 0;
 function renderRoom() {
   const lobby = myLobby();
   const p = me();
   if (!lobby || !p) return;
   subscribeCourse(lobby.courseId);
   const host = lobby.hostId.isEqual(p.identity);
-  $('room-code').textContent = lobby.code;
-  const players = lobbyPlayers(lobby.id);
-  $('room-count').textContent = `${players.length}/${MAX_PLAYERS}`;
-  $('room-public-pill').classList.toggle('hidden', !lobby.isPublic);
-  const pl = $('room-players');
-  pl.innerHTML = '';
-  for (const q of players) {
-    const d = document.createElement('div');
-    d.className = 'p' + (isMe(q.identity) ? ' me' : '') + (q.online ? '' : ' offline');
-    d.innerHTML = `<span class="dot" style="background:${COLORS[q.color]}"></span><span class="name">${esc(q.name)}</span>${q.identity.isEqual(lobby.hostId) ? '<span class="pill gold">HOST</span>' : ''}${q.online ? '' : '<span class="pill">AWAY</span>'}`;
-    pl.appendChild(d);
-  }
   const course = courseById(lobby.courseId);
-  $('room-course-name').textContent = lobby.courseName;
-  $('room-course-meta').textContent = `${lobby.holeCount} HOLES · PAR ${course?.totalPar ?? '?'} · BY ${course?.authorName ?? '?'}`;
-  $('room-course-change').classList.toggle('hidden', !host);
-  $('room-start').classList.toggle('hidden', !host);
-  $('room-wait').classList.toggle('hidden', host);
-  for (const id of ['set-strokes', 'set-time', 'set-collide', 'set-public']) ($(id) as HTMLInputElement).disabled = !host;
-  if (document.activeElement?.id !== 'set-strokes') ($('set-strokes') as HTMLSelectElement).value = String(lobby.maxStrokes);
-  if (document.activeElement?.id !== 'set-time') ($('set-time') as HTMLSelectElement).value = String(lobby.holeSecs);
-  ($('set-collide') as HTMLInputElement).checked = lobby.collisions;
-  ($('set-public') as HTMLInputElement).checked = lobby.isPublic;
-  renderChat('room-chat-log', lobby.id);
+  $('lobby-code').textContent = lobby.code;
+  $('lobby-link').textContent = `${location.origin}${location.pathname}?lobby=${lobby.code}`;
+  $('waiting-title').textContent = lobby.isPublic ? 'PUBLIC ROUND' : 'PRIVATE ROUND';
+  $('waiting-sub').textContent = host ? 'SHARE THE CODE, THEN START WHEN EVERYONE IS IN' : 'WAITING FOR THE HOST TO START…';
+  const pills = [
+    ['COURSE', lobby.courseName], ['HOLES', String(lobby.holeCount)], ['PAR', String(course?.totalPar ?? '?')],
+    ['BY', course?.authorName ?? '?'], ['MAX', `${lobby.maxStrokes} STROKES`], ['TIME', `${lobby.holeSecs} S / HOLE`],
+    ['COLLISIONS', lobby.collisions ? 'ON' : 'OFF'],
+  ];
+  $('lobby-info').innerHTML = pills.map(([k, v]) => `<span class="info-pill">${k} <span class="v">${esc(v)}</span></span>`).join('');
+  staggerChildren($('lobby-info'));
+  $('host-settings').classList.toggle('hidden', !host);
+  if (host) {
+    const rowBtns = (row: HTMLElement, opts: { label: string; on: boolean; pick: () => void }[]) => {
+      row.querySelectorAll('button').forEach(b => b.remove());
+      for (const o of opts) {
+        const b = document.createElement('button');
+        b.className = 'setting-btn' + (o.on ? ' selected' : '');
+        b.textContent = o.label;
+        b.onclick = () => { o.pick(); sfx.ui(); };
+        row.appendChild(b);
+      }
+    };
+    const set = (patch: Partial<{ maxStrokes: number; holeSecs: number; collisions: boolean; isPublic: boolean }>) =>
+      rd().setSettings({ courseId: lobby.courseId, isPublic: patch.isPublic ?? lobby.isPublic, maxStrokes: patch.maxStrokes ?? lobby.maxStrokes, holeSecs: patch.holeSecs ?? lobby.holeSecs, collisions: patch.collisions ?? lobby.collisions });
+    rowBtns($('host-strokes'), STROKE_OPTS.map(v => ({ label: String(v), on: lobby.maxStrokes === v, pick: () => set({ maxStrokes: v }) })));
+    rowBtns($('host-time'), TIME_OPTS.map(([v, label]) => ({ label, on: lobby.holeSecs === v, pick: () => set({ holeSecs: v }) })));
+    rowBtns($('host-misc'), [
+      { label: 'COLLISIONS ON', on: lobby.collisions, pick: () => set({ collisions: !lobby.collisions }) },
+      { label: lobby.isPublic ? 'PUBLIC' : 'PRIVATE', on: lobby.isPublic, pick: () => set({ isPublic: !lobby.isPublic }) },
+    ]);
+  }
+  const players = lobbyPlayers(lobby.id);
+  $('roster-head').textContent = `GOLFERS ${players.length}/${MAX_PLAYERS}`;
+  const wp = $('waiting-players');
+  wp.innerHTML = '';
+  for (const q of players) {
+    const chip = document.createElement('div');
+    chip.className = 'player-chip' + (q.identity.isEqual(lobby.hostId) ? ' host' : '') + (isMe(q.identity) ? ' me' : '');
+    chip.innerHTML = `<span class="chip-name">${esc(q.name)}${q.online ? '' : ' 💤'}</span><span class="chip-char"><span class="dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${COLORS[q.color]};margin-right:5px"></span>${charOf(q).name}</span>`;
+    wp.appendChild(chip);
+  }
+  for (let i = players.length; i < Math.min(MAX_PLAYERS, players.length + 2); i++) {
+    const chip = document.createElement('div');
+    chip.className = 'player-chip open-slot';
+    chip.innerHTML = '<span class="chip-name">OPEN</span>';
+    wp.appendChild(chip);
+  }
+  staggerChildren(wp);
+  $('start-btn').classList.toggle('hidden', !host);
+  renderChatFeed('lobby-chat-feed', lobby.id, 60);
 }
-function pushSettings() {
-  const l = myLobby();
-  if (!l) return;
-  rd().setSettings({
-    courseId: l.courseId,
-    isPublic: ($('set-public') as HTMLInputElement).checked,
-    maxStrokes: Number(($('set-strokes') as HTMLSelectElement).value),
-    holeSecs: Number(($('set-time') as HTMLSelectElement).value),
-    collisions: ($('set-collide') as HTMLInputElement).checked,
-  });
-}
-for (const id of ['set-strokes', 'set-time', 'set-collide', 'set-public']) $(id).onchange = pushSettings;
-$('room-course-change').onclick = () => openPicker('change');
-$('room-start').onclick = () => { unlockAudio(); rd().startGame({}); };
-$('room-leave').onclick = () => { rd().leaveLobby({}); show('menu'); renderMenu(); };
-$('room-copy').onclick = async () => {
+$('change-course-btn').onclick = () => { intent = 'change'; courseTab = 'featured'; showOverlay('select-course'); };
+$('start-btn').onclick = () => { unlockAudio(); rd().startGame({}); };
+$('leave-btn').onclick = () => { rd().leaveLobby({}); intent = null; resetScene(); showOverlay('menu'); };
+$('waiting-settings-btn').onclick = () => modal('settings-modal', true);
+$('copy-link-btn').onclick = async () => {
   const l = myLobby();
   if (!l) return;
   const url = `${location.origin}${location.pathname}?lobby=${l.code}`;
-  try { await navigator.clipboard.writeText(url); toast('Invite link copied'); } catch { toast(url); }
+  try { await navigator.clipboard.writeText(url); $('copy-link-btn').classList.add('copied'); $('copy-link-btn').textContent = 'Copied!'; setTimeout(() => { $('copy-link-btn').classList.remove('copied'); $('copy-link-btn').textContent = 'Copy Link'; }, 1500); } catch { notify(url); }
 };
-function renderChat(logId: string, lobbyId: bigint) {
-  const log = $(logId);
-  const rows = lobbyChat(lobbyId);
-  const html = rows.map(c => `<div><b style="color:${COLORS[c.color] ?? '#fff'}">${esc(c.name)}</b> ${esc(c.text)}</div>`).join('');
-  if (log.innerHTML !== html) { log.innerHTML = html; log.scrollTop = log.scrollHeight; }
+function renderChatFeed(id: string, lobbyId: bigint, n: number) {
+  const feed = $(id);
+  const rows = lobbyChat(lobbyId).slice(-n);
+  const html = rows.map(c => `<div class="chat-line${isMe(c.identity) ? ' mine' : ''}"><span class="who" style="color:${COLORS[c.color] ?? '#fff'}">${esc(c.name)}</span> ${esc(c.text)}</div>`).join('');
+  if (feed.innerHTML !== html) { feed.innerHTML = html; feed.scrollTop = feed.scrollHeight; }
 }
-function sendChat(inputId: string) {
+function sendChatFrom(inputId: string) {
   const input = $(inputId) as HTMLInputElement;
   const text = input.value.trim();
   input.value = '';
   if (text) rd().sendChat({ text });
 }
-$('room-chat-form').onsubmit = e => { e.preventDefault(); sendChat('room-chat-input'); };
-$('game-chat-form').onsubmit = e => { e.preventDefault(); sendChat('game-chat-input'); $('game-chat-input').blur(); };
+$('lobby-chat-send').onclick = () => sendChatFrom('lobby-chat-input');
+$('lobby-chat-input').addEventListener('keydown', e => { if (e.key === 'Enter') sendChatFrom('lobby-chat-input'); });
 
 // ---------------------------------------------------------------------------
-// Editor entry (my courses)
+// Editor entry
 // ---------------------------------------------------------------------------
-function openMine() {
-  show('mine-modal');
-  renderMine();
-}
+function openMine() { modal('mine-modal', true); renderMine(); }
 function renderMine() {
   const list = $('mine-list');
   list.innerHTML = '';
   const mine = [...conn.db.myCourses.iter()].map(c => c as unknown as Course).sort((a, b) => (a.id < b.id ? 1 : -1));
-  if (!mine.length) list.innerHTML = '<div class="empty">Nothing yet. Make something wild.</div>';
+  if (!mine.length) list.innerHTML = '<div class="course-empty">NOTHING YET — MAKE SOMETHING WILD</div>';
   for (const c of mine) {
-    const item = document.createElement('div');
-    item.className = 'item';
-    item.innerHTML = `<div class="grow"><div class="name">${esc(c.name)} ${c.published ? '<span class="pill lime">PUBLISHED</span>' : '<span class="pill">DRAFT</span>'}</div><div class="tiny">${c.holeCount} HOLES · PAR ${c.totalPar} · ${c.plays} PLAYS</div></div><button class="btn small danger" data-del="1">✕</button>`;
-    item.onclick = e => {
-      if ((e.target as HTMLElement).dataset.del) {
-        if (confirm(`Delete "${c.name}"? This cannot be undone.`)) rd().deleteCourse({ courseId: c.id });
-        return;
-      }
-      launchEditor(c);
-    };
-    list.appendChild(item);
+    const row = document.createElement('div');
+    row.className = 'lobby-row';
+    row.innerHTML = `<div><div class="lobby-mode">${esc(c.name)} ${c.published ? '<span class="live-tag">PUBLISHED</span>' : ''}</div><div class="lobby-meta">${c.holeCount} HOLES · PAR ${c.totalPar} · ${c.plays} PLAYS${c.published ? '' : ' · DRAFT'}</div></div><button class="lobby-join">Edit</button><button class="lobby-join alt" data-del="1">✕</button>`;
+    row.querySelector('button')!.onclick = () => launchEditor(c);
+    (row.querySelector('[data-del]') as HTMLButtonElement).onclick = () => { if (confirm(`Delete "${c.name}"? This cannot be undone.`)) rd().deleteCourse({ courseId: c.id }); };
+    list.appendChild(row);
   }
   const bl = $('mine-builtins');
   bl.innerHTML = '';
   for (const c of [...conn.db.course.iter()].filter(c => c.builtin)) {
-    const item = document.createElement('div');
-    item.className = 'item';
-    item.innerHTML = `<div class="grow"><div class="name">${esc(c.name)}</div><div class="tiny">${c.holeCount} HOLES · PAR ${c.totalPar}</div></div><span class="pill">DUPLICATE</span>`;
-    item.onclick = () => launchEditor(c, true);
-    bl.appendChild(item);
+    const row = document.createElement('div');
+    row.className = 'lobby-row';
+    row.innerHTML = `<div><div class="lobby-mode">${esc(c.name)}</div><div class="lobby-meta">${c.holeCount} HOLES · PAR ${c.totalPar}</div></div><button class="lobby-join">Duplicate</button>`;
+    row.querySelector('button')!.onclick = () => launchEditor(c, true);
+    bl.appendChild(row);
   }
 }
-$('mine-close').onclick = () => { show('menu'); renderMenu(); };
+$('mine-close').onclick = () => modal('mine-modal', false);
 $('mine-new').onclick = () => launchEditor(null);
-
 function launchEditor(course: Course | null, duplicate = false) {
   const start = () => {
     const holes: Hole[] = course ? holeRows(course.id).map(parsedHole).filter((h): h is Hole => !!h) : [];
-    show('editor');
+    modal('mine-modal', false);
+    $('editor').classList.remove('hidden');
     openEditor({
       courseId: course && !duplicate ? course.id : 0n,
       name: course ? (duplicate ? `${course.name} REMIX` : course.name) : '',
@@ -498,41 +634,40 @@ function launchEditor(course: Course | null, duplicate = false) {
       myName: me()?.name ?? 'ANON',
       onSave: (courseId, name, holesJson) => rd().saveCourse({ courseId, name, holesJson }),
       onPublish: (courseId, published) => rd().publishCourse({ courseId, published }),
-      onExit: () => { closeEditor(); show('menu'); renderMenu(); },
-      findSaved: (name) => {
-        // after a fresh save the new course id is whatever my newest course with that name is
+      onExit: () => { closeEditor(); $('editor').classList.add('hidden'); route(); renderMenu(); },
+      findSaved: name => {
         let best: Course | undefined;
-        for (const c of conn.db.myCourses.iter()) {
-          const cc = c as unknown as Course;
-          if (cc.name === name && (!best || cc.id > best.id)) best = cc;
-        }
+        for (const c of conn.db.myCourses.iter()) { const cc = c as unknown as Course; if (cc.name === name && (!best || cc.id > best.id)) best = cc; }
         return best ? { id: best.id, published: best.published } : null;
       },
     });
   };
   if (course) {
     subscribeCourse(course.id);
-    // hole rows may still be in flight — wait for them briefly
-    const want = course.holeCount;
     let tries = 0;
-    const wait = () => {
-      if (holeRows(course.id).length >= want || tries++ > 30) start();
-      else setTimeout(wait, 100);
-    };
+    const wait = () => { if (holeRows(course.id).length >= course.holeCount || tries++ > 30) start(); else setTimeout(wait, 100); };
     wait();
   } else start();
 }
 
 // ---------------------------------------------------------------------------
-// Row events → UI refresh, SFX, VFX
+// Row events → refresh, SFX, VFX
 // ---------------------------------------------------------------------------
-interface Disp { x: number; y: number; z: number; sx: number; sy: number; sz: number; svx: number; svy: number; svz: number; at: number; emote: string; emoteUntil: number; lastEventSeq: number; lastShotSeq: number; lastEmoteSeq: number }
+interface Disp { x: number; y: number; z: number; sx: number; sy: number; sz: number; svx: number; svy: number; svz: number; at: number; emote: string; emoteUntil: number; lastEventSeq: number; lastShotSeq: number; lastEmoteSeq: number; facing: number }
 const disp = new Map<string, Disp>();
-const particles = new Particles();
 let lastSeenPhase = -1;
+let unreadChat = 0;
 
 function wireRowEvents() {
-  const refresh = () => { if (subscribed) { route(); if (currentScreen === 'menu') renderMenu(); else if (currentScreen === 'room') renderRoom(); else if (currentScreen === 'picker') renderPicker(); else if (currentScreen === 'mine-modal') renderMine(); } };
+  const refresh = () => {
+    if (!subscribed) return;
+    route();
+    if (overlayTarget === 'menu') renderMenu();
+    else if (overlayTarget === 'waiting') renderRoom();
+    else if (overlayTarget === 'select-course') renderCourseGrid();
+    else if (overlayTarget === 'gameover') renderGameOver();
+    if (!$('mine-modal').classList.contains('hidden')) renderMine();
+  };
   conn.db.lobby.onInsert(refresh);
   conn.db.lobby.onDelete(refresh);
   conn.db.lobby.onUpdate((_c, old, row) => {
@@ -542,10 +677,21 @@ function wireRowEvents() {
   conn.db.player.onDelete(refresh);
   conn.db.player.onUpdate((_c, old, row) => {
     notePlayer(row, old);
-    if (row.lobbyId !== old.lobbyId || row.name !== old.name || row.color !== old.color || row.online !== old.online) refresh();
+    if (row.lobbyId !== old.lobbyId || row.name !== old.name || row.color !== old.color || row.online !== old.online || row.characterId !== old.characterId) refresh();
   });
-  conn.db.chat.onInsert(() => { const l = myLobby(); if (l) { renderChat('room-chat-log', l.id); renderChat('game-chat-log', l.id); if (currentScreen === 'game' && $('game-chat-box').classList.contains('hidden')) unreadChat++; } });
+  conn.db.chat.onInsert((_c, row) => {
+    const l = myLobby();
+    if (!l || row.lobbyId !== l.id) return;
+    renderChatFeed('lobby-chat-feed', l.id, 60);
+    if (overlayTarget === null) { renderChatFeed('chat-feed', l.id, 5); if (!isMe(row.identity)) unreadChat++; }
+  });
   conn.db.course.onInsert(refresh); conn.db.course.onUpdate(refresh); conn.db.course.onDelete(refresh);
+  let holeRefresh = 0;
+  conn.db.hole.onInsert(() => {
+    if (overlayTarget !== 'select-course') return;
+    clearTimeout(holeRefresh);
+    holeRefresh = window.setTimeout(() => renderCourseGrid(), 80);
+  });
   conn.db.myCourses.onInsert(refresh); conn.db.myCourses.onUpdate(refresh); conn.db.myCourses.onDelete(refresh);
 }
 
@@ -553,7 +699,7 @@ function dispOf(p: Player): Disp {
   const key = p.identity.toHexString();
   let d = disp.get(key);
   if (!d) {
-    d = { x: p.x, y: p.y, z: p.z, sx: p.x, sy: p.y, sz: p.z, svx: p.vx, svy: p.vy, svz: p.vz, at: performance.now(), emote: '', emoteUntil: 0, lastEventSeq: p.eventSeq, lastShotSeq: p.shotSeq, lastEmoteSeq: p.emoteSeq };
+    d = { x: p.x, y: p.y, z: p.z, sx: p.x, sy: p.y, sz: p.z, svx: p.vx, svy: p.vy, svz: p.vz, at: performance.now(), emote: '', emoteUntil: 0, lastEventSeq: p.eventSeq, lastShotSeq: p.shotSeq, lastEmoteSeq: p.emoteSeq, facing: 0 };
     disp.set(key, d);
   }
   return d;
@@ -565,7 +711,7 @@ function notePlayer(row: Player, old: Player) {
   d.sx = row.x; d.sy = row.y; d.sz = row.z; d.svx = row.vx; d.svy = row.vy; d.svz = row.vz; d.at = performance.now();
   if (jumped) { d.x = row.x; d.y = row.y; d.z = row.z; }
   const lobby = myLobby();
-  const inMyRoom = !!lobby && row.lobbyId === lobby.id && currentScreen === 'game';
+  const inMyRoom = !!lobby && row.lobbyId === lobby.id && overlayTarget === null;
   if (row.emoteSeq !== d.lastEmoteSeq) {
     d.lastEmoteSeq = row.emoteSeq;
     d.emote = EMOTES[row.emote] ?? '';
@@ -573,35 +719,35 @@ function notePlayer(row: Player, old: Player) {
   }
   if (row.shotSeq !== d.lastShotSeq) {
     d.lastShotSeq = row.shotSeq;
-    if (inMyRoom) sfx.putt(row.eventPower);
+    if (inMyRoom) { sfx.putt(row.eventPower); burstAt(row.x, row.y, 0, 0xffffff, 6, 6); }
   }
   if (row.eventSeq !== d.lastEventSeq) {
     d.lastEventSeq = row.eventSeq;
     if (!inMyRoom) return;
-    const color = COLORS[row.color];
+    const color = parseInt(COLORS[row.color].slice(1), 16);
     switch (row.eventKind) {
-      case EV.WALL: sfx.wall(row.eventPower); particles.burst(row.x, row.y, 4 + Math.min(10, row.eventPower / 3), '#ffffff', 3, 0.12, 0.3); break;
-      case EV.BUMPER: sfx.bumper(); particles.burst(row.x, row.y, 14, '#ff8a8a', 7, 0.16, 0.45); break;
-      case EV.JUMP: sfx.jump(); particles.burst(row.x, row.y, 8, '#ffd60a', 4, 0.14, 0.4); break;
-      case EV.LAND: sfx.land(); particles.burst(row.x, row.y, 6, '#c9c9c9', 3, 0.12, 0.3); break;
-      case EV.TELE: sfx.tele(); particles.burst(row.x, row.y, 20, '#c77dff', 6, 0.18, 0.6); break;
-      case EV.WATER: sfx.water(); particles.burst(old.x, old.y, 18, '#7fc8ff', 5, 0.18, 0.7, 12); if (isMe(row.identity)) toast('SPLASH! +1 stroke'); break;
-      case EV.RESET: sfx.reset(); if (isMe(row.identity)) toast('Back you go'); break;
+      case EV.WALL: sfx.wall(row.eventPower); burstAt(row.x, row.y, 0, 0xfff8a0, 6 + Math.min(12, row.eventPower / 3), 8 + row.eventPower / 3); if (row.eventPower > 20) addShake(0.3); break;
+      case EV.BUMPER: sfx.bumper(); burstAt(row.x, row.y, 0, 0xff8a8a, 18, 16); addShake(0.5); break;
+      case EV.JUMP: sfx.jump(); burstAt(row.x, row.y, 0, 0xffd60a, 10, 10); break;
+      case EV.LAND: sfx.land(); burstAt(row.x, row.y, 0, 0xc9c9c9, 8, 7); break;
+      case EV.TELE: sfx.tele(); burstAt(row.x, row.y, 0, 0xc77dff, 24, 14); burstAt(old.x, old.y, 0, 0xc77dff, 14, 10); break;
+      case EV.WATER: sfx.water(); burstAt(old.x, old.y, 0, 0x7fc8ff, 24, 14, -30); if (isMe(row.identity)) banner('SPLASH! +1 STROKE', 'lose'); break;
+      case EV.RESET: sfx.reset(); if (isMe(row.identity)) banner('BACK YOU GO'); break;
       case EV.BOOST: sfx.boost(); break;
       case EV.HOLED: {
         const hole = currentHole(lobby!);
         const par = hole?.par ?? 3;
         sfx.holed(row.eventPower, par);
-        particles.confetti(row.x, row.y);
-        particles.burst(row.x, row.y, 20, color, 6, 0.2, 0.8);
-        if (isMe(row.identity)) toast(scoreName(row.eventPower, par));
-        else toast(`${row.name}: ${scoreName(row.eventPower, par)}`);
+        burstAt(row.x, row.y, 0, 0xffd400, 30, 22, -30);
+        burstAt(row.x, row.y, 0, color, 20, 16, -25);
+        addShake(0.6);
+        const label = scoreName(row.eventPower, par);
+        if (isMe(row.identity)) toastBig(label); else banner(`${row.name}: ${label}`);
         break;
       }
     }
   }
 }
-
 function scoreName(score: number, par: number): string {
   if (score === 1) return 'HOLE IN ONE!!!';
   const d = score - par;
@@ -616,84 +762,80 @@ function scoreName(score: number, par: number): string {
 const relPar = (delta: number) => (delta === 0 ? 'E' : delta > 0 ? `+${delta}` : `${delta}`);
 const relClass = (delta: number) => (delta === 0 ? 'even' : delta > 0 ? 'over' : 'under');
 
+let bannerTimer = 0;
+function banner(text: string, kind = '') {
+  const el = $('banner');
+  el.textContent = text;
+  el.className = kind;
+  el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop');
+  clearTimeout(bannerTimer);
+  bannerTimer = window.setTimeout(() => { el.textContent = ''; }, 2200);
+}
+function toastBig(text: string) {
+  const el = $('toast');
+  el.textContent = text;
+  el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
+}
+
 // ---------------------------------------------------------------------------
-// Game
+// Game: input, HUD, the per-frame scene
 // ---------------------------------------------------------------------------
 const canvas = $('game-canvas') as HTMLCanvasElement;
-const g = canvas.getContext('2d')!;
-let W = 0, H = 0, DPR = 1;
-function resizeCanvas() {
-  DPR = Math.min(2, window.devicePixelRatio || 1);
-  W = canvas.clientWidth; H = canvas.clientHeight;
-  canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR);
-}
-window.addEventListener('resize', () => { if (currentScreen === 'game') resizeCanvas(); });
+initRenderer(canvas);
 
-const cam: Camera = { x: 0, y: 0, scale: 20 };
-let camHoleId = 0n;
-const MIN_SCALE = 12;
-let unreadChat = 0;
-let gameHoleObj: Hole | null = null;
-let holeStartAt = 0;
-
-function enterGame() {
-  unlockAudio();
-  resizeCanvas();
-  particles;
-  lastSeenPhase = -1;
-  $('game-chat-box').classList.add('hidden');
-  const bar = $('emote-bar');
-  if (!bar.childElementCount) EMOTES.forEach((e, i) => { const b = document.createElement('button'); b.textContent = e; b.onclick = () => rd().sendEmote({ index: i }); bar.appendChild(b); });
-}
-
-// aim state
-let drag: { active: boolean; angle: number; power: number; px: number; py: number } = { active: false, angle: 0, power: 0, px: 0, py: 0 };
-let kbAim = { active: false, angle: 0, charging: false, chargeStart: 0 };
+let drag: { active: boolean; angle: number; power: number } = { active: false, angle: 0, power: 0 };
+const kbAim = { active: false, angle: 0, charging: false, chargeStart: 0 };
 const MAX_DRAG_UNITS = 7;
 let previewPath: { x: number; y: number }[] = [];
 let previewKey = '';
+let gameHoleObj: Hole | null = null;
+let gameHoleKey = '';
+let tLocal = 0;
 
+function enterGame() {
+  unlockAudio();
+  lastSeenPhase = -1;
+  unreadChat = 0;
+  $('chat-feed').innerHTML = '';
+  const bar = $('emote-bar');
+  if (!bar.childElementCount) EMOTES.forEach((e, i) => { const b = document.createElement('button'); b.textContent = e; b.onclick = () => rd().sendEmote({ index: i }); bar.appendChild(b); });
+}
 function canShoot(): boolean {
   const lobby = myLobby(); const p = me();
-  return !!lobby && !!p && lobby.phase === PH_PLAY && p.resting && !p.holed && p.strokes < lobby.maxStrokes;
+  return !!lobby && !!p && lobby.phase === PH_PLAY && p.resting && !p.holed && p.strokes < lobby.maxStrokes && overlayTarget === null && $('match-menu').classList.contains('hidden');
 }
-function ballScreen(): { x: number; y: number } | null {
-  const p = me(); if (!p) return null;
-  const d = dispOf(p);
-  return w2s(cam, W, H, d.x, d.y);
+function pointerWorld(e: PointerEvent) {
+  const r = canvas.getBoundingClientRect();
+  return groundPointAt(e.clientX - r.left, e.clientY - r.top);
 }
-
 canvas.addEventListener('pointerdown', e => {
   unlockAudio();
   if (!canShoot()) return;
-  if (currentScreen !== 'game') return;
+  if (e.button !== 0) return;
   canvas.setPointerCapture(e.pointerId);
-  drag = { active: true, angle: 0, power: 0, px: e.clientX, py: e.clientY };
+  drag = { active: true, angle: kbAim.angle, power: 0 };
   kbAim.active = false;
-  updateDrag(e.clientX, e.clientY);
+  updateDrag(e);
 });
-canvas.addEventListener('pointermove', e => { if (drag.active) updateDrag(e.clientX, e.clientY); });
+canvas.addEventListener('pointermove', e => { if (drag.active) updateDrag(e); });
 canvas.addEventListener('pointerup', e => {
   if (!drag.active) return;
-  updateDrag(e.clientX, e.clientY);
+  updateDrag(e);
   drag.active = false;
   if (drag.power > 0.04 && canShoot()) rd().shoot({ angle: drag.angle, power: drag.power });
-  $('power-legend').classList.add('hidden');
 });
-canvas.addEventListener('pointercancel', () => { drag.active = false; $('power-legend').classList.add('hidden'); });
-function updateDrag(cx: number, cy: number) {
-  const b = ballScreen(); if (!b) return;
-  const rect = canvas.getBoundingClientRect();
-  const sx = cx - rect.left, sy = cy - rect.top;
+canvas.addEventListener('pointercancel', () => { drag.active = false; });
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+function updateDrag(e: PointerEvent) {
+  const p = me(); if (!p) return;
+  const w = pointerWorld(e); if (!w) return;
+  const d = dispOf(p);
   // slingshot: pull away from the ball; the shot goes the other way
-  const dx = b.x - sx, dy = b.y - sy;
-  const dist = Math.hypot(dx, dy) / cam.scale;
-  drag.angle = Math.atan2(dy, dx);
-  drag.power = Math.min(1, Math.max(0, (dist - 0.4) / MAX_DRAG_UNITS));
-  $('power-legend').classList.remove('hidden');
-  ($('power-fill') as HTMLElement).style.width = `${Math.round(drag.power * 100)}%`;
+  const dx = d.x - w.x, dy = d.y - w.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist > 0.3) drag.angle = Math.atan2(dy, dx);
+  drag.power = clamp((dist - 0.6) / MAX_DRAG_UNITS, 0, 1);
 }
-
 function computePreview(angle: number, power: number) {
   const p = me(); const lobby = myLobby();
   if (!p || !lobby || !gameHoleObj) { previewPath = []; return; }
@@ -706,7 +848,7 @@ function computePreview(angle: number, power: number) {
   const t0 = lobby.holeTick / TICK_HZ;
   const path = [{ x: b.x, y: b.y }];
   const ev = newEvents();
-  for (let i = 0; i < 45; i++) {
+  for (let i = 0; i < 50; i++) {
     stepBall(b, geom, t0 + i / TICK_HZ, ev);
     if (i % 2 === 0) path.push({ x: b.x, y: b.y });
     if (ev.holed || ev.water || ev.oob || ev.tele) break;
@@ -714,212 +856,198 @@ function computePreview(angle: number, power: number) {
   }
   previewPath = path;
 }
+const kbPower = () => { const t = (performance.now() - kbAim.chargeStart) / 1200; const k = t % 2; return k < 1 ? k : 2 - k; };
 
-// keyboard
 window.addEventListener('keydown', e => {
   if (editorIsOpen()) return;
-  const inInput = (e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA';
-  if (currentScreen !== 'game') return;
+  const tag = (e.target as HTMLElement)?.tagName;
+  const inInput = tag === 'INPUT' || tag === 'TEXTAREA';
   if (e.key === 'Escape') {
-    if (!$('game-chat-box').classList.contains('hidden')) { toggleChat(false); return; }
-    if (!$('scores-overlay').classList.contains('hidden')) { $('scores-overlay').classList.add('hidden'); return; }
-    $('esc-menu').classList.toggle('hidden');
+    if (inInput) { (e.target as HTMLElement).blur(); $('chat-input').classList.remove('open'); return; }
+    for (const m of ['settings-modal', 'rules-modal', 'mine-modal', 'scores-modal']) if (!$(m).classList.contains('hidden')) { modal(m, false); return; }
+    if (overlayTarget === null) $('match-menu').classList.toggle('hidden');
     return;
   }
   if (inInput) return;
-  if (e.key === 'Enter') { toggleChat(true); e.preventDefault(); return; }
-  if (e.key === 'Tab') { e.preventDefault(); $('scores-overlay').classList.toggle('hidden'); renderScorecard('scores-table'); return; }
-  if (e.key >= '1' && e.key <= '6') { rd().sendEmote({ index: Number(e.key) - 1 }); return; }
+  if (e.key === 'g' || e.key === 'G') { modal('settings-modal', !$('settings-modal').classList.contains('hidden') ? false : true); return; }
   if (e.key === 'f' || e.key === 'F') { toggleFullscreen(); return; }
+  if (e.key === 'm' || e.key === 'M') { setMuted(!isMuted()); notify(isMuted() ? 'MUTED' : 'SOUND ON'); return; }
+  if (overlayTarget !== null) return;
+  if (e.key === 'Enter') { const ci = $('chat-input'); ci.classList.add('open'); ci.focus(); unreadChat = 0; e.preventDefault(); return; }
+  if (e.key === 'Tab') { e.preventDefault(); const open = $('scores-modal').classList.contains('hidden'); modal('scores-modal', open); if (open) renderScorecard('scores-table'); return; }
+  if (e.key >= '1' && e.key <= '6') { rd().sendEmote({ index: Number(e.key) - 1 }); return; }
   if (!canShoot()) return;
   if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') { kbAim.active = true; kbAim.angle -= e.shiftKey ? 0.01 : 0.05; e.preventDefault(); }
   if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') { kbAim.active = true; kbAim.angle += e.shiftKey ? 0.01 : 0.05; e.preventDefault(); }
   if (e.key === ' ' && !kbAim.charging) { kbAim.active = true; kbAim.charging = true; kbAim.chargeStart = performance.now(); e.preventDefault(); }
 });
 window.addEventListener('keyup', e => {
-  if (currentScreen !== 'game' || editorIsOpen()) return;
+  if (overlayTarget !== null || editorIsOpen()) return;
   if (e.key === ' ' && kbAim.charging) {
     kbAim.charging = false;
     const power = kbPower();
     if (canShoot() && power > 0.03) rd().shoot({ angle: kbAim.angle, power });
   }
 });
-const kbPower = () => { const t = (performance.now() - kbAim.chargeStart) / 1200; const k = t % 2; return k < 1 ? k : 2 - k; };
-
-function toggleChat(open: boolean) {
-  $('game-chat-box').classList.toggle('hidden', !open);
-  if (open) { unreadChat = 0; ($('game-chat-input') as HTMLInputElement).focus(); const l = myLobby(); if (l) renderChat('game-chat-log', l.id); }
-  else ($('game-chat-input') as HTMLInputElement).blur();
-}
-$('btn-chat').onclick = () => toggleChat($('game-chat-box').classList.contains('hidden'));
-$('btn-scores').onclick = () => { $('scores-overlay').classList.toggle('hidden'); renderScorecard('scores-table'); };
-$('scores-close').onclick = () => $('scores-overlay').classList.add('hidden');
-$('btn-esc').onclick = () => $('esc-menu').classList.toggle('hidden');
-$('esc-resume').onclick = () => $('esc-menu').classList.add('hidden');
-$('esc-leave').onclick = () => { $('esc-menu').classList.add('hidden'); rd().leaveLobby({}); show('menu'); renderMenu(); };
-$('esc-mute').onclick = () => { setMuted(!isMuted()); $('esc-mute').textContent = isMuted() ? 'Unmute' : 'Mute'; };
-$('esc-fullscreen').onclick = toggleFullscreen;
-$('btn-fullscreen').onclick = toggleFullscreen;
-function toggleFullscreen() {
-  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-  else document.documentElement.requestFullscreen?.().catch(() => {});
-}
-$('final-again').onclick = () => rd().playAgain({});
-$('final-lobby').onclick = () => rd().playAgain({});
-$('final-leave').onclick = () => { rd().leaveLobby({}); show('menu'); renderMenu(); };
+$('chat-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { sendChatFrom('chat-input'); $('chat-input').classList.remove('open'); $('chat-input').blur(); }
+});
+$('mm-resume').onclick = () => modal('match-menu', false);
+$('mm-scores').onclick = () => { modal('match-menu', false); modal('scores-modal', true); renderScorecard('scores-table'); };
+$('mm-settings').onclick = () => modal('settings-modal', true);
+$('mm-leave').onclick = () => { modal('match-menu', false); rd().leaveLobby({}); intent = null; resetScene(); showOverlay('menu'); };
+$('scores-close').onclick = () => modal('scores-modal', false);
+$('again-btn').onclick = () => rd().playAgain({});
+$('exit-btn').onclick = () => { rd().leaveLobby({}); intent = null; resetScene(); showOverlay('menu'); };
 
 // ---------------------------------------------------------------------------
 // Frame loop
 // ---------------------------------------------------------------------------
 let lastFrame = performance.now();
 let lastTimerShown = -1;
+const headAnnos = new Map<string, HTMLElement>();
+const emptyScene: GolfScene = { hole: null, holeKey: '', t: 0, players: [], aim: null, cam: 'overview', meId: null };
+
 function frame(now: number) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - lastFrame) / 1000);
   lastFrame = now;
-  if (currentScreen !== 'game' || !subscribed) return;
-  const lobby = myLobby(); const p = me();
-  if (!lobby || !p) return;
-  if (lobby.status === L_OPEN) { route(); return; }
-  if (lobby.holeId !== camHoleId) { camHoleId = lobby.holeId; gameHoleObj = currentHole(lobby); if (gameHoleObj) { const f = fitCamera(gameHoleObj, W, H); cam.x = f.x; cam.y = f.y; cam.scale = f.scale; } holeStartAt = now; }
-  if (!gameHoleObj) { gameHoleObj = currentHole(lobby); if (!gameHoleObj) { subscribeCourse(lobby.courseId); drawWaiting(); return; } }
+  if (editorIsOpen()) return;
+  const lobby = subscribed ? myLobby() : undefined;
+  const p = subscribed ? me() : undefined;
+  if (!lobby || !p || lobby.status === L_OPEN) {
+    // the stadium idles behind the menus
+    drawScene(emptyScene);
+    for (const el of headAnnos.values()) el.style.visibility = 'hidden';
+    return;
+  }
+  if (lobby.holeId.toString() !== gameHoleKey) {
+    gameHoleKey = lobby.holeId.toString();
+    gameHoleObj = currentHole(lobby);
+    tLocal = lobby.holeTick / TICK_HZ;
+    previewKey = '';
+  }
+  if (!gameHoleObj) { gameHoleObj = currentHole(lobby); if (!gameHoleObj) subscribeCourse(lobby.courseId); }
   const hole = gameHoleObj;
   const players = lobbyPlayers(lobby.id);
+  // mover clock: free-running, nudged toward the server's tick
+  const tServer = lobby.holeTick / TICK_HZ;
+  tLocal += dt;
+  if (lobby.phase !== PH_PLAY) tLocal = tServer;
+  else tLocal += (tServer - tLocal) * 0.1;
 
-  // interpolate balls
+  const aiming = canShoot() && (drag.active || kbAim.active);
+  const aimAngle = drag.active ? drag.angle : kbAim.angle;
+  const aimPower = drag.active ? drag.power : kbAim.charging ? kbPower() : 0.35;
+  if (aiming) computePreview(aimAngle, aimPower);
+
+  const scenePlayers: GolfPlayer[] = [];
   for (const q of players) {
     const d = dispOf(q);
     const age = Math.min(0.15, (now - d.at) / 1000);
     const tx = d.sx + d.svx * age, ty = d.sy + d.svy * age, tz = Math.max(0, d.sz + d.svz * age);
     const k = 1 - Math.exp(-dt * 22);
     d.x += (tx - d.x) * k; d.y += (ty - d.y) * k; d.z += (tz - d.z) * k;
-  }
-  // camera: whole hole if it fits, else follow my ball
-  {
-    const fit = fitCamera(hole, W, H);
-    const me_ = dispOf(p);
-    let want: Camera;
-    if (fit.scale >= MIN_SCALE) want = fit;
-    else {
-      const b = holeBoundsCached(hole);
-      const halfW = W / 2 / MIN_SCALE, halfH = H / 2 / MIN_SCALE;
-      want = { scale: MIN_SCALE, x: clamp(me_.x, b.minX + halfW - 2, b.maxX - halfW + 2), y: clamp(me_.y, b.minY + halfH - 2, b.maxY - halfH + 2) };
-      if (b.w + 4 < halfW * 2) want.x = b.minX + b.w / 2;
-      if (b.h + 4 < halfH * 2) want.y = b.minY + b.h / 2;
+    const mine = isMe(q.identity);
+    const speed = Math.hypot(q.vx, q.vy);
+    if (mine && aiming) d.facing = aimAngle;
+    else if (speed > 1.5) d.facing = Math.atan2(q.vy, q.vx);
+    else if (q.resting && hole && !q.holed) {
+      // set up toward the cup once the ball has stopped (keep the shot facing briefly)
+      const toCup = Math.atan2(hole.cup.y - q.y, hole.cup.x - q.x);
+      d.facing = toCup;
     }
-    const k = 1 - Math.exp(-dt * 4);
-    cam.x += (want.x - cam.x) * k; cam.y += (want.y - cam.y) * k; cam.scale += (want.scale - cam.scale) * k;
-  }
-  particles.step(dt);
-
-  // draw
-  g.setTransform(DPR, 0, 0, DPR, 0, 0);
-  const t = lobby.phase === PH_PLAY ? lobby.holeTick / TICK_HZ + (now - lastTickAt) / 1000 * 0 : lobby.holeTick / TICK_HZ;
-  const theme = themeFor(hole, hole.theme);
-  drawHole(g, hole, cam, W, H, { t: t + (now - holeStartAt) / 1000 * 0.0001, theme });
-  // moving blocks are driven by the server's holeTick; smooth between ticks
-  void t;
-  const sorted = [...players].sort((a, b) => (isMe(a.identity) ? 1 : 0) - (isMe(b.identity) ? 1 : 0));
-  for (const q of sorted) {
-    if (q.holed) continue;
-    const d = dispOf(q);
-    drawBall(g, cam, W, H, d.x, d.y, d.z, COLORS[q.color], {
-      label: isMe(q.identity) ? undefined : q.name, me: isMe(q.identity), ghost: q.strokes === 0 && !isMe(q.identity),
-      emote: d.emoteUntil > now ? d.emote : undefined,
+    scenePlayers.push({
+      id: q.identity.toHexString(), name: q.name, characterId: q.characterId,
+      color: parseInt(COLORS[q.color].slice(1), 16),
+      x: d.x, y: d.y, z: d.z, vx: q.vx, vy: q.vy, resting: q.resting, holed: q.holed,
+      ghost: q.strokes === 0 && !mine && lobby.collisions, me: mine, facing: d.facing,
+      shotSeq: q.shotSeq, shotPower: q.eventPower, emote: d.emoteUntil > now ? d.emote : undefined,
+      seat: q.seat,
     });
   }
-  if (p.holed) { const d = dispOf(p); if (d.emoteUntil > now) drawBall(g, cam, W, H, hole.cup.x, hole.cup.y - 1.2, 0, COLORS[p.color], { ghost: true, emote: d.emote }); }
-  particles.draw(g, cam, W, H);
-  // aim
-  if (canShoot()) {
-    const d = dispOf(p);
-    if (drag.active) { computePreview(drag.angle, drag.power); drawAim(g, cam, W, H, d.x, d.y, drag.angle, drag.power, COLORS[p.color], previewPath); }
-    else if (kbAim.active) {
-      const pw = kbAim.charging ? kbPower() : 0.35;
-      computePreview(kbAim.angle, pw);
-      drawAim(g, cam, W, H, d.x, d.y, kbAim.angle, pw, COLORS[p.color], previewPath);
-      $('power-legend').classList.toggle('hidden', !kbAim.charging);
-      if (kbAim.charging) ($('power-fill') as HTMLElement).style.width = `${Math.round(pw * 100)}%`;
-    } else {
-      // idle pulse ring so you can find your ball
-      const s = w2s(cam, W, H, d.x, d.y);
-      g.beginPath(); g.arc(s.x, s.y, (BALL_R + 0.5 + 0.2 * Math.sin(now / 200)) * cam.scale, 0, Math.PI * 2);
-      g.strokeStyle = 'rgba(164,255,61,0.7)'; g.lineWidth = 2; g.stroke();
-    }
-  }
-  renderHud(lobby, p, players, hole, now);
-}
-let lastTickAt = 0;
-const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
-const boundsCache = new WeakMap<Hole, ReturnType<typeof holeBoundsImpl>>();
-function holeBoundsImpl(h: Hole) { let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity; for (const r of h.floor) { minX = Math.min(minX, r.x); minY = Math.min(minY, r.y); maxX = Math.max(maxX, r.x + r.w); maxY = Math.max(maxY, r.y + r.h); } return { minX, minY, maxX, maxY, w: maxX - minX, h: maxY - minY }; }
-function holeBoundsCached(h: Hole) { let b = boundsCache.get(h); if (!b) { b = holeBoundsImpl(h); boundsCache.set(h, b); } return b; }
-function drawWaiting() {
-  g.setTransform(DPR, 0, 0, DPR, 0, 0);
-  g.fillStyle = '#061a10'; g.fillRect(0, 0, W, H);
-  g.fillStyle = '#9fc2a8'; g.font = '700 18px Chakra Petch, sans-serif'; g.textAlign = 'center';
-  g.fillText('LOADING HOLE…', W / 2, H / 2);
+  const cam: GolfScene['cam'] = lobby.phase === PH_INTRO ? 'overview' : lobby.phase === PH_RESULTS ? 'cup' : lobby.phase === PH_FINAL ? 'overview' : p.holed ? 'cup' : 'play';
+  drawScene({
+    hole, holeKey: hole ? gameHoleKey : '', t: tLocal, players: scenePlayers,
+    aim: aiming && hole ? { angle: aimAngle, power: aimPower, path: previewPath } : null,
+    cam, meId: p.identity.toHexString(),
+  });
+  if (kbAim.active && !drag.active) kbAim.active = kbAim.charging || kbAim.active; // stays until the shot
+  if (overlayTarget === null) renderHud(lobby, p, players, hole, now, aiming, aimPower);
 }
 
-function renderHud(lobby: Lobby, p: Player, players: Player[], hole: Hole, now: number) {
-  $('hud-hole-k').textContent = `HOLE ${lobby.holeIndex + 1} / ${lobby.holeCount}`;
-  $('hud-hole-name').textContent = hole.name;
-  $('hud-hole-par').textContent = `PAR ${hole.par} · MAX ${lobby.maxStrokes}`;
-  $('hud-strokes-n').textContent = p.holed ? '✓' : String(p.strokes);
+function renderHud(lobby: Lobby, p: Player, players: Player[], hole: Hole | null, now: number, aiming: boolean, aimPower: number) {
+  $('hud-me-name').textContent = p.name;
+  $('hud-me-char').textContent = charOf(p).name;
+  $('hud-me-strokes').textContent = p.holed ? '⛳' : String(p.strokes);
+  const played = parThrough(lobby, p.holeScores.length - 1);
+  $('hud-me-total').textContent = p.holeScores.length ? relPar(p.total - played) : 'E';
+  ($('hud-power-fill') as HTMLElement).style.width = aiming ? `${Math.round(aimPower * 100)}%` : '0%';
+  $('hud-hole-name').textContent = hole ? hole.name.toUpperCase() : 'LOADING';
+  $('hud-hole-par').textContent = hole ? `PAR ${hole.par}` : '';
+  $('hud-hole-n').textContent = `${lobby.holeIndex + 1}/${lobby.holeCount}`;
   const secs = lobby.phase === PH_PLAY ? Math.ceil(lobby.phaseTicks / TICK_HZ) : lobby.holeSecs;
+  ($('hud-time-fill') as HTMLElement).style.width = `${Math.round((secs / lobby.holeSecs) * 100)}%`;
   if (secs !== lastTimerShown) {
     lastTimerShown = secs;
     $('hud-timer').textContent = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
-    $('hud-timer').classList.toggle('low', lobby.phase === PH_PLAY && secs <= 10);
-    if (lobby.phase === PH_PLAY && secs <= 5 && secs > 0 && !p.holed) sfx.tick();
+    const cd = $('countdown');
+    if (lobby.phase === PH_PLAY && secs <= 5 && secs > 0 && !p.holed) { cd.textContent = String(secs); cd.classList.remove('pop'); void cd.offsetWidth; cd.classList.add('pop'); sfx.tick(); }
+    else cd.textContent = '';
   }
-  // mini board
-  const board = $('hud-board');
+  // leaderboard
   const ranked = [...players].sort((a, b) => a.total - b.total || a.seat - b.seat);
-  const parSoFar = parThrough(lobby, lobby.holeIndex);
   const html = ranked.map(q => {
-    const done = q.holed;
-    const cur = done ? `${q.holeScores[lobby.holeIndex] ?? q.strokes}` : `${q.strokes}`;
+    const cur = q.holed ? `${q.holeScores[lobby.holeIndex] ?? q.strokes}` : `${q.strokes}`;
     const tot = q.holeScores.length ? relPar(q.total - parThrough(lobby, q.holeScores.length - 1)) : '—';
-    return `<div class="r${done ? ' done' : ''}${isMe(q.identity) ? ' me' : ''}"><span class="dot" style="background:${COLORS[q.color]}"></span><span class="name">${esc(q.name)}${q.online ? '' : ' 💤'}</span><span class="sc">${done ? '⛳' : ''}${cur} · ${tot}</span></div>`;
+    return `<div class="r${q.holed ? ' done' : ''}${isMe(q.identity) ? ' me' : ''}"><span class="dot" style="background:${COLORS[q.color]}"></span><span class="nm">${esc(q.name)}${q.online ? '' : ' 💤'}</span><span class="sc">${q.holed ? '⛳' : ''}${cur} · ${tot}</span></div>`;
   }).join('');
-  void parSoFar;
+  const board = $('board');
   if (board.innerHTML !== html) board.innerHTML = html;
-  $('btn-chat').textContent = unreadChat ? `💬 ${unreadChat}` : '💬';
-  $('hud-hint').textContent = p.holed ? 'IN THE HOLE — WAITING FOR THE OTHERS' : lobby.phase === PH_PLAY
-    ? (p.resting ? (p.strokes >= lobby.maxStrokes ? 'OUT OF STROKES' : 'DRAG BACK FROM YOUR BALL · RELEASE TO PUTT  ·  ⌨ ←/→ AIM, HOLD SPACE') : 'ROLLING…')
+  $('help').textContent = p.holed ? 'IN THE HOLE — WAITING FOR THE OTHERS' : lobby.phase === PH_PLAY
+    ? (p.resting ? (p.strokes >= lobby.maxStrokes ? 'OUT OF STROKES' : 'DRAG BACK FROM YOUR BALL · RELEASE TO PUTT · ←/→ AIM · HOLD SPACE · TAB SCORECARD · ENTER CHAT · ESC MENU') : 'ROLLING…')
     : '';
+  // name tags + emotes above the other balls
+  const seen = new Set<string>();
+  for (const q of players) {
+    const key = q.identity.toHexString();
+    seen.add(key);
+    let el = headAnnos.get(key);
+    if (!el) { el = document.createElement('div'); el.className = 'head-anno'; el.innerHTML = '<span class="name-tag"></span><span class="emote-pop"></span>'; $('head-annos').appendChild(el); headAnnos.set(key, el); }
+    const d = dispOf(q);
+    const pos = q.holed ? null : ballScreenPos(key);
+    if (!pos) { el.style.visibility = 'hidden'; continue; }
+    el.style.visibility = 'visible';
+    el.style.left = `${pos.x}px`; el.style.top = `${pos.y}px`;
+    const tag = el.querySelector('.name-tag') as HTMLElement;
+    tag.textContent = isMe(q.identity) ? '' : q.name;
+    tag.style.display = isMe(q.identity) ? 'none' : '';
+    const pop = el.querySelector('.emote-pop') as HTMLElement;
+    const showEmote = d.emoteUntil > now;
+    pop.textContent = showEmote ? d.emote : '';
+    pop.classList.toggle('show', showEmote);
+  }
+  for (const [key, el] of headAnnos) if (!seen.has(key)) { el.remove(); headAnnos.delete(key); }
 
   // phase overlays
   if (lobby.phase !== lastSeenPhase) {
     lastSeenPhase = lobby.phase;
-    $('intro-overlay').classList.toggle('hidden', lobby.phase !== PH_INTRO);
-    $('results-overlay').classList.toggle('hidden', lobby.phase !== PH_RESULTS);
-    $('final-overlay').classList.toggle('hidden', lobby.phase !== PH_FINAL);
-    $('scores-overlay').classList.add('hidden');
-    if (lobby.phase === PH_INTRO) {
-      $('intro-k').textContent = `HOLE ${lobby.holeIndex + 1} OF ${lobby.holeCount}`;
-      $('intro-name').textContent = hole.name;
-      $('intro-par').textContent = `PAR ${hole.par}`;
-      $('intro-tip').textContent = hole.tip ?? '';
+    $('hole-intro').classList.toggle('hidden', lobby.phase !== PH_INTRO);
+    modal('results-card', lobby.phase === PH_RESULTS);
+    if (lobby.phase === PH_INTRO && hole) {
+      $('hi-round').textContent = `HOLE ${lobby.holeIndex + 1} OF ${lobby.holeCount}`;
+      $('hi-name').textContent = hole.name.toUpperCase();
+      $('hi-par').textContent = `PAR ${hole.par} · MAX ${lobby.maxStrokes}`;
+      $('hi-tip').textContent = hole.tip ?? '';
       sfx.ui();
     }
-    if (lobby.phase === PH_RESULTS) {
-      $('results-title').textContent = `Hole ${lobby.holeIndex + 1} · ${hole.name}`;
-      renderScorecard('results-table');
-    }
-    if (lobby.phase === PH_FINAL) { renderFinal(lobby, players); sfx.fanfare(); }
+    if (lobby.phase === PH_PLAY) { kbAim.angle = hole ? Math.atan2(hole.cup.y - p.y, hole.cup.x - p.x) : 0; kbAim.active = false; }
+    if (lobby.phase === PH_RESULTS) { $('results-title').textContent = `HOLE ${lobby.holeIndex + 1} · ${hole?.name.toUpperCase() ?? ''}`; renderScorecard('results-table'); }
   }
   if (lobby.phase === PH_RESULTS) {
-    $('results-next').textContent = lobby.holeIndex + 1 < lobby.holeCount ? `Next hole in ${Math.ceil(lobby.phaseTicks / TICK_HZ)}…` : `Final results in ${Math.ceil(lobby.phaseTicks / TICK_HZ)}…`;
+    $('results-next').textContent = lobby.holeIndex + 1 < lobby.holeCount ? `NEXT HOLE IN ${Math.ceil(lobby.phaseTicks / TICK_HZ)}…` : `FINAL RESULTS IN ${Math.ceil(lobby.phaseTicks / TICK_HZ)}…`;
     renderScorecard('results-table');
   }
-  if (lobby.phase === PH_FINAL) {
-    const host = lobby.hostId.isEqual(p.identity);
-    $('final-again').classList.toggle('hidden', !host);
-    $('final-lobby').classList.toggle('hidden', true);
-  }
-  void now;
 }
 
 function parThrough(lobby: Lobby, holeIndex: number): number {
@@ -934,22 +1062,20 @@ function renderScorecard(targetId: string) {
   const rows = holeRows(lobby.courseId);
   const players = lobbyPlayers(lobby.id).sort((a, b) => a.total - b.total || a.finishedTick - b.finishedTick);
   const n = Math.max(rows.length, lobby.holeCount);
-  let html = '<table class="score"><tr><th class="name">Player</th>';
-  for (let i = 0; i < n; i++) html += `<th${i === lobby.holeIndex ? ' style="color:#a4ff3d"' : ''}>${i + 1}</th>`;
-  html += '<th>Tot</th><th>±</th></tr>';
-  html += '<tr><td class="name" style="color:#9fc2a8">Par</td>';
+  let html = '<table class="score"><tr><th class="name">Golfer</th>';
+  for (let i = 0; i < n; i++) html += `<th${i === lobby.holeIndex ? ' style="color:var(--gold)"' : ''}>${i + 1}</th>`;
+  html += '<th>Tot</th><th>±</th></tr><tr><td class="name" style="color:var(--dim)">Par</td>';
   let parTot = 0;
-  for (let i = 0; i < n; i++) { const par = rows[i]?.par ?? 0; parTot += par; html += `<td style="color:#9fc2a8">${par || '·'}</td>`; }
-  html += `<td style="color:#9fc2a8">${parTot}</td><td></td></tr>`;
+  for (let i = 0; i < n; i++) { const par = rows[i]?.par ?? 0; parTot += par; html += `<td style="color:var(--dim)">${par || '·'}</td>`; }
+  html += `<td style="color:var(--dim)">${parTot}</td><td></td></tr>`;
   for (const q of players) {
-    html += `<tr${isMe(q.identity) ? ' class="me"' : ''}><td class="name"><span class="dot" style="background:${COLORS[q.color]};width:10px;height:10px;margin-right:6px"></span>${esc(q.name)}</td>`;
+    html += `<tr${isMe(q.identity) ? ' class="me"' : ''}><td class="name"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${COLORS[q.color]};margin-right:6px"></span>${esc(q.name)}</td>`;
     let played = 0;
     for (let i = 0; i < n; i++) {
       const sc = q.holeScores[i];
       if (sc === undefined) { html += `<td>${i === lobby.holeIndex && lobby.phase === PH_PLAY ? `<span class="even">${q.strokes || ''}</span>` : ''}</td>`; continue; }
       played += rows[i]?.par ?? 0;
-      const par = rows[i]?.par ?? 3;
-      const d = sc - par;
+      const d = sc - (rows[i]?.par ?? 3);
       html += `<td class="${relClass(d)}">${sc}${sc === 1 ? '★' : ''}</td>`;
     }
     html += `<td class="tot">${q.total}</td><td class="${relClass(q.total - played)}">${q.holeScores.length ? relPar(q.total - played) : ''}</td></tr>`;
@@ -959,23 +1085,100 @@ function renderScorecard(targetId: string) {
   if (el.innerHTML !== html) el.innerHTML = html;
 }
 
-function renderFinal(lobby: Lobby, players: Player[]) {
+function renderGameOver() {
+  const lobby = myLobby(); const p = me();
+  if (!lobby || !p) return;
+  const players = lobbyPlayers(lobby.id);
   const ranked = [...players].sort((a, b) => a.total - b.total || a.finishedTick - b.finishedTick);
-  const pod = $('podium');
-  pod.innerHTML = '';
-  const order = [1, 0, 2];
-  for (const idx of order) {
-    const q = ranked[idx];
-    if (!q) continue;
-    const d = document.createElement('div');
-    d.className = 'p' + (idx === 0 ? ' first' : '');
-    const hgt = idx === 0 ? 90 : idx === 1 ? 64 : 48;
-    d.innerHTML = `<div class="bar" style="height:${hgt}px;border-top:4px solid ${COLORS[q.color]}">${idx + 1}</div><div class="nm">${esc(q.name)}</div><div class="sc">${q.total} STROKES</div>`;
-    pod.appendChild(d);
-  }
-  renderScorecard('final-table');
-  void lobby;
+  const winner = ranked[0];
+  $('gameover-title').textContent = winner && isMe(winner.identity) && ranked.length > 1 ? 'YOU WIN!' : 'ROUND COMPLETE';
+  $('gameover-score').textContent = winner ? `${winner.name.toUpperCase()} TAKES ${lobby.courseName.toUpperCase()} · ${winner.total} STROKES` : '';
+  const crowns = $('crowns');
+  crowns.innerHTML = ranked.slice(0, 3).map((q, i) => `<div class="crown-card"><div class="c-label">${['🥇 CHAMPION', '🥈 SECOND', '🥉 THIRD'][i]}</div><div class="c-name">${esc(q.name)}</div><div class="c-sub">${charOf(q).name} · ${q.total} STROKES</div></div>`).join('');
+  crowns.classList.toggle('hidden', !ranked.length);
+  renderScorecard('match-summary');
+  $('match-summary').classList.remove('hidden');
+  const host = lobby.hostId.isEqual(p.identity);
+  $('again-btn').classList.toggle('hidden', !host);
+  if (lobby.phase === PH_FINAL && lastSeenPhase !== PH_FINAL) { lastSeenPhase = PH_FINAL; sfx.fanfare(); }
 }
 
+// ---------------------------------------------------------------------------
+// Settings (graphics + sound) — the tennis options panel
+// ---------------------------------------------------------------------------
+interface GfxOption { label: string; value: number | boolean }
+const ON_OFF: GfxOption[] = [{ label: 'ON', value: true }, { label: 'OFF', value: false }];
+const GFX_ROWS: { key: keyof GraphicsSettings; name: string; hint: string; opts: GfxOption[] }[] = [
+  { key: 'resolution', name: 'RESOLUTION', hint: 'internal render scale — the biggest win', opts: [{ label: '100%', value: 1 }, { label: '75%', value: 0.75 }, { label: '50%', value: 0.5 }] },
+  { key: 'shadows', name: 'SHADOWS', hint: 'sun shadow map', opts: [{ label: 'HIGH', value: 2 }, { label: 'LOW', value: 1 }, { label: 'OFF', value: 0 }] },
+  { key: 'antialias', name: 'ANTI-ALIASING', hint: 'smooth edges (MSAA)', opts: ON_OFF },
+  { key: 'particles', name: 'PARTICLES', hint: 'impact sparks and splashes', opts: ON_OFF },
+  { key: 'detail', name: 'CROWD & DETAIL', hint: 'crowd stands, stadium props, grass grain', opts: ON_OFF },
+  { key: 'grade', name: 'FILM GRADE', hint: 'tone mapping and color wash', opts: ON_OFF },
+  { key: 'vhs', name: 'VHS FILTER', hint: 'retro scanlines, flicker and tracking band', opts: ON_OFF },
+  { key: 'fpsCap', name: 'FPS LIMIT', hint: 'caps GPU work — the game ticks at 30Hz anyway', opts: [{ label: 'MAX', value: 0 }, { label: '120', value: 120 }, { label: '60', value: 60 }, { label: '30', value: 30 }] },
+];
+const GFX_PRESETS: { label: string; value: PresetName }[] = [{ label: 'HIGH', value: 'high' }, { label: 'MEDIUM', value: 'medium' }, { label: 'LOW', value: 'low' }];
+function gfxRow(parent: HTMLElement, name: string, hint: string): HTMLDivElement {
+  const row = document.createElement('div');
+  row.className = 'gfx-row';
+  const label = document.createElement('div');
+  label.className = 'gfx-name';
+  label.textContent = name;
+  const sub = document.createElement('div');
+  sub.className = 'gfx-hint';
+  sub.textContent = hint;
+  label.appendChild(sub);
+  const opts = document.createElement('div');
+  opts.className = 'gfx-opts';
+  row.append(label, opts);
+  parent.appendChild(row);
+  return opts;
+}
+function buildGfxPanel() {
+  const rows = $('gfx-rows');
+  rows.innerHTML = '';
+  const g = getGraphics();
+  const presetOpts = gfxRow(rows, 'PRESET', 'one click for the whole set');
+  for (const pr of GFX_PRESETS) {
+    const b = document.createElement('button');
+    b.className = 'gfx-opt' + (presetOf(g) === pr.value ? ' selected' : '');
+    b.textContent = pr.label;
+    b.onclick = () => { applyPreset(pr.value); buildGfxPanel(); };
+    presetOpts.appendChild(b);
+  }
+  for (const r of GFX_ROWS) {
+    const opts = gfxRow(rows, r.name, r.hint);
+    for (const o of r.opts) {
+      const b = document.createElement('button');
+      b.className = 'gfx-opt' + (g[r.key] === o.value ? ' selected' : '');
+      b.textContent = o.label;
+      b.onclick = () => { setGraphics({ [r.key]: o.value } as any); buildGfxPanel(); };
+      opts.appendChild(b);
+    }
+  }
+  const snd = gfxRow(rows, 'SOUND', 'putts, bumpers, splashes, jingles (M)');
+  for (const on of [true, false]) {
+    const b = document.createElement('button');
+    b.className = 'gfx-opt' + (isMuted() !== on ? ' selected' : '');
+    b.textContent = on ? 'ON' : 'OFF';
+    b.onclick = () => { setMuted(!on); buildGfxPanel(); };
+    snd.appendChild(b);
+  }
+  const fs = gfxRow(rows, 'FULLSCREEN', 'fill the whole screen (F)');
+  for (const on of [true, false]) {
+    const b = document.createElement('button');
+    b.className = 'gfx-opt' + (!!document.fullscreenElement === on ? ' selected' : '');
+    b.textContent = on ? 'ON' : 'OFF';
+    b.onclick = () => { if (!!document.fullscreenElement !== on) toggleFullscreen(); setTimeout(buildGfxPanel, 300); };
+    fs.appendChild(b);
+  }
+  $('vhs').classList.toggle('hidden', !g.vhs);
+}
+onGraphicsChange(() => buildGfxPanel());
+$('settings-close').onclick = () => modal('settings-modal', false);
+buildGfxPanel();
+
+buildCharGrid();
 requestAnimationFrame(frame);
 connect();

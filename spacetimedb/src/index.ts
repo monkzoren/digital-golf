@@ -44,6 +44,7 @@ const EV_RESET = 10;
 
 const MAX_PLAYERS = 8;
 const N_COLORS = 12;
+const N_CHARACTERS = 18; // mirrors client/src/characters.ts
 const INTRO_SECS = 3.5;
 const RESULTS_SECS = 7;
 const OFFLINE_GRACE_SECS = 25; // a refresh mid-round keeps your seat this long
@@ -117,6 +118,9 @@ const Player = table(
     emote: t.u8(),
     emoteSeq: t.u32(),
     lastChat: t.u64(),
+    // NOTE: appended column — the roster character this golfer plays as
+    // (client/src/characters.ts order). The ball keeps its own colour.
+    characterId: t.u8().default(0),
   }
 );
 
@@ -469,6 +473,7 @@ export const onConnect = spacetimedb.clientConnected(ctx => {
       emote: 0,
       emoteSeq: 0,
       lastChat: 0n,
+      characterId: ctx.random.integerInRange(0, 5),
     });
     return;
   }
@@ -501,6 +506,12 @@ export const set_name = spacetimedb.reducer({ name: t.string() }, (ctx, { name }
   ctx.db.player.identity.update({ ...p, name: trimmed });
 });
 
+export const set_character = spacetimedb.reducer({ characterId: t.u8() }, (ctx, { characterId }) => {
+  if (characterId >= N_CHARACTERS) throw new SenderError('Unknown character');
+  const p = getPlayer(ctx);
+  ctx.db.player.identity.update({ ...p, characterId });
+});
+
 export const set_color = spacetimedb.reducer({ color: t.u8() }, (ctx, { color }) => {
   if (color >= N_COLORS) throw new SenderError('Unknown colour');
   const p = getPlayer(ctx);
@@ -515,8 +526,8 @@ export const set_color = spacetimedb.reducer({ color: t.u8() }, (ctx, { color })
 });
 
 export const create_lobby = spacetimedb.reducer(
-  { courseId: t.u64(), isPublic: t.bool() },
-  (ctx, { courseId, isPublic }) => {
+  { courseId: t.u64(), isPublic: t.bool(), maxStrokes: t.u8(), holeSecs: t.u16(), collisions: t.bool() },
+  (ctx, { courseId, isPublic, maxStrokes, holeSecs, collisions }) => {
     const course = playableCourse(ctx, courseId);
     const p = getPlayer(ctx);
     if (!p.name) throw new SenderError('Pick a name first');
@@ -535,9 +546,9 @@ export const create_lobby = spacetimedb.reducer(
       holeIndex: 0,
       phaseTicks: 0,
       holeTick: 0,
-      maxStrokes: DEFAULT_MAX_STROKES,
-      holeSecs: DEFAULT_HOLE_SECS,
-      collisions: true,
+      maxStrokes: maxStrokes ? clamp(maxStrokes, 3, 30) : DEFAULT_MAX_STROKES,
+      holeSecs: holeSecs ? clamp(holeSecs, 30, 600) : DEFAULT_HOLE_SECS,
+      collisions,
       round: 0,
       championName: '',
       createdAt: ctx.timestamp,

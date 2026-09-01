@@ -11,9 +11,5 @@ import {
 } from "spacetimedb";
 
 export default {
-  courseId: __t.u64(),
-  isPublic: __t.bool(),
-  maxStrokes: __t.u8(),
-  holeSecs: __t.u16(),
-  collisions: __t.bool(),
+  characterId: __t.u8(),
 };
