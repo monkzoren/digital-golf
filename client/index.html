@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#04120c" />
+  <title>Digital Golf</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:ital,wght@0,400;0,500;0,600;0,700;1,600;1,700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --lime: #a4ff3d;
+      --lime-deep: #5fc71a;
+      --gold: #ffd60a;
+      --red: #ff4b33;
+      --ink: #f4f8f4;
+      --dim: #9fc2a8;
+      --dim-2: rgba(159, 194, 168, 0.6);
+      --panel-hi: rgba(14, 52, 34, 0.92);
+      --panel-lo: rgba(5, 22, 14, 0.96);
+      --line: rgba(120, 220, 150, 0.22);
+      --line-2: rgba(140, 240, 170, 0.45);
+      --r-lg: 18px; --r-md: 12px; --r-sm: 8px;
+      --font: 'Chakra Petch', 'Arial Black', Arial, sans-serif;
+      --shadow-card: 0 30px 70px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    .hidden { display: none !important; }
+    html, body { height: 100%; color: var(--ink); font-family: var(--font); overflow: hidden; }
+    body {
+      background:
+        radial-gradient(1100px 620px at 50% -8%, rgba(40, 140, 80, 0.35), transparent 65%),
+        radial-gradient(900px 520px at 88% 112%, rgba(20, 90, 120, 0.3), transparent 60%),
+        linear-gradient(180deg, #08221a 0%, #04120c 55%, #020806 100%);
+      -webkit-user-select: none; user-select: none;
+    }
+    input, textarea { -webkit-user-select: text; user-select: text; }
+    button { font-family: var(--font); cursor: pointer; }
+
+    /* ---- shared ---- */
+    .screen { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; overflow: auto; }
+    .card {
+      background: linear-gradient(160deg, var(--panel-hi), var(--panel-lo));
+      border: 1px solid var(--line); border-radius: var(--r-lg);
+      box-shadow: var(--shadow-card); padding: 26px 30px; width: min(96vw, 560px);
+    }
+    .card.wide { width: min(96vw, 900px); }
+    h1.logo { font-size: 44px; font-weight: 700; letter-spacing: 3px; text-transform: uppercase; line-height: 1; }
+    h1.logo span { color: var(--lime); }
+    .tag { color: var(--dim); font-size: 13px; letter-spacing: 2px; text-transform: uppercase; margin-top: 6px; }
+    h2 { font-size: 20px; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 14px; }
+    h3 { font-size: 13px; letter-spacing: 2px; text-transform: uppercase; color: var(--dim); margin: 16px 0 8px; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      padding: 12px 20px; border-radius: var(--r-md); border: 1px solid var(--line-2);
+      background: rgba(255, 255, 255, 0.04); color: var(--ink); font-weight: 700;
+      letter-spacing: 1.5px; text-transform: uppercase; font-size: 14px; transition: transform 0.08s, background 0.15s;
+    }
+    .btn:hover { background: rgba(255, 255, 255, 0.1); transform: translateY(-1px); }
+    .btn:active { transform: translateY(1px); }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+    .btn.primary { background: linear-gradient(180deg, var(--lime), var(--lime-deep)); color: #06200f; border-color: transparent; }
+    .btn.primary:hover { filter: brightness(1.08); }
+    .btn.gold { background: linear-gradient(180deg, var(--gold), #f0a400); color: #241a00; border-color: transparent; }
+    .btn.danger { border-color: rgba(255, 75, 51, 0.5); color: #ffb0a5; }
+    .btn.small { padding: 7px 12px; font-size: 12px; }
+    .btn.block { width: 100%; }
+    .row { display: flex; gap: 10px; align-items: center; }
+    .row.wrap { flex-wrap: wrap; }
+    .grow { flex: 1; }
+    .stack { display: flex; flex-direction: column; gap: 10px; }
+    input[type=text], select, textarea {
+      font-family: var(--font); font-size: 15px; padding: 10px 12px; border-radius: var(--r-sm);
+      border: 1px solid var(--line-2); background: rgba(0, 0, 0, 0.35); color: var(--ink); outline: none; width: 100%;
+    }
+    input[type=text]:focus, select:focus, textarea:focus { border-color: var(--lime); }
+    select option { background: #06200f; }
+    input.code { text-transform: uppercase; letter-spacing: 6px; font-weight: 700; text-align: center; font-size: 20px; }
+    .muted { color: var(--dim); font-size: 13px; }
+    .tiny { font-size: 11px; color: var(--dim-2); letter-spacing: 1px; }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; letter-spacing: 1px; background: rgba(255,255,255,0.08); }
+    .pill.lime { background: rgba(164, 255, 61, 0.18); color: var(--lime); }
+    .pill.gold { background: rgba(255, 214, 10, 0.18); color: var(--gold); }
+    .dot { width: 14px; height: 14px; border-radius: 50%; display: inline-block; box-shadow: inset -2px -3px 4px rgba(0,0,0,0.4), 0 0 0 2px rgba(255,255,255,0.15); flex-shrink: 0; }
+    .list { display: flex; flex-direction: column; gap: 6px; max-height: 40vh; overflow: auto; }
+    .list .item {
+      display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: var(--r-sm);
+      background: rgba(255,255,255,0.04); border: 1px solid transparent; cursor: pointer;
+    }
+    .list .item:hover { background: rgba(255,255,255,0.08); }
+    .list .item.selected { border-color: var(--lime); background: rgba(164, 255, 61, 0.1); }
+    .list .item .name { font-weight: 700; letter-spacing: 1px; }
+    .list .empty { color: var(--dim-2); font-size: 13px; padding: 12px; text-align: center; }
+    .tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+    .tabs button { flex: 1; padding: 8px; border-radius: var(--r-sm); border: 1px solid var(--line); background: transparent; color: var(--dim); font-weight: 700; letter-spacing: 1px; font-size: 12px; text-transform: uppercase; }
+    .tabs button.active { color: #06200f; background: var(--lime); border-color: transparent; }
+    .toggle { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; letter-spacing: 1px; text-transform: uppercase; color: var(--dim); }
+    .toggle input { accent-color: var(--lime); width: 18px; height: 18px; }
+    .swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+    .swatch { width: 30px; height: 30px; border-radius: 50%; border: 3px solid transparent; cursor: pointer; box-shadow: inset -3px -5px 6px rgba(0,0,0,0.4); }
+    .swatch.selected { border-color: #fff; }
+    .swatch.taken { opacity: 0.3; cursor: not-allowed; }
+    .field label { display: block; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--dim); margin-bottom: 4px; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .toasts { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; z-index: 100; pointer-events: none; }
+    .toast { background: rgba(0,0,0,0.75); border: 1px solid var(--line-2); padding: 10px 18px; border-radius: var(--r-md); font-weight: 700; letter-spacing: 1px; animation: toastIn 0.25s ease-out; }
+    .toast.error { border-color: var(--red); color: #ffb0a5; }
+    @keyframes toastIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: none; } }
+    .kbd { display: inline-block; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--line-2); font-size: 11px; background: rgba(0,0,0,0.3); }
+
+    /* ---- menu ---- */
+    #menu .card { width: min(96vw, 980px); display: grid; grid-template-columns: 1.1fr 1fr; gap: 26px; }
+    #menu .left { display: flex; flex-direction: column; gap: 14px; }
+    .account-chip { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: var(--r-md); background: rgba(0,0,0,0.3); border: 1px solid var(--line); cursor: pointer; width: fit-content; }
+    .account-chip .dot { width: 18px; height: 18px; }
+    .account-chip b { letter-spacing: 1px; }
+    @media (max-width: 760px) { #menu .card { grid-template-columns: 1fr; } h1.logo { font-size: 34px; } }
+
+    /* ---- room ---- */
+    #room .card { width: min(96vw, 980px); display: grid; grid-template-columns: 1.2fr 1fr; gap: 24px; }
+    @media (max-width: 760px) { #room .card { grid-template-columns: 1fr; } }
+    .players { display: flex; flex-direction: column; gap: 6px; }
+    .players .p { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: var(--r-sm); background: rgba(255,255,255,0.04); }
+    .players .p.me { border: 1px solid var(--line-2); }
+    .players .p .name { font-weight: 700; letter-spacing: 1px; flex: 1; }
+    .players .p.offline { opacity: 0.5; }
+    .code-box { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: var(--r-md); background: rgba(0,0,0,0.3); border: 1px dashed var(--line-2); }
+    .code-box .code { font-size: 30px; letter-spacing: 8px; font-weight: 700; color: var(--lime); }
+    .chat { display: flex; flex-direction: column; height: 220px; border: 1px solid var(--line); border-radius: var(--r-md); background: rgba(0,0,0,0.3); }
+    .chat .log { flex: 1; overflow: auto; padding: 8px 10px; font-size: 13px; display: flex; flex-direction: column; gap: 3px; }
+    .chat .log b { letter-spacing: 1px; }
+    .chat .log .sys { color: var(--dim-2); font-style: italic; }
+    .chat form { display: flex; border-top: 1px solid var(--line); }
+    .chat form input { border: none; border-radius: 0; background: transparent; }
+    .chat form button { border: none; background: transparent; color: var(--lime); font-weight: 700; padding: 0 14px; letter-spacing: 1px; }
+
+    /* ---- game ---- */
+    #game { background: #061a10; cursor: crosshair; touch-action: none; }
+    #game canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+    .hud { position: absolute; pointer-events: none; }
+    .hud * { pointer-events: auto; }
+    #hud-top { top: 12px; left: 12px; right: 12px; display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; pointer-events: none; }
+    .hud-box { background: rgba(0, 0, 0, 0.55); border: 1px solid var(--line); border-radius: var(--r-md); padding: 8px 14px; backdrop-filter: blur(6px); }
+    #hud-hole { font-size: 13px; letter-spacing: 2px; text-transform: uppercase; color: var(--dim); }
+    #hud-hole b { display: block; font-size: 20px; color: var(--ink); letter-spacing: 1px; }
+    #hud-strokes { text-align: center; }
+    #hud-strokes .n { font-size: 30px; font-weight: 700; line-height: 1; }
+    #hud-strokes .l { font-size: 11px; letter-spacing: 2px; color: var(--dim); }
+    #hud-timer { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; min-width: 96px; text-align: center; }
+    #hud-timer.low { color: var(--red); animation: blink 0.6s steps(2) infinite; }
+    @keyframes blink { 50% { opacity: 0.35; } }
+    #hud-board { position: absolute; right: 12px; top: 70px; min-width: 200px; font-size: 13px; }
+    #hud-board .r { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+    #hud-board .r .name { flex: 1; letter-spacing: 1px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
+    #hud-board .r .sc { font-variant-numeric: tabular-nums; color: var(--dim); }
+    #hud-board .r.done .sc { color: var(--lime); }
+    #hud-board .r.me .name { color: var(--lime); }
+    #hud-bottom { bottom: 12px; left: 12px; right: 12px; display: flex; justify-content: space-between; align-items: flex-end; gap: 10px; pointer-events: none; }
+    #hud-hint { font-size: 12px; letter-spacing: 1px; color: var(--dim); }
+    #hud-buttons { display: flex; gap: 6px; }
+    .emotes { display: flex; gap: 4px; }
+    .emotes button { font-size: 18px; width: 36px; height: 36px; border-radius: var(--r-sm); border: 1px solid var(--line); background: rgba(0,0,0,0.5); }
+    #game-chat { position: absolute; left: 12px; bottom: 60px; width: 300px; max-height: 40vh; }
+    #game-chat .chat { height: 180px; }
+    .overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.35); }
+    .intro-card { text-align: center; padding: 26px 40px; animation: pop 0.35s ease-out; }
+    @keyframes pop { from { transform: scale(0.85); opacity: 0; } to { transform: none; opacity: 1; } }
+    .intro-card .k { color: var(--dim); letter-spacing: 3px; font-size: 13px; text-transform: uppercase; }
+    .intro-card .n { font-size: 40px; font-weight: 700; letter-spacing: 2px; margin: 6px 0; }
+    .intro-card .par { color: var(--gold); font-size: 18px; letter-spacing: 3px; }
+    .intro-card .tip { color: var(--dim); margin-top: 10px; font-size: 14px; }
+    table.score { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+    table.score th, table.score td { padding: 6px 8px; text-align: center; border-bottom: 1px solid var(--line); font-size: 13px; }
+    table.score th { color: var(--dim); letter-spacing: 1px; font-size: 11px; text-transform: uppercase; }
+    table.score td.name, table.score th.name { text-align: left; font-weight: 700; letter-spacing: 1px; }
+    table.score tr.me td { background: rgba(164, 255, 61, 0.06); }
+    table.score td.tot { font-weight: 700; color: var(--gold); }
+    .under { color: var(--lime); } .over { color: #ff9d9d; } .even { color: var(--dim); }
+    .scorecard-wrap { overflow-x: auto; max-height: 50vh; }
+    .podium { display: flex; justify-content: center; align-items: flex-end; gap: 12px; margin: 16px 0; }
+    .podium .p { width: 110px; text-align: center; }
+    .podium .p .bar { border-radius: 8px 8px 0 0; background: linear-gradient(180deg, rgba(255,255,255,0.18), rgba(255,255,255,0.05)); display: flex; align-items: flex-end; justify-content: center; font-size: 34px; font-weight: 700; padding-bottom: 6px; }
+    .podium .p.first .bar { background: linear-gradient(180deg, var(--gold), #a56f00); color: #241a00; }
+    .podium .p .nm { font-weight: 700; letter-spacing: 1px; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .podium .p .sc { color: var(--dim); font-size: 12px; }
+    .power-legend { position: absolute; left: 50%; bottom: 60px; transform: translateX(-50%); width: 240px; height: 10px; border-radius: 6px; background: rgba(0,0,0,0.5); border: 1px solid var(--line-2); overflow: hidden; }
+    .power-legend i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--lime), var(--gold), var(--red)); }
+    #esc-menu .card { width: 320px; text-align: center; }
+
+    /* ---- editor ---- */
+    #editor { background: #071a11; display: grid; align-items: stretch; justify-content: stretch; grid-template-rows: auto minmax(0, 1fr); grid-template-columns: 200px minmax(0, 1fr) 240px; }
+    #ed-top { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: rgba(0,0,0,0.45); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+    #ed-top input.title { width: 200px; padding: 6px 10px; font-weight: 700; letter-spacing: 1px; }
+    #ed-holes { display: flex; gap: 4px; flex-wrap: wrap; }
+    #ed-holes button { width: 30px; height: 30px; border-radius: 6px; border: 1px solid var(--line); background: rgba(255,255,255,0.05); color: var(--dim); font-weight: 700; }
+    #ed-holes button.active { background: var(--lime); color: #06200f; border-color: transparent; }
+    #ed-tools { display: flex; flex-direction: column; gap: 4px; padding: 10px; overflow: auto; background: rgba(0,0,0,0.35); border-right: 1px solid var(--line); }
+    #ed-tools h3 { margin: 8px 0 4px; }
+    #ed-tools button { text-align: left; padding: 7px 10px; border-radius: 6px; border: 1px solid transparent; background: rgba(255,255,255,0.04); color: var(--ink); font-size: 12px; letter-spacing: 1px; text-transform: uppercase; display: flex; align-items: center; gap: 8px; }
+    #ed-tools button.active { border-color: var(--lime); background: rgba(164, 255, 61, 0.14); }
+    #ed-tools button i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; flex-shrink: 0; }
+    #ed-canvas-wrap { position: relative; overflow: hidden; touch-action: none; }
+    #ed-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; }
+    #ed-status { position: absolute; left: 10px; bottom: 8px; font-size: 11px; color: var(--dim); letter-spacing: 1px; background: rgba(0,0,0,0.5); padding: 4px 8px; border-radius: 6px; pointer-events: none; }
+    #ed-props { padding: 10px; overflow: auto; background: rgba(0,0,0,0.35); border-left: 1px solid var(--line); font-size: 12px; }
+    #ed-props .field { margin-bottom: 8px; }
+    #ed-props input[type=text], #ed-props input[type=number], #ed-props select { width: 100%; padding: 6px 8px; font-size: 13px; }
+    #ed-props input[type=number] { font-family: var(--font); border-radius: var(--r-sm); border: 1px solid var(--line-2); background: rgba(0,0,0,0.35); color: var(--ink); }
+    #ed-props input[type=range] { width: 100%; accent-color: var(--lime); }
+    @media (max-width: 900px) { #editor { grid-template-columns: 150px 1fr; } #ed-props { grid-column: 1 / -1; border-left: none; border-top: 1px solid var(--line); max-height: 30vh; } #editor { grid-template-rows: auto 1fr auto; } }
+  </style>
+</head>
+<body>
+  <div class="toasts" id="toasts"></div>
+
+  <!-- connecting -->
+  <div id="connecting" class="screen">
+    <div class="card" style="text-align:center">
+      <h1 class="logo">Digital <span>Golf</span></h1>
+      <div class="tag" id="connecting-sub">CONNECTING…</div>
+    </div>
+  </div>
+
+  <!-- name gate -->
+  <div id="name-modal" class="screen hidden">
+    <div class="card" style="text-align:center">
+      <h1 class="logo">Digital <span>Golf</span></h1>
+      <div class="tag">Golf It-style minigolf · up to 8 players · make your own courses</div>
+      <form id="name-form" class="stack" style="margin-top:22px">
+        <input type="text" id="name-input" maxlength="16" placeholder="YOUR NAME" autocomplete="off" style="text-align:center;font-size:20px;letter-spacing:3px;font-weight:700" />
+        <div class="swatches" id="name-swatches" style="justify-content:center"></div>
+        <button class="btn primary block" type="submit">TEE OFF</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- menu -->
+  <div id="menu" class="screen hidden">
+    <div class="card">
+      <div class="left">
+        <div>
+          <h1 class="logo">Digital <span>Golf</span></h1>
+          <div class="tag">Arcade minigolf · everyone shoots at once</div>
+        </div>
+        <div class="account-chip" id="account-chip"><span class="dot" id="account-dot"></span><b id="account-name">GUEST</b><span class="tiny">EDIT</span></div>
+        <button class="btn primary" id="btn-new">⛳ New Game</button>
+        <form id="join-form" class="row">
+          <input type="text" class="code grow" id="join-input" maxlength="5" placeholder="CODE" autocomplete="off" />
+          <button class="btn" type="submit">Join</button>
+        </form>
+        <button class="btn" id="btn-editor">🛠 Course Editor</button>
+        <div class="muted">
+          Drag back from your ball and release to putt. Everyone plays at the same time — balls collide.
+          <span class="kbd">Tab</span> scorecard · <span class="kbd">1–6</span> emotes · <span class="kbd">Enter</span> chat
+        </div>
+        <div class="tiny" id="build-id"></div>
+      </div>
+      <div>
+        <h3>Public rooms</h3>
+        <div class="list" id="public-list"><div class="empty">No public rooms right now — host one!</div></div>
+        <h3>Live now</h3>
+        <div class="list" id="live-list"><div class="empty">Nobody is on the course.</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- profile edit -->
+  <div id="profile-modal" class="screen hidden">
+    <div class="card">
+      <h2>Your player</h2>
+      <form id="profile-form" class="stack">
+        <div class="field"><label>Name</label><input type="text" id="profile-name" maxlength="16" autocomplete="off" /></div>
+        <div class="field"><label>Ball colour</label><div class="swatches" id="profile-swatches"></div></div>
+        <label class="toggle"><input type="checkbox" id="profile-mute" /> Mute sound</label>
+        <div class="row"><button class="btn primary grow" type="submit">Save</button><button class="btn" type="button" id="profile-cancel">Cancel</button></div>
+      </form>
+    </div>
+  </div>
+
+  <!-- course picker -->
+  <div id="picker" class="screen hidden">
+    <div class="card wide">
+      <div class="row"><h2 class="grow" id="picker-title">Pick a course</h2><button class="btn small" id="picker-close">✕</button></div>
+      <div class="tabs" id="picker-tabs">
+        <button data-tab="featured" class="active">Featured</button>
+        <button data-tab="community">Community</button>
+        <button data-tab="mine">My courses</button>
+      </div>
+      <div class="list" id="picker-list" style="max-height:48vh"></div>
+      <div class="row" style="margin-top:14px">
+        <label class="toggle" id="picker-public-wrap"><input type="checkbox" id="picker-public" /> Public room (listed on the menu)</label>
+        <span class="grow"></span>
+        <button class="btn primary" id="picker-go" disabled>Create room</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- room -->
+  <div id="room" class="screen hidden">
+    <div class="card">
+      <div class="stack">
+        <div class="code-box">
+          <div class="grow">
+            <div class="tiny">ROOM CODE</div>
+            <div class="code" id="room-code">—</div>
+          </div>
+          <button class="btn small" id="room-copy">Copy link</button>
+        </div>
+        <div class="row"><h3 class="grow" style="margin:0">Players <span class="pill" id="room-count">0/8</span></h3><span class="pill lime hidden" id="room-public-pill">PUBLIC</span></div>
+        <div class="players" id="room-players"></div>
+        <div class="row" style="margin-top:6px">
+          <button class="btn primary grow" id="room-start">▶ Start round</button>
+          <button class="btn danger" id="room-leave">Leave</button>
+        </div>
+        <div class="muted" id="room-wait">Waiting for the host to start…</div>
+      </div>
+      <div class="stack">
+        <h3 style="margin:0">Course</h3>
+        <div class="list"><div class="item selected" id="room-course"><div class="grow"><div class="name" id="room-course-name">—</div><div class="tiny" id="room-course-meta"></div></div><button class="btn small hidden" id="room-course-change">Change</button></div></div>
+        <div class="grid2" id="room-settings">
+          <div class="field"><label>Max strokes</label><select id="set-strokes"><option>6</option><option>8</option><option selected>10</option><option>12</option><option>15</option><option>20</option></select></div>
+          <div class="field"><label>Time per hole</label><select id="set-time"><option value="45">45 s</option><option value="60">60 s</option><option value="90" selected>90 s</option><option value="120">2 min</option><option value="180">3 min</option><option value="300">5 min</option></select></div>
+          <label class="toggle"><input type="checkbox" id="set-collide" checked /> Ball collisions</label>
+          <label class="toggle"><input type="checkbox" id="set-public" /> Public room</label>
+        </div>
+        <div class="chat">
+          <div class="log" id="room-chat-log"></div>
+          <form id="room-chat-form"><input type="text" id="room-chat-input" maxlength="140" placeholder="Say something…" autocomplete="off" /><button type="submit">Send</button></form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- game -->
+  <div id="game" class="screen hidden">
+    <canvas id="game-canvas"></canvas>
+    <div class="hud" id="hud-top">
+      <div class="hud-box" id="hud-hole"><span id="hud-hole-k">HOLE 1 / 9</span><b id="hud-hole-name">—</b><span id="hud-hole-par">PAR 3</span></div>
+      <div class="hud-box" id="hud-strokes"><div class="n" id="hud-strokes-n">0</div><div class="l">STROKES</div></div>
+      <div class="hud-box" id="hud-timer">1:30</div>
+    </div>
+    <div class="hud hud-box" id="hud-board"></div>
+    <div class="power-legend hidden" id="power-legend"><i id="power-fill"></i></div>
+    <div class="hud" id="game-chat"><div class="chat hidden" id="game-chat-box"><div class="log" id="game-chat-log"></div><form id="game-chat-form"><input type="text" id="game-chat-input" maxlength="140" placeholder="Chat…" autocomplete="off" /><button type="submit">Send</button></form></div></div>
+    <div class="hud" id="hud-bottom">
+      <div id="hud-hint">DRAG BACK FROM YOUR BALL · RELEASE TO PUTT</div>
+      <div id="hud-buttons">
+        <div class="emotes" id="emote-bar"></div>
+        <button class="btn small" id="btn-chat">💬</button>
+        <button class="btn small" id="btn-scores">📋</button>
+        <button class="btn small" id="btn-fullscreen">⛶</button>
+        <button class="btn small" id="btn-esc">☰</button>
+      </div>
+    </div>
+    <div class="overlay hidden" id="intro-overlay"><div class="card intro-card"><div class="k" id="intro-k">HOLE 1</div><div class="n" id="intro-name">—</div><div class="par" id="intro-par">PAR 3</div><div class="tip" id="intro-tip"></div></div></div>
+    <div class="overlay hidden" id="results-overlay"><div class="card wide"><h2 id="results-title">Hole 1 results</h2><div class="scorecard-wrap" id="results-table"></div><div class="muted" style="margin-top:10px" id="results-next">Next hole in 7…</div></div></div>
+    <div class="overlay hidden" id="final-overlay"><div class="card wide" style="text-align:center"><h2>Round complete</h2><div class="podium" id="podium"></div><div class="scorecard-wrap" id="final-table"></div><div class="row" style="margin-top:14px;justify-content:center"><button class="btn primary" id="final-again">Play again</button><button class="btn" id="final-lobby">Back to room</button><button class="btn danger" id="final-leave">Leave</button></div></div></div>
+    <div class="overlay hidden" id="scores-overlay"><div class="card wide"><div class="row"><h2 class="grow">Scorecard</h2><button class="btn small" id="scores-close">✕</button></div><div class="scorecard-wrap" id="scores-table"></div></div></div>
+    <div class="overlay hidden" id="esc-menu"><div class="card"><h2>Paused (for you)</h2><div class="stack"><button class="btn" id="esc-resume">Resume</button><button class="btn" id="esc-fullscreen">Toggle fullscreen</button><button class="btn" id="esc-mute">Mute</button><button class="btn danger" id="esc-leave">Leave room</button></div></div></div>
+  </div>
+
+  <!-- editor -->
+  <div id="editor" class="screen hidden">
+    <div id="ed-top">
+      <button class="btn small" id="ed-exit">← Menu</button>
+      <input type="text" class="title" id="ed-title" maxlength="28" placeholder="COURSE NAME" />
+      <div id="ed-holes"></div>
+      <button class="btn small" id="ed-add-hole" title="Add hole">+ Hole</button>
+      <span class="grow"></span>
+      <button class="btn small" id="ed-undo" title="Undo (Ctrl+Z)">↶</button>
+      <button class="btn small" id="ed-redo" title="Redo (Ctrl+Y)">↷</button>
+      <button class="btn small" id="ed-test">▶ Test</button>
+      <button class="btn small" id="ed-import">Import</button>
+      <button class="btn small" id="ed-export">Export</button>
+      <button class="btn small gold" id="ed-publish">Publish</button>
+      <button class="btn small primary" id="ed-save">Save</button>
+    </div>
+    <div id="ed-tools"></div>
+    <div id="ed-canvas-wrap"><canvas id="ed-canvas"></canvas><div id="ed-status"></div></div>
+    <div id="ed-props"></div>
+  </div>
+
+  <!-- my courses (editor entry) -->
+  <div id="mine-modal" class="screen hidden">
+    <div class="card">
+      <div class="row"><h2 class="grow">Course editor</h2><button class="btn small" id="mine-close">✕</button></div>
+      <div class="muted" style="margin-bottom:10px">Build a course, test it solo, then publish it for everyone. Built-in courses can be duplicated as a starting point.</div>
+      <button class="btn primary block" id="mine-new">+ New course</button>
+      <h3>My courses</h3>
+      <div class="list" id="mine-list"></div>
+      <h3>Duplicate a built-in</h3>
+      <div class="list" id="mine-builtins"></div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

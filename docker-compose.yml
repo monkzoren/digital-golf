@@ -1,0 +1,60 @@
+services:
+  # SpacetimeDB standalone server — the entire game backend. Not exposed on
+  # the host: the client's nginx proxies /v1 to it, so everything runs
+  # same-origin through one domain/port. Uncomment ports for direct access.
+  spacetimedb:
+    image: clockworklabs/spacetime:v2.9.0
+    # Docker creates the volume mountpoint as root; the image's non-root user
+    # then cannot write it. Run as root.
+    user: "0:0"
+    # The JWT keys live INSIDE the data volume so container recreation never
+    # re-keys token signing (which would orphan the database from its owner).
+    command:
+      [
+        "start",
+        "--listen-addr", "0.0.0.0:3000",
+        "--data-dir", "/stdb",
+        "--jwt-pub-key-path", "/stdb/keys/id_ecdsa.pub",
+        "--jwt-priv-key-path", "/stdb/keys/id_ecdsa"
+      ]
+    volumes:
+      - spacetimedb-data:/stdb
+    # ports:
+    #   - "${SPACETIMEDB_PORT:-3000}:3000"
+    restart: unless-stopped
+
+  # Builds the TypeScript module and publishes it. Re-run after module
+  # changes: docker compose up --build module-publisher
+  module-publisher:
+    build: ./spacetimedb
+    depends_on:
+      - spacetimedb
+    environment:
+      SPACETIMEDB_URL: http://spacetimedb:3000
+      DATABASE_NAME: ${DATABASE_NAME:-digital-golf}
+      SPACETIME_TOKEN: ${SPACETIME_TOKEN:-}
+      # Set to 1 ONLY to deliberately wipe the database (player-made courses
+      # included) when a breaking schema change won't publish.
+      ALLOW_CLEAR: ${ALLOW_CLEAR:-}
+    volumes:
+      - spacetimedb-data:/stdb:ro
+      - publisher-creds:/root/.config/spacetime
+    restart: "no"
+
+  # Static client + /v1 game-socket proxy (nginx). The client connects
+  # SAME-ORIGIN, so there is no address to configure.
+  client:
+    build:
+      context: .
+      dockerfile: client/Dockerfile
+      args:
+        VITE_DATABASE_NAME: ${DATABASE_NAME:-digital-golf}
+    depends_on:
+      - spacetimedb
+    ports:
+      - "${CLIENT_PORT:-8080}:80"
+    restart: unless-stopped
+
+volumes:
+  spacetimedb-data:
+  publisher-creds:
