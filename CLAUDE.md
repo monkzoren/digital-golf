@@ -47,9 +47,13 @@ README.md for architecture and run instructions. Key facts:
   (rows updated in place, thumbnails subscribed as they scroll into view via
   IntersectionObserver) beside a detail pane; it must never rebuild on a
   hole-row insert. `render3d.ts` is the three.js renderer
-  copied from Digital Tennis and adapted: stadium/crowd/rigs/body
-  builder/previews are the tennis code; `setHole` builds a hole
-  as meshes, `drawScene` takes a `GolfScene`. Rendering is PBR: every
+  copied from Digital Tennis and adapted: rigs/body builder/previews are
+  the tennis code (the stadium bowl, crowd and umpire are gone — holes sit
+  on an open lawn so any course size fits; fog and the shadow frustum scale
+  with the hole bounds in `fitShadowFrustum`); `setHole` builds a hole
+  as meshes, `drawScene` takes a `GolfScene`. Free look (`orbitLook`,
+  `zoomLook`) is an offset over the automatic camera, driven by
+  `freelook.ts`. Rendering is PBR: every
   material goes through `std`/`metal`/`gloss` (MeshStandardMaterial) or
   MeshPhysicalMaterial (balls), lit by the sun plus a PMREM sky
   (`makeEnvironment`, one per WebGL context — the character previews make

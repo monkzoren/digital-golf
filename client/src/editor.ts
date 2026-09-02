@@ -806,8 +806,14 @@ function toggleTestCam() {
   testCam = testCam === 'play' ? 'overview' : 'play';
   $('ed-test-cam').textContent = testCam === 'play' ? 'Camera' : 'Camera: overview';
 }
+/** Test play is on the game stage (main.ts's free look serves it too). */
+export const editorTesting = () => open && testing;
+/** A primary press on the stage would start a putt right now. */
+export const editorTestAimable = () => open && testing && testResting();
+/** A second finger turned the pull into a look — no shot. */
+export function editorCancelTestAim() { testAim.active = false; }
 function testDown(e: PointerEvent) {
-  if (!open || !testing || e.button !== 0 || !testResting()) return;
+  if (!open || !testing || e.button !== 0 || testAim.active || !testResting()) return;
   gameCanvas().setPointerCapture(e.pointerId);
   testAim = { active: true, angle: testAim.angle, shown: testAim.angle, power: 0, x0: e.clientX, y0: e.clientY, basis: cameraGroundBasis() };
 }
@@ -889,7 +895,7 @@ function drawTest(dt: number) {
     cam: testCam, meId: TEST_ID,
   });
   $('ed-test-info').textContent = `TEST · HOLE ${cur + 1} · ${h.name.toUpperCase()} · STROKES ${testStrokes} · PAR ${h.par}`;
-  $('ed-test-hint').textContent = resting ? (testAim.active ? `POWER ${Math.round(testAim.power * 100)}%` : 'PRESS AND PULL BACK · RELEASE TO PUTT') : 'ROLLING…';
+  $('ed-test-hint').textContent = resting ? (testAim.active ? `POWER ${Math.round(testAim.power * 100)}%` : 'PRESS AND PULL BACK · RELEASE TO PUTT · RIGHT-DRAG LOOK · WHEEL ZOOM') : 'ROLLING… · DRAG TO LOOK AROUND';
 }
 
 // ---------------------------------------------------------------------------
