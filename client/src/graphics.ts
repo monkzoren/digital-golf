@@ -21,6 +21,10 @@ export interface GraphicsSettings {
   detail: boolean;
   /** ACES tone mapping + the canvas color wash. */
   grade: boolean;
+  /** Screen-space ambient occlusion (contact shade). Costs fill rate. */
+  ao: boolean;
+  /** Bloom on the over-bright emitters: lasers, portals, the aim arrow. */
+  bloom: boolean;
   /**
    * The VHS CSS overlay: scanlines, vignette, flicker, tracking band.
    * A look rather than a quality knob, and a divisive one — off in every
@@ -40,15 +44,15 @@ export type PresetName = 'low' | 'medium' | 'high';
 export const PRESETS: Record<PresetName, GraphicsSettings> = {
   high: {
     resolution: 1, shadows: 2, antialias: true,
-    particles: true, trail: true, detail: true, grade: true, vhs: false, fpsCap: 120,
+    particles: true, trail: true, detail: true, grade: true, ao: true, bloom: true, vhs: false, fpsCap: 120,
   },
   medium: {
     resolution: 0.75, shadows: 1, antialias: false,
-    particles: true, trail: true, detail: true, grade: true, vhs: false, fpsCap: 120,
+    particles: true, trail: true, detail: true, grade: true, ao: false, bloom: true, vhs: false, fpsCap: 120,
   },
   low: {
     resolution: 0.5, shadows: 0, antialias: false,
-    particles: false, trail: false, detail: false, grade: false, vhs: false, fpsCap: 30,
+    particles: false, trail: false, detail: false, grade: false, ao: false, bloom: false, vhs: false, fpsCap: 30,
   },
 };
 
@@ -82,6 +86,8 @@ function sanitize(raw: any, base: GraphicsSettings): GraphicsSettings {
     trail: bool(raw.trail, base.trail),
     detail: bool(raw.detail, base.detail),
     grade: bool(raw.grade, base.grade),
+    ao: bool(raw.ao, base.ao),
+    bloom: bool(raw.bloom, base.bloom),
     vhs: bool(raw.vhs, base.vhs),
     fpsCap: num(raw.fpsCap, FPS_CAPS, base.fpsCap),
   };

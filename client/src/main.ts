@@ -1220,10 +1220,12 @@ const ON_OFF: GfxOption[] = [{ label: 'ON', value: true }, { label: 'OFF', value
 const GFX_ROWS: { key: keyof GraphicsSettings; name: string; hint: string; opts: GfxOption[] }[] = [
   { key: 'resolution', name: 'RESOLUTION', hint: 'internal render scale — the biggest win', opts: [{ label: '100%', value: 1 }, { label: '75%', value: 0.75 }, { label: '50%', value: 0.5 }] },
   { key: 'shadows', name: 'SHADOWS', hint: 'sun shadow map', opts: [{ label: 'HIGH', value: 2 }, { label: 'LOW', value: 1 }, { label: 'OFF', value: 0 }] },
-  { key: 'antialias', name: 'ANTI-ALIASING', hint: 'smooth edges (MSAA)', opts: ON_OFF },
+  { key: 'antialias', name: 'ANTI-ALIASING', hint: 'smooth edges (MSAA + SMAA)', opts: ON_OFF },
+  { key: 'ao', name: 'AMBIENT OCCLUSION', hint: 'contact shade under balls and along walls — costs fill rate', opts: ON_OFF },
+  { key: 'bloom', name: 'BLOOM', hint: 'glow on lasers, portals and the aim arrow', opts: ON_OFF },
   { key: 'particles', name: 'PARTICLES', hint: 'impact sparks and splashes', opts: ON_OFF },
   { key: 'detail', name: 'CROWD & DETAIL', hint: 'crowd stands, stadium props, grass grain', opts: ON_OFF },
-  { key: 'grade', name: 'FILM GRADE', hint: 'tone mapping and color wash', opts: ON_OFF },
+  { key: 'grade', name: 'FILM GRADE', hint: 'filmic tone curve and color punch (off = neutral)', opts: ON_OFF },
   { key: 'vhs', name: 'VHS FILTER', hint: 'retro scanlines, flicker and tracking band', opts: ON_OFF },
   { key: 'fpsCap', name: 'FPS LIMIT', hint: 'caps GPU work — the game ticks at 30Hz anyway', opts: [{ label: 'MAX', value: 0 }, { label: '120', value: 120 }, { label: '60', value: 60 }, { label: '30', value: 30 }] },
 ];

@@ -35,9 +35,22 @@ README.md for architecture and run instructions. Key facts:
   (rows updated in place, thumbnails subscribed as they scroll into view via
   IntersectionObserver) beside a detail pane; it must never rebuild on a
   hole-row insert. `render3d.ts` is the three.js renderer
-  copied from Digital Tennis and adapted: stadium/crowd/lighting/rigs/body
-  builder/previews are the tennis code verbatim; `setHole` builds a hole
-  as meshes, `drawScene` takes a `GolfScene`. Golf world (x, y-down, z-up)
+  copied from Digital Tennis and adapted: stadium/crowd/rigs/body
+  builder/previews are the tennis code; `setHole` builds a hole
+  as meshes, `drawScene` takes a `GolfScene`. Rendering is PBR: every
+  material goes through `std`/`metal`/`gloss` (MeshStandardMaterial) or
+  MeshPhysicalMaterial (balls), lit by the sun plus a PMREM sky
+  (`makeEnvironment`, one per WebGL context — the character previews make
+  their own). Surface detail (felt pile, oak grain, dimples, ripples) is
+  painted procedurally in `surfaces()`; zones clone the tiling normal maps
+  so each can set its own repeat. Frames go through an EffectComposer
+  (`buildComposer`: RenderPass → GTAO → UnrealBloom → OutputPass → SMAA);
+  MSAA lives on the composer's render target, so changing anti-aliasing
+  rebuilds the composer, not the WebGL context. Bloom only catches colours
+  brighter than 1.35 in linear light — emitters (lasers, portals, the aim
+  arrow, floodlights) use over-bright `THREE.Color` values on purpose. The
+  sun's shadow frustum is fitted to the hole bounds (`fitShadowFrustum`).
+  `graphics.ts` owns the knobs (`ao`, `bloom` are the post-chain ones). Golf world (x, y-down, z-up)
   maps to three as `(x - cx, FLOOR_Y + z, y - cy)` with the hole centred.
   `render.ts` is the 2D top-down renderer (editor + course thumbnails).
   `characters.ts` and `graphics.ts` are copied from tennis — keep the

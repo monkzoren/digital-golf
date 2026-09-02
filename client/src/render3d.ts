@@ -1,4 +1,11 @@
 import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { CHARACTERS, type Character, type HairStyle } from './characters';
 import { getGraphics, onGraphicsChange, type GraphicsSettings } from './graphics';
 import type { Hole, Zone, Block } from '@shared/courses';
@@ -80,15 +87,41 @@ const COLORS = {
   ball: 0xd8f838,
 };
 
+// ---------------------------------------------------------------------------
+// Materials are physically based: every surface is a MeshStandardMaterial
+// lit by the sun plus a prefiltered sky environment (image-based lighting),
+// so plastics, felt, wood and metal each read as their own stuff instead
+// of one flat Lambert. `std` is the one constructor everything goes
+// through — the default is a matte, non-metal surface (cloth, felt, paint).
+// ---------------------------------------------------------------------------
+const std = (p: THREE.MeshStandardMaterialParameters = {}) =>
+  new THREE.MeshStandardMaterial({ roughness: 0.82, metalness: 0, ...p });
+/** Brushed metal: shafts, posts, rims. */
+const metal = (p: THREE.MeshStandardMaterialParameters = {}) =>
+  new THREE.MeshStandardMaterial({ roughness: 0.38, metalness: 0.9, ...p });
+/** Glossy plastic / lacquer. */
+const gloss = (p: THREE.MeshStandardMaterialParameters = {}) =>
+  new THREE.MeshStandardMaterial({ roughness: 0.32, metalness: 0, ...p });
+
+// Sun direction shared by the key light, the sky's sun glow and the
+// environment map, so specular highlights land where the shadows say.
+const SUN_POS = new THREE.Vector3(-40, 70, 30);
+
 let renderer: THREE.WebGLRenderer;
 let scene3: THREE.Scene;
 let camera: THREE.PerspectiveCamera;
 let sun: THREE.DirectionalLight;
+let envTex: THREE.Texture | null = null; // PMREM sky, owned by `renderer`
+// Post-processing chain: scene → ambient occlusion → bloom → tone map → SMAA.
+let composer: EffectComposer | null = null;
+let aoPass: GTAOPass | null = null;
+let bloomPass: UnrealBloomPass | null = null;
+let smaaPass: SMAAPass | null = null;
 let detailGroup: THREE.Group; // crowd stands + umpire chair — droppable scenery
 // two-frame crowd animation: stands alternate between the A/B textures on a
 // slow clock (offset by parity so the bowl never moves in lockstep)
-let crowdMatA: THREE.MeshLambertMaterial | null = null;
-let crowdMatB: THREE.MeshLambertMaterial | null = null;
+let crowdMatA: THREE.MeshStandardMaterial | null = null;
+let crowdMatB: THREE.MeshStandardMaterial | null = null;
 let crowdStands: { mesh: THREE.Mesh; parity: number; cur: number }[] = [];
 let hostCanvas: HTMLCanvasElement;
 let gfx: GraphicsSettings = getGraphics();
@@ -159,8 +192,8 @@ export function ballScreenPos(playerId: string): { x: number; y: number } | null
   return { x: (headProj.x * 0.5 + 0.5) * cssW, y: (-headProj.y * 0.5 + 0.5) * cssH };
 }
 
-/** The live canvas's CSS size (render.ts may swap the element for MSAA
- *  changes, so callers can't cache their own reference to measure). */
+/** The live canvas's CSS size, from the ResizeObserver cache (no layout
+ *  read per frame). */
 export function canvasCssSize(): { w: number; h: number } {
   return { w: cssW, h: cssH };
 }
@@ -240,9 +273,9 @@ function spawnBurst(
   }
 }
 
-// Film grade: slightly washed, warm, a hair soft. Paired with ACES tone
+// Film grade: a touch punchier than the raw render. Paired with ACES tone
 // mapping under the FILM GRADE switch; the VHS overlay is its own option.
-const BASE_FILTER = 'saturate(0.88) contrast(1.07) brightness(1.03)';
+const BASE_FILTER = 'saturate(1.08) contrast(1.06)';
 
 function updateParticles(dt: number) {
   if (!gfx.particles) return;
@@ -310,13 +343,13 @@ interface PlayerRig {
   hipGroup: THREE.Group; // shorts/skirt/tail; physique: lifted with leg length
   shoulderL: THREE.Group; elbowL: THREE.Group;
   shoulderR: THREE.Group; elbowR: THREE.Group;
-  torsoMat: THREE.MeshLambertMaterial;
-  sleeveMatL: THREE.MeshLambertMaterial;
-  sleeveMatR: THREE.MeshLambertMaterial;
-  skinMat: THREE.MeshLambertMaterial;
-  headMat: THREE.MeshLambertMaterial;
-  hairMat: THREE.MeshLambertMaterial;
-  accentMat: THREE.MeshLambertMaterial;
+  torsoMat: THREE.MeshStandardMaterial;
+  sleeveMatL: THREE.MeshStandardMaterial;
+  sleeveMatR: THREE.MeshStandardMaterial;
+  skinMat: THREE.MeshStandardMaterial;
+  headMat: THREE.MeshStandardMaterial;
+  hairMat: THREE.MeshStandardMaterial;
+  accentMat: THREE.MeshStandardMaterial;
   hairGroup: THREE.Group;
   charKey: string; // look currently dressed on this rig (see charLookKey)
   head: THREE.Mesh;
@@ -760,7 +793,7 @@ function makeTorsoGeometry(): THREE.BufferGeometry {
 
 // Rebuild the hair meshes for a character's style (parented to the head so
 // ball-watching reads through the hair too).
-function buildHair(grp: THREE.Group, mat: THREE.MeshLambertMaterial, style: HairStyle) {
+function buildHair(grp: THREE.Group, mat: THREE.MeshStandardMaterial, style: HairStyle) {
   for (const child of [...grp.children]) {
     grp.remove(child);
     (child as THREE.Mesh).geometry?.dispose();
@@ -989,13 +1022,13 @@ function applyPhysique(rig: PlayerRig, char: Character) {
 // ---------------------------------------------------------------------------
 
 // Shared static materials — per-character colors live on the rig's own mats.
-const SHORTS_MAT = new THREE.MeshLambertMaterial({ color: COLORS.shorts });
-const SHOE_MAT = new THREE.MeshLambertMaterial({ color: COLORS.shoe });
-const SOLE_MAT = new THREE.MeshLambertMaterial({ color: 0x50525a });
-const WHITE_MAT = new THREE.MeshLambertMaterial({ color: 0xf0f2f4 });
-const WOOD_MAT = new THREE.MeshLambertMaterial({ color: 0x7a4a26 });
-const DARK_MAT = new THREE.MeshLambertMaterial({ color: 0x23252d });
-const METAL_MAT = new THREE.MeshLambertMaterial({ color: 0xb8bcc4 });
+const SHORTS_MAT = std({ color: COLORS.shorts });
+const SHOE_MAT = std({ color: COLORS.shoe, roughness: 0.55 });
+const SOLE_MAT = std({ color: 0x50525a, roughness: 0.95 });
+const WHITE_MAT = std({ color: 0xf0f2f4 });
+const WOOD_MAT = std({ color: 0x7a4a26 });
+const DARK_MAT = std({ color: 0x23252d });
+const METAL_MAT = metal({ color: 0xb8bcc4 });
 
 function bodyPart(parent: THREE.Object3D): THREE.Group {
   const g = new THREE.Group();
@@ -1369,14 +1402,14 @@ function buildBody(rig: PlayerRig, char: Character) {
 }
 
 function makePlayerRig(side: number, intoScene: THREE.Scene = scene3): PlayerRig {
-  const skinMat = new THREE.MeshLambertMaterial({ color: 0xe8ae7e });
-  const headMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+  const skinMat = std({ color: 0xe8ae7e, roughness: 0.62 });
+  const headMat = std({ color: 0xffffff, roughness: 0.62 });
   // double-sided: capes and coat skirts are open shells built from this mat
-  const hairMat = new THREE.MeshLambertMaterial({ color: 0x3a2414, side: THREE.DoubleSide });
-  const torsoMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
-  const sleeveMatL = new THREE.MeshLambertMaterial({ color: 0xffffff });
-  const sleeveMatR = new THREE.MeshLambertMaterial({ color: 0xffffff });
-  const accentMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+  const hairMat = std({ color: 0x3a2414, side: THREE.DoubleSide });
+  const torsoMat = std({ color: 0xffffff });
+  const sleeveMatL = std({ color: 0xffffff });
+  const sleeveMatR = std({ color: 0xffffff });
+  const accentMat = std({ color: 0xffffff });
 
   const root = new THREE.Group();
 
@@ -1430,20 +1463,20 @@ function makePlayerRig(side: number, intoScene: THREE.Scene = scene3): PlayerRig
   racket.rotation.x = 0.12;
   const shaft = new THREE.Mesh(
     new THREE.CylinderGeometry(0.05, 0.06, 2.9, 8),
-    new THREE.MeshLambertMaterial({ color: 0xb8bcc4 })
+    metal({ color: 0xc8ccd4 })
   );
   shaft.position.y = -1.45;
   shaft.castShadow = true;
   racket.add(shaft);
   const grip = new THREE.Mesh(
     new THREE.CylinderGeometry(0.075, 0.07, 0.75, 8),
-    new THREE.MeshLambertMaterial({ color: 0x23252d })
+    std({ color: 0x23252d })
   );
   grip.position.y = -0.3;
   racket.add(grip);
   const blade = new THREE.Mesh(
     new THREE.BoxGeometry(0.85, 0.22, 0.24),
-    new THREE.MeshLambertMaterial({ color: 0xe8e8ee })
+    metal({ color: 0xe8e8ee, roughness: 0.3 })
   );
   blade.position.set(0.28, -2.9, 0.1);
   blade.castShadow = true;
@@ -1637,7 +1670,7 @@ function makeGroundTexture(): THREE.CanvasTexture {
   c.width = gfx.detail ? 1024 : 512;
   c.height = c.width * 1.5;
   const g = c.getContext('2d')!;
-  g.fillStyle = '#4c9a4a';
+  g.fillStyle = '#458f45';
   g.fillRect(0, 0, c.width, c.height);
   // mowing stripes running the length of the arena
   const stripe = c.width / 14;
@@ -1823,43 +1856,72 @@ function makeHoardingTexture(): THREE.CanvasTexture {
   return tex;
 }
 
-// Gradient sky with a sun glow (matching the key light's corner) and soft
-// cumulus puffs — replaces the flat solid-color background.
+// The sky as an equirectangular panorama: zenith blue down to a warm haze
+// at the horizon, a sun glow where the key light sits, cumulus puffs, and a
+// muted grass-green lower hemisphere. One texture serves twice — as the
+// background (it turns with the camera, so the sky is a place rather than
+// a wallpaper) and, prefiltered, as the image-based lighting every PBR
+// surface reflects.
+let skyTex: THREE.Texture | null = null;
 function makeSkyTexture(): THREE.Texture {
+  if (skyTex) return skyTex;
   const c = document.createElement('canvas');
-  c.width = 1024;
-  c.height = 512;
+  c.width = 2048;
+  c.height = 1024;
+  const W = c.width, H = c.height;
   const g = c.getContext('2d')!;
-  const grad = g.createLinearGradient(0, 0, 0, c.height);
-  grad.addColorStop(0, '#2f6cb4');
-  grad.addColorStop(0.4, '#6ea6d8');
-  grad.addColorStop(0.75, '#b8d8ec');
-  grad.addColorStop(1, '#eef2ea'); // warm haze at the horizon
+  const grad = g.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#1e4f9a');
+  grad.addColorStop(0.22, '#3a7cc4');
+  grad.addColorStop(0.42, '#8fbde4');
+  grad.addColorStop(0.495, '#e8eef0'); // haze band right at the horizon
+  grad.addColorStop(0.505, '#7c9a6a');
+  grad.addColorStop(0.6, '#4f7a42');
+  grad.addColorStop(1, '#2f4a2a');
   g.fillStyle = grad;
-  g.fillRect(0, 0, c.width, c.height);
-  const glow = g.createRadialGradient(300, 110, 0, 300, 110, 280);
-  glow.addColorStop(0, 'rgba(255,248,225,0.75)');
-  glow.addColorStop(0.25, 'rgba(255,244,214,0.28)');
-  glow.addColorStop(1, 'rgba(255,244,214,0)');
+  g.fillRect(0, 0, W, H);
+  // sun glow at the key light's direction (equirect: u from atan2(z, x),
+  // v from elevation; canvas row 0 is the zenith)
+  const d = SUN_POS.clone().normalize();
+  const su = (Math.atan2(d.z, d.x) / (Math.PI * 2) + 0.5) * W;
+  const sv = (0.5 - Math.asin(d.y) / Math.PI) * H;
+  const glow = g.createRadialGradient(su, sv, 0, su, sv, 260);
+  glow.addColorStop(0, 'rgba(255,250,232,1)');
+  glow.addColorStop(0.06, 'rgba(255,247,220,0.9)');
+  glow.addColorStop(0.3, 'rgba(255,240,205,0.3)');
+  glow.addColorStop(1, 'rgba(255,236,196,0)');
   g.fillStyle = glow;
-  g.fillRect(0, 0, c.width, c.height);
-  for (let i = 0; i < 9; i++) {
-    const cx = texHash(i * 3.1) * c.width;
-    const cy = 120 + texHash(i * 5.7) * 210;
-    const sc = 0.7 + texHash(i * 7.9);
-    g.fillStyle = 'rgba(255,255,255,0.16)';
-    for (let p = 0; p < 6; p++) {
-      const px = cx + (texHash(i * 11.3 + p) - 0.5) * 150 * sc;
-      const py = cy + (texHash(i * 13.7 + p) - 0.5) * 34 * sc;
-      const pr = (22 + texHash(i * 17.9 + p) * 26) * sc;
+  g.fillRect(0, 0, W, H / 2);
+  // clouds live in the band between ~12° and ~40° above the horizon
+  for (let i = 0; i < 26; i++) {
+    const cx = texHash(i * 3.1) * W;
+    const cy = H * (0.28 + texHash(i * 5.7) * 0.17);
+    const sc = (0.8 + texHash(i * 7.9)) * (1 + (cy / H - 0.28) * 2);
+    g.fillStyle = `rgba(255,255,255,${0.12 + texHash(i * 2.3) * 0.16})`;
+    for (let p = 0; p < 7; p++) {
+      const px = cx + (texHash(i * 11.3 + p) - 0.5) * 170 * sc;
+      const py = cy + (texHash(i * 13.7 + p) - 0.5) * 30 * sc;
+      const pr = (18 + texHash(i * 17.9 + p) * 26) * sc;
       g.beginPath();
-      g.ellipse(px, py, pr, pr * 0.55, 0, 0, Math.PI * 2);
+      g.ellipse(px, py, pr, pr * 0.5, 0, 0, Math.PI * 2);
       g.fill();
     }
   }
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
+  tex.mapping = THREE.EquirectangularReflectionMapping;
+  skyTex = tex;
   return tex;
+}
+
+/** Prefilter the sky into an environment map for a renderer (PMREM output
+ *  belongs to the WebGL context that made it, so each renderer gets its
+ *  own). */
+function makeEnvironment(r: THREE.WebGLRenderer): THREE.Texture {
+  const pmrem = new THREE.PMREMGenerator(r);
+  const env = pmrem.fromEquirectangular(makeSkyTexture()).texture;
+  pmrem.dispose();
+  return env;
 }
 
 // Big screen above the far stand: glowing wordmark, LIVE bug, scanlines.
@@ -1906,7 +1968,7 @@ function makeJumbotronTexture(): THREE.CanvasTexture {
   return tex;
 }
 
-let groundMat: THREE.MeshLambertMaterial;
+let groundMat: THREE.MeshStandardMaterial;
 let groundBaked = false;
 
 function bakeGround() {
@@ -1914,6 +1976,15 @@ function bakeGround() {
   groundBaked = true;
   const old = groundMat.map;
   groundMat.map = makeGroundTexture();
+  if (!groundMat.normalMap) {
+    // turf: the felt's pile normal tiled fine, so the lawn has a nap that
+    // shifts with the sun instead of reading as painted plastic
+    groundMat.normalMap = surfaces().feltN.clone(); // own repeat, shared pixels
+    groundMat.normalMap.repeat.set((GROUND_X * 2) / 3, (GROUND_EXT_Y * 2) / 3);
+    groundMat.normalMap.needsUpdate = true;
+    groundMat.normalScale.set(0.55, 0.55);
+    groundMat.roughness = 0.95;
+  }
   groundMat.needsUpdate = true;
   old?.dispose();
 }
@@ -1952,7 +2023,7 @@ function scaleUv(geo: THREE.BufferGeometry, kx: number, ky = 1) {
 
 function buildEnvironment() {
   crowdStands = [];
-  groundMat = new THREE.MeshLambertMaterial();
+  groundMat = std({});
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(GROUND_X * 2, GROUND_EXT_Y * 2), groundMat);
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
@@ -1961,7 +2032,7 @@ function buildEnvironment() {
   // --- hoardings: sponsor boards ringing the whole octagon (always on — a
   // thin band that caps the court against the sky) ------------------------
   const edges = bowlEdges();
-  const hoardMat = new THREE.MeshLambertMaterial({ map: makeHoardingTexture() });
+  const hoardMat = std({ map: makeHoardingTexture() });
   for (const e of edges) {
     const geo = new THREE.BoxGeometry(e.len + 0.6, HOARD_H, 0.4);
     scaleUv(geo, Math.max(1, Math.round(e.len / 56)));
@@ -1982,10 +2053,10 @@ function buildEnvironment() {
   // roof + fascia. The near stand is kept low (and roofless) so it never
   // pokes into the bottom of the frame; its corner neighbors step down to
   // meet it. -----------------------------------------------------------
-  const cMatA = (crowdMatA = new THREE.MeshLambertMaterial({ map: makeCrowdTexture(0) }));
-  const cMatB = (crowdMatB = new THREE.MeshLambertMaterial({ map: makeCrowdTexture(1) }));
-  const roofMat = new THREE.MeshLambertMaterial({ color: 0xdde3ea });
-  const fasciaMat = new THREE.MeshLambertMaterial({ color: 0xf4f6fa });
+  const cMatA = (crowdMatA = std({ map: makeCrowdTexture(0) }));
+  const cMatB = (crowdMatB = std({ map: makeCrowdTexture(1) }));
+  const roofMat = std({ color: 0xdde3ea, roughness: 0.6 });
+  const fasciaMat = std({ color: 0xf4f6fa });
   const sinT = Math.sin(STAND_TILT);
   const cosT = Math.cos(STAND_TILT);
   edges.forEach((e, i) => {
@@ -2028,7 +2099,7 @@ function buildEnvironment() {
   const jumbo = new THREE.Group();
   const jFrame = new THREE.Mesh(
     new THREE.BoxGeometry(29.6, 11.4, 1),
-    new THREE.MeshLambertMaterial({ color: 0x141a2e })
+    std({ color: 0x141a2e })
   );
   jumbo.add(jFrame);
   const jScreen = new THREE.Mesh(
@@ -2037,7 +2108,7 @@ function buildEnvironment() {
   );
   jScreen.position.z = 0.55;
   jumbo.add(jScreen);
-  const jLegMat = new THREE.MeshLambertMaterial({ color: 0x30384a });
+  const jLegMat = metal({ color: 0x30384a, roughness: 0.55, metalness: 0.7 });
   for (const lx of [-9, 9]) {
     const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.55, 7, 8), jLegMat);
     leg.position.set(lx, -8, -0.4);
@@ -2048,9 +2119,9 @@ function buildEnvironment() {
   detailGroup.add(jumbo);
 
   // --- floodlight towers at the four corners ------------------------------
-  const poleMat = new THREE.MeshLambertMaterial({ color: 0x8a929e });
-  const headMat = new THREE.MeshLambertMaterial({ color: 0x3a4148 });
-  const lampMat = new THREE.MeshBasicMaterial({ color: 0xf0f7ff }); // self-lit
+  const poleMat = metal({ color: 0x8a929e, roughness: 0.5 });
+  const headMat = std({ color: 0x3a4148 });
+  const lampMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.6, 2.7, 3.0) }); // self-lit, blooms
   for (const sx of [-1, 1]) {
     for (const sz of [-1, 1]) {
       const px = sx * 53;
@@ -2073,9 +2144,9 @@ function buildEnvironment() {
   }
 
   // --- player benches flanking the umpire chair ---------------------------
-  const benchSeatMat = new THREE.MeshLambertMaterial({ color: 0x2e6cb0 });
-  const benchLegMat = new THREE.MeshLambertMaterial({ color: 0x9aa4b0 });
-  const towelMat = new THREE.MeshLambertMaterial({ color: 0xf6f6f2 });
+  const benchSeatMat = gloss({ color: 0x2e6cb0, roughness: 0.4 });
+  const benchLegMat = metal({ color: 0x9aa4b0, roughness: 0.5 });
+  const towelMat = std({ color: 0xf6f6f2 });
   for (const bz of [-13, 13]) {
     const bench = new THREE.Group();
     const seatB = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.3, 6), benchSeatMat);
@@ -2099,8 +2170,8 @@ function buildEnvironment() {
   }
 
   // umpire chair: white frame, green seat, ladder rungs, and a parasol
-  const chairMat = new THREE.MeshLambertMaterial({ color: 0xeef0ee });
-  const chairGreen = new THREE.MeshLambertMaterial({ color: 0x1d6a38 });
+  const chairMat = std({ color: 0xeef0ee });
+  const chairGreen = std({ color: 0x1d6a38 });
   const chair = new THREE.Group();
   const seat = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.4, 1.4), chairGreen);
   seat.position.y = 5.2;
@@ -2125,9 +2196,9 @@ function buildEnvironment() {
 
   // the REF: seated on the chair, navy blazer + cap, facing the court (-x).
   // Same stylized proportions as the players, built from primitives.
-  const refSkin = new THREE.MeshLambertMaterial({ color: COLORS.skin });
-  const refBlazer = new THREE.MeshLambertMaterial({ color: 0x24356e });
-  const refSlacks = new THREE.MeshLambertMaterial({ color: 0xf5f5f5 });
+  const refSkin = std({ color: COLORS.skin });
+  const refBlazer = std({ color: 0x24356e });
+  const refSlacks = std({ color: 0xf5f5f5 });
   const refPart = (mesh: THREE.Mesh, x: number, y: number, z: number, rz = 0) => {
     mesh.position.set(x, y, z);
     mesh.rotation.z = rz;
@@ -2199,6 +2270,7 @@ function resizeToDisplay(canvas: HTMLCanvasElement) {
   const h = Math.round(cssH * dpr);
   if (w > 0 && h > 0 && (canvas.width !== w || canvas.height !== h)) {
     renderer.setSize(w, h, false);
+    composer?.setSize(w, h);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
   }
@@ -2206,6 +2278,7 @@ function resizeToDisplay(canvas: HTMLCanvasElement) {
 
 export function initRenderer(canvas: HTMLCanvasElement) {
   hostCanvas = canvas;
+  gfx = getGraphics(); // settings may have changed since this module loaded
   observeCanvasSize();
   buildScene();
   onGraphicsChange(applyGraphics);
@@ -2214,13 +2287,17 @@ export function initRenderer(canvas: HTMLCanvasElement) {
 function buildScene() {
   renderer = new THREE.WebGLRenderer({
     canvas: hostCanvas,
-    antialias: gfx.antialias,
+    antialias: false, // MSAA is done on the composer's render target instead
     stencil: false,
     preserveDrawingBuffer: false,
   });
 
   scene3 = new THREE.Scene();
   scene3.background = makeSkyTexture();
+  scene3.backgroundIntensity = 1.0;
+  envTex = makeEnvironment(renderer);
+  scene3.environment = envTex;
+  scene3.environmentIntensity = 0.5;
   scene3.fog = new THREE.Fog(0xdce8f2, 200, 340);
 
   const aspect =
@@ -2231,15 +2308,15 @@ function buildScene() {
   camPos.copy(CAM_POS);
   camLook.copy(CAM_TARGET);
 
-  sun = new THREE.DirectionalLight(0xfff2df, 2.2);
-  sun.position.set(-40, 70, 30);
-  sun.shadow.camera.left = -70;
-  sun.shadow.camera.right = 70;
-  sun.shadow.camera.top = 80;
-  sun.shadow.camera.bottom = -80;
+  sun = new THREE.DirectionalLight(0xfff1dc, 3.6);
+  sun.position.copy(SUN_POS);
   sun.shadow.camera.far = 250;
+  sun.shadow.bias = -0.0003;
+  sun.shadow.normalBias = 0.035;
+  fitShadowFrustum(null);
   scene3.add(sun);
-  scene3.add(new THREE.HemisphereLight(0xcfe4ff, 0x3a6b32, 1.0));
+  // the sky map does most of the fill; this only lifts the deepest shade
+  scene3.add(new THREE.HemisphereLight(0xcfe4ff, 0x3a6b32, 0.25));
 
   buildEnvironment();
   bakeGround();
@@ -2258,16 +2335,22 @@ function buildScene() {
   ballByPlayer.clear();
   ballPool.length = 0;
   const ballGeo = new THREE.SphereGeometry(BALL_R, 20, 14);
-  const blobGeo = new THREE.CircleGeometry(BALL_R * 1.15, 16);
+  const blobGeo = new THREE.CircleGeometry(BALL_R * 1.6, 20);
+  const sf = surfaces();
+  const ballTex = makeGolfBallTexture();
   for (let i = 0; i < MAX_GOLFERS; i++) {
-    const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, map: makeGolfBallTexture() });
+    // lacquered plastic: a clearcoat over the paint, dimples in the normal
+    const mat = new THREE.MeshPhysicalMaterial({
+      color: 0xffffff, map: ballTex, normalMap: sf.dimpleN, normalScale: new THREE.Vector2(0.5, 0.5),
+      roughness: 0.42, metalness: 0, clearcoat: 0.9, clearcoatRoughness: 0.18,
+    });
     const mesh = new THREE.Mesh(ballGeo, mat);
     mesh.castShadow = true;
     mesh.visible = false;
     scene3.add(mesh);
     const blob = new THREE.Mesh(
       blobGeo,
-      new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.3, depthWrite: false })
+      new THREE.MeshBasicMaterial({ color: 0x000000, alphaMap: sf.blob, transparent: true, opacity: 0.4, depthWrite: false })
     );
     blob.rotation.x = -Math.PI / 2;
     blob.visible = false;
@@ -2297,9 +2380,49 @@ function buildScene() {
   scene3.add(holeGroup);
   builtHoleKey = '';
 
+  buildComposer();
   applyResolution();
   applyShadows();
   applyGrade();
+}
+
+// ---------------------------------------------------------------------------
+// Post-processing. The scene renders into a half-float (HDR) target —
+// multisampled when anti-aliasing is on — then: ground-truth ambient
+// occlusion (contact shade under balls, along wall feet, between limbs),
+// bloom (only what is brighter than white glows: lasers, portals, the
+// aim arrow, floodlights), the tone-mapped output, and SMAA to catch the
+// shading aliasing MSAA cannot. Passes toggle with the graphics options.
+// ---------------------------------------------------------------------------
+function buildComposer() {
+  composer?.dispose();
+  const w = Math.max(2, hostCanvas.width), h = Math.max(2, hostCanvas.height);
+  const target = new THREE.WebGLRenderTarget(w, h, {
+    type: THREE.HalfFloatType,
+    samples: gfx.antialias ? 4 : 0,
+  });
+  composer = new EffectComposer(renderer, target);
+  composer.addPass(new RenderPass(scene3, camera));
+  aoPass = new GTAOPass(scene3, camera, w, h);
+  aoPass.output = GTAOPass.OUTPUT.Default;
+  // world-space radius: about two ball widths, so the occlusion hugs the
+  // felt-to-wall seam and the underside of a resting ball
+  aoPass.updateGtaoMaterial({ radius: 1.1, distanceExponent: 1, thickness: 1, scale: 1.1, samples: 12, distanceFallOff: 1, screenSpaceRadius: false });
+  aoPass.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 4, radiusExponent: 1, rings: 2, samples: 12 });
+  aoPass.blendIntensity = 0.85;
+  composer.addPass(aoPass);
+  bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.42, 0.55, 1.35);
+  composer.addPass(bloomPass);
+  composer.addPass(new OutputPass());
+  smaaPass = new SMAAPass();
+  composer.addPass(smaaPass);
+  applyPost();
+}
+
+function applyPost() {
+  if (aoPass) aoPass.enabled = gfx.ao;
+  if (bloomPass) bloomPass.enabled = gfx.bloom;
+  if (smaaPass) smaaPass.enabled = gfx.antialias;
 }
 
 // ---------------------------------------------------------------------------
@@ -2322,10 +2445,30 @@ function applyResolution() {
   resizeToDisplay(hostCanvas); // takes effect now rather than on the next frame
 }
 
+// The shadow map covers the hole, not the stadium: an orthographic frustum
+// wrapped around the hole bounds (plus room for the golfers and the flag)
+// spends every shadow texel where the eye is, so the golfers' shadows have
+// edges instead of stair-steps. With no hole built it falls back to the
+// whole arena for the idle stadium behind the menus.
+function fitShadowFrustum(b: ReturnType<typeof holeBounds> | null) {
+  const cam = sun.shadow.camera;
+  if (b) {
+    const hw = b.w / 2 + 10, hh = b.h / 2 + 10;
+    // the light looks down its own axis: size the box by the hole's
+    // footprint projected onto the light's view plane (generous — the
+    // golfers stand off the felt and the flag rises above it)
+    const r = Math.hypot(hw, hh) * 0.85 + 4;
+    cam.left = -r; cam.right = r; cam.top = r; cam.bottom = -r;
+  } else {
+    cam.left = -70; cam.right = 70; cam.top = 80; cam.bottom = -80;
+  }
+  cam.updateProjectionMatrix();
+}
+
 function applyShadows() {
   const on = gfx.shadows > 0;
   renderer.shadowMap.enabled = on;
-  renderer.shadowMap.type = gfx.shadows >= 2 ? THREE.PCFShadowMap : THREE.BasicShadowMap;
+  renderer.shadowMap.type = gfx.shadows >= 2 ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
   sun.castShadow = on;
   const size = gfx.shadows >= 2 ? 2048 : 1024;
   if (!on || sun.shadow.mapSize.x !== size) {
@@ -2337,19 +2480,20 @@ function applyShadows() {
   markMaterialsDirty();
 }
 
+// The scene is lit in HDR (sun + sky add up past white), so some tone
+// mapping is always on: the FILM GRADE switch picks the filmic ACES curve
+// with the colour wash, or a neutral curve that keeps the colours as authored.
 function applyGrade() {
   renderer.domElement.style.filter = gfx.grade ? BASE_FILTER : '';
-  renderer.toneMapping = gfx.grade ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
-  renderer.toneMappingExposure = 1.05;
+  renderer.toneMapping = gfx.grade ? THREE.ACESFilmicToneMapping : THREE.NeutralToneMapping;
+  renderer.toneMappingExposure = gfx.grade ? 1.1 : 1.0;
   markMaterialsDirty();
 }
 
 function applyGraphics(next: GraphicsSettings, prev: GraphicsSettings) {
   gfx = next;
-  if (next.antialias !== prev.antialias) {
-    rebuildScene(); // MSAA is fixed when the WebGL context is created
-    return;
-  }
+  if (next.antialias !== prev.antialias) buildComposer(); // MSAA is baked into the render target
+  else if (next.ao !== prev.ao || next.bloom !== prev.bloom) applyPost();
   if (next.resolution !== prev.resolution) applyResolution();
   if (next.shadows !== prev.shadows) applyShadows();
   if (next.grade !== prev.grade) applyGrade();
@@ -2368,35 +2512,6 @@ function applyGraphics(next: GraphicsSettings, prev: GraphicsSettings) {
   }
 }
 
-// A context's attributes are fixed for the life of its canvas, so switching
-// MSAA means a new canvas: swap the element, drop the old context, rebuild.
-function rebuildScene() {
-  const old = renderer;
-  disposeScene();
-  const next = hostCanvas.cloneNode(false) as HTMLCanvasElement; // keeps id/class
-  hostCanvas.replaceWith(next);
-  hostCanvas = next;
-  observeCanvasSize();
-  old.dispose();
-  old.forceContextLoss();
-  particles.length = 0;
-  playerRigs = [];
-  groundBaked = false;
-  buildScene();
-}
-
-function disposeScene() {
-  scene3.traverse(obj => {
-    const mesh = obj as THREE.Mesh;
-    mesh.geometry?.dispose();
-    const mat = mesh.material;
-    for (const m of Array.isArray(mat) ? mat : mat ? [mat] : []) {
-      (m as THREE.MeshLambertMaterial).map?.dispose();
-      m.dispose();
-    }
-  });
-}
-
 // ---------------------------------------------------------------------------
 // Golf scene state: pooled golfers + balls, the built hole, aim props, camera
 // ---------------------------------------------------------------------------
@@ -2404,7 +2519,7 @@ const MAX_GOLFERS = 32; // balls
 const MAX_RIGS = 10; // full 3D golfers: you + the nearest nine
 const WALL_H = 1.1;
 const rigByPlayer = new Map<string, number>();
-interface BallProp { mesh: THREE.Mesh; blob: THREE.Mesh; mat: THREE.MeshLambertMaterial }
+interface BallProp { mesh: THREE.Mesh; blob: THREE.Mesh; mat: THREE.MeshPhysicalMaterial }
 const ballPool: BallProp[] = [];
 const ballByPlayer = new Map<string, BallProp>();
 let aimArrow: THREE.Mesh;
@@ -2414,9 +2529,9 @@ let builtHoleKey = '';
 let builtGeom: ReturnType<typeof geomOf> | null = null;
 interface MoverProp { block: Block; group: THREE.Group; pivotX: number; pivotY: number; mesh?: THREE.Mesh }
 let movers: MoverProp[] = [];
-let waterMats: THREE.MeshLambertMaterial[] = [];
+let waterMats: THREE.MeshStandardMaterial[] = [];
 // scrolling surfaces: the texture slides along the zone's own direction
-let boostMats: { mat: THREE.MeshLambertMaterial; dx: number; dy: number; rate: number }[] = [];
+let boostMats: { mat: THREE.MeshStandardMaterial; dx: number; dy: number; rate: number }[] = [];
 let teleMats: THREE.MeshBasicMaterial[] = [];
 // the toy box: things that spin, whirr and pulse every frame
 let spinners: { group: THREE.Group; speed: number }[] = [];
@@ -2446,6 +2561,171 @@ function golferState(slot: number): GolferState {
   return golfers[slot];
 }
 
+// ---------------------------------------------------------------------------
+// Procedural surfaces. Nothing here is loaded: albedo and normal maps are
+// painted on canvases at start-up (a few hundred KB of GPU memory, zero
+// network), which keeps the client a single bundle.
+// ---------------------------------------------------------------------------
+
+/** Tangent-space normal map from a height function h(x, y) in [0, 1] over a
+ *  tiling canvas of `size` px; `strength` scales the slope. */
+function heightToNormal(size: number, strength: number, h: (x: number, y: number) => number): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const g = c.getContext('2d')!;
+  const img = g.createImageData(size, size);
+  const d = img.data;
+  const hv = new Float32Array(size * size);
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) hv[y * size + x] = h(x / size, y / size);
+  const at = (x: number, y: number) => hv[((y + size) % size) * size + ((x + size) % size)];
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = (at(x + 1, y) - at(x - 1, y)) * strength;
+      const dy = (at(x, y + 1) - at(x, y - 1)) * strength;
+      const l = Math.hypot(dx, dy, 1);
+      const i = (y * size + x) * 4;
+      d[i] = (-dx / l * 0.5 + 0.5) * 255;
+      d[i + 1] = (dy / l * 0.5 + 0.5) * 255; // canvas y is down; tangent-space +y is up
+      d[i + 2] = (1 / l * 0.5 + 0.5) * 255;
+      d[i + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.NoColorSpace;
+  return tex;
+}
+
+// Smooth tiling value noise (bilinear on a hashed lattice), a few octaves.
+function vnoise(x: number, y: number, cells: number): number {
+  const fx = x * cells, fy = y * cells;
+  const x0 = Math.floor(fx), y0 = Math.floor(fy);
+  const tx = fx - x0, ty = fy - y0;
+  const sx = tx * tx * (3 - 2 * tx), sy = ty * ty * (3 - 2 * ty);
+  const lat = (i: number, j: number) => texHash((((i % cells) + cells) % cells) * 131.1 + (((j % cells) + cells) % cells) * 7.7 + cells * 0.37);
+  const a = lat(x0, y0), b = lat(x0 + 1, y0), c = lat(x0, y0 + 1), d = lat(x0 + 1, y0 + 1);
+  return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy;
+}
+function fbm(x: number, y: number, base: number, octaves = 3): number {
+  let v = 0, amp = 0.5, cells = base, sum = 0;
+  for (let o = 0; o < octaves; o++) { v += vnoise(x, y, cells) * amp; sum += amp; amp *= 0.5; cells *= 2; }
+  return v / sum;
+}
+
+// Felt: fibrous pile, a fine random grain that catches the light softly.
+function makeFeltNormal(): THREE.CanvasTexture {
+  return heightToNormal(256, 1.6, (x, y) => fbm(x, y, 64, 3));
+}
+
+// Wood: plank grain running along u, with knots and slight ring wobble.
+function woodHeight(x: number, y: number): number {
+  const wob = fbm(x, y, 4, 2) * 0.35;
+  const rings = 0.5 + 0.5 * Math.sin((y * 9 + wob * 6 + x * 0.6) * Math.PI * 2);
+  return rings * 0.7 + fbm(x, y, 48, 2) * 0.3;
+}
+function makeWoodTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = c.height = 512;
+  const g = c.getContext('2d')!;
+  const img = g.createImageData(512, 512);
+  const d = img.data;
+  for (let y = 0; y < 512; y++) {
+    for (let x = 0; x < 512; x++) {
+      const h = woodHeight(x / 512, y / 512);
+      const i = (y * 512 + x) * 4;
+      // light oak: bright early wood, darker late wood
+      d[i] = 176 + h * 42 - 14;
+      d[i + 1] = 128 + h * 40 - 10;
+      d[i + 2] = 78 + h * 34 - 8;
+      d[i + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  return tex;
+}
+function makeWoodNormal(): THREE.CanvasTexture {
+  return heightToNormal(512, 2.2, woodHeight);
+}
+
+// Golf ball dimples: a hex-packed field of round dents on the sphere's
+// equirect wrap (the count is chosen so the seam tiles).
+function makeDimpleNormal(): THREE.CanvasTexture {
+  const NX = 24, NY = 12;
+  return heightToNormal(256, 3.0, (x, y) => {
+    const row = Math.floor(y * NY);
+    const ox = (row % 2) * 0.5;
+    const fx = ((x * NX + ox) % 1) - 0.5, fy = ((y * NY) % 1) - 0.5;
+    const r = Math.hypot(fx, fy);
+    return r < 0.36 ? 1 - Math.cos((r / 0.36) * Math.PI * 0.5) : 1;
+  });
+}
+
+// Water: two crossed wave trains, scrolled at runtime for a live surface.
+function makeRippleNormal(): THREE.CanvasTexture {
+  return heightToNormal(256, 1.4, (x, y) =>
+    0.5 + 0.25 * Math.sin((x * 3 + y * 1) * Math.PI * 2) + 0.25 * Math.sin((x * -1 + y * 4 + fbm(x, y, 8, 2) * 0.4) * Math.PI * 2));
+}
+
+// Soft contact shadow under the ball: radial falloff used as an alpha map.
+function makeBlobTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d')!;
+  const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0, '#ffffff');
+  grad.addColorStop(0.45, '#b0b0b0');
+  grad.addColorStop(1, '#000000');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c);
+}
+
+// The cup seen from above: black at the bottom, the far wall catching a
+// little light, so the hole reads as a recess rather than a black sticker.
+function makeCupTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#05090a';
+  g.fillRect(0, 0, 128, 128);
+  const wall = g.createRadialGradient(64, 64, 34, 64, 64, 64);
+  wall.addColorStop(0, 'rgba(60,70,66,0)');
+  wall.addColorStop(0.7, 'rgba(70,80,74,0.55)');
+  wall.addColorStop(1, 'rgba(120,130,122,0.9)');
+  g.fillStyle = wall;
+  g.fillRect(0, 0, 128, 128);
+  // the sunlit side of the inner wall (sun comes from -x, +z)
+  const lit = g.createLinearGradient(20, 20, 108, 108);
+  lit.addColorStop(0, 'rgba(0,0,0,0.5)');
+  lit.addColorStop(1, 'rgba(255,255,240,0.35)');
+  g.fillStyle = lit;
+  g.beginPath();
+  g.arc(64, 64, 64, 0, Math.PI * 2);
+  g.arc(64, 64, 40, 0, Math.PI * 2, true);
+  g.fill();
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+let surf: {
+  feltN: THREE.CanvasTexture; wood: THREE.CanvasTexture; woodN: THREE.CanvasTexture;
+  dimpleN: THREE.CanvasTexture; rippleN: THREE.CanvasTexture; blob: THREE.CanvasTexture; cup: THREE.CanvasTexture;
+} | null = null;
+function surfaces() {
+  if (surf) return surf;
+  const wood = makeWoodTexture(), woodN = makeWoodNormal();
+  wood.repeat.set(0.25, 0.25); // one plank tile = 4 world units
+  woodN.repeat.set(0.25, 0.25);
+  surf = { feltN: makeFeltNormal(), wood, woodN, dimpleN: makeDimpleNormal(), rippleN: makeRippleNormal(), blob: makeBlobTexture(), cup: makeCupTexture() };
+  return surf;
+}
+
 /** Dimpled white golf ball. */
 function makeGolfBallTexture(): THREE.CanvasTexture {
   const c = document.createElement('canvas');
@@ -2472,7 +2752,7 @@ function makeFeltTexture(): THREE.CanvasTexture {
   c.width = 256;
   c.height = 256;
   const g = c.getContext('2d')!;
-  g.fillStyle = '#3fae4f';
+  g.fillStyle = '#36a24a';
   g.fillRect(0, 0, 256, 256);
   for (let i = 0; i < 8; i++) {
     g.fillStyle = i % 2 ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.03)';
@@ -2666,7 +2946,9 @@ function shapeFromPts(pts: number[], ox: number, oy: number): THREE.Shape {
 }
 
 function extrudedBlock(pts: number[], ox: number, oy: number, height: number, mat: THREE.Material): THREE.Mesh {
-  const geo = new THREE.ExtrudeGeometry(shapeFromPts(pts, ox, oy), { depth: height, bevelEnabled: false });
+  const geo = new THREE.ExtrudeGeometry(shapeFromPts(pts, ox, oy), {
+    depth: height, bevelEnabled: true, bevelThickness: 0.06, bevelSize: 0.05, bevelOffset: -0.05, bevelSegments: 2,
+  });
   const m = new THREE.Mesh(geo, mat);
   m.rotation.x = -Math.PI / 2;
   m.castShadow = true;
@@ -2674,30 +2956,32 @@ function extrudedBlock(pts: number[], ox: number, oy: number, height: number, ma
   return m;
 }
 
-const FELT_MAT = new THREE.MeshLambertMaterial({ color: 0xffffff });
-const WALL_MAT = new THREE.MeshLambertMaterial({ color: 0xc9a36b });
-const WALL_LOW_MAT = new THREE.MeshLambertMaterial({ color: 0xe0c391 });
-const WALL_SIDE_MAT = new THREE.MeshLambertMaterial({ color: 0x9c7a4a, side: THREE.DoubleSide });
-const RUBBER_MAT = new THREE.MeshLambertMaterial({ color: 0xff7ad9, emissive: 0x3a0d2c });
-const LASER_ON_MAT = new THREE.MeshBasicMaterial({ color: 0xff2d55, transparent: true, opacity: 0.85 });
+const FELT_MAT = std({ color: 0xffffff, roughness: 0.92 });
+const WALL_MAT = std({ color: 0xffffff, roughness: 0.55 });
+const WALL_LOW_MAT = std({ color: 0xf3dfbc, roughness: 0.55 });
+const WALL_SIDE_MAT = std({ color: 0xb59468, roughness: 0.6, side: THREE.DoubleSide });
+const RUBBER_MAT = gloss({ color: 0xff7ad9, emissive: 0x3a0d2c, roughness: 0.45 });
+const LASER_ON_MAT = new THREE.MeshBasicMaterial({ color: new THREE.Color(3.2, 0.35, 0.8), transparent: true, opacity: 0.9 });
 const LASER_OFF_MAT = new THREE.MeshBasicMaterial({ color: 0xff2d55, transparent: true, opacity: 0.12 });
-const CANNON_MAT = new THREE.MeshLambertMaterial({ color: 0x2b2f3a });
-const CANNON_RIM_MAT = new THREE.MeshLambertMaterial({ color: 0xffd60a });
-const FAN_BLADE_MAT = new THREE.MeshLambertMaterial({ color: 0xe8f6ff });
+const CANNON_MAT = metal({ color: 0x2b2f3a, roughness: 0.5, metalness: 0.7 });
+const CANNON_RIM_MAT = metal({ color: 0xffd60a, roughness: 0.3 });
+const FAN_BLADE_MAT = gloss({ color: 0xe8f6ff });
 const STOCK_MATS: THREE.Material[] = [FELT_MAT, WALL_MAT, WALL_LOW_MAT, WALL_SIDE_MAT, RUBBER_MAT, LASER_ON_MAT, LASER_OFF_MAT, CANNON_MAT, CANNON_RIM_MAT, FAN_BLADE_MAT];
-const BUMPER_MAT = new THREE.MeshLambertMaterial({ color: 0xe03030, emissive: 0x400000 });
-const POST_MAT = new THREE.MeshLambertMaterial({ color: 0x8d99b5 });
-const CUP_MAT = new THREE.MeshBasicMaterial({ color: 0x06100a });
-const FLAG_MAT = new THREE.MeshLambertMaterial({ color: 0xe83828, side: THREE.DoubleSide });
+const BUMPER_MAT = gloss({ color: 0xe03030, emissive: 0x400000, roughness: 0.28 });
+const POST_MAT = metal({ color: 0x9aa4b8, roughness: 0.45 });
+const CUP_MAT = new THREE.MeshBasicMaterial({ color: 0xffffff });
+const FLAG_MAT = std({ color: 0xe83828, side: THREE.DoubleSide, roughness: 0.9 });
 let feltTex: THREE.CanvasTexture | null = null;
 
 function disposeHole() {
   holeGroup.traverse(obj => {
     const mesh = obj as THREE.Mesh;
     mesh.geometry?.dispose();
-    const mat = mesh.material as THREE.Material & { map?: THREE.Texture | null };
-    if (mat && mat.map && mat !== FELT_MAT) mat.map.dispose();
-    if (mat && ![...STOCK_MATS, BUMPER_MAT, POST_MAT, CUP_MAT, FLAG_MAT].includes(mat as any)) mat.dispose?.();
+    const mat = mesh.material as THREE.Material & { map?: THREE.Texture | null; normalMap?: THREE.Texture | null };
+    if (!mat || [...STOCK_MATS, BUMPER_MAT, POST_MAT, CUP_MAT, FLAG_MAT].includes(mat as any)) return; // shared, lives on
+    mat.map?.dispose();
+    mat.normalMap?.dispose(); // per-zone clones of the tiling normals
+    mat.dispose();
   });
   holeGroup.clear();
   movers = [];
@@ -2717,7 +3001,21 @@ function setHole(hole: Hole) {
   const b = holeBounds(hole);
   holeCX = b.minX + b.w / 2;
   holeCY = b.minY + b.h / 2;
-  if (!feltTex) { feltTex = makeFeltTexture(); FELT_MAT.map = feltTex; FELT_MAT.needsUpdate = true; }
+  fitShadowFrustum(b);
+  if (!feltTex) {
+    const sf = surfaces();
+    feltTex = makeFeltTexture();
+    FELT_MAT.map = feltTex;
+    FELT_MAT.normalMap = sf.feltN;
+    FELT_MAT.normalScale.set(0.35, 0.35);
+    FELT_MAT.needsUpdate = true;
+    for (const m of [WALL_MAT, WALL_LOW_MAT, WALL_SIDE_MAT]) {
+      m.map = sf.wood;
+      m.normalMap = sf.woodN;
+      m.normalScale.set(0.6, 0.6);
+      m.needsUpdate = true;
+    }
+  }
 
   // felt: one slab per floor rect (they overlap where rects join — fine)
   for (const r of hole.floor) {
@@ -2737,7 +3035,9 @@ function setHole(hole: Hole) {
     const dx = seg.bx - seg.ax, dy = seg.by - seg.ay;
     const len = Math.hypot(dx, dy);
     if (len < 0.01) continue;
-    const m = new THREE.Mesh(new THREE.BoxGeometry(len + 0.5, WALL_H, 0.5), WALL_MAT);
+    const wgeo = new RoundedBoxGeometry(len + 0.5, WALL_H, 0.5, 2, 0.07);
+    scaleUv(wgeo, (len + 0.5) / 4, 1);
+    const m = new THREE.Mesh(wgeo, WALL_MAT);
     m.position.set((seg.ax + seg.bx) / 2 - holeCX, WALL_H / 2, (seg.ay + seg.by) / 2 - holeCY);
     m.rotation.y = -Math.atan2(dy, dx);
     m.castShadow = true;
@@ -2780,8 +3080,33 @@ function setHole(hole: Hole) {
     const cx = z.x + z.w / 2 - holeCX, cz = z.y + z.h / 2 - holeCY;
     const flat = z.kind === 'tele' || z.kind === 'magnet' || z.kind === 'spinner';
     const mat = flat
-      ? new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0.85 })
-      : new THREE.MeshLambertMaterial({ map: tex });
+      ? new THREE.MeshBasicMaterial({ map: tex, color: new THREE.Color(1.7, 1.7, 1.7), transparent: true, opacity: 0.85 })
+      : std({ map: tex });
+    if (!flat) {
+      const sm = mat as THREE.MeshStandardMaterial;
+      const sf = surfaces();
+      // zone planes map uv 0..1 over the whole rect, so each zone gets its
+      // own copy of the tiling normal map with the repeat set in world units
+      const tiled = (n: THREE.CanvasTexture, unit: number) => {
+        const t = n.clone();
+        t.repeat.set(z.w / unit, z.h / unit);
+        t.needsUpdate = true;
+        return t;
+      };
+      if (z.kind === 'water') {
+        sm.roughness = 0.08; sm.normalMap = tiled(sf.rippleN, 6); sm.normalScale.set(0.5, 0.5);
+      } else if (z.kind === 'ice') {
+        sm.roughness = 0.14;
+      } else if (z.kind === 'sand') {
+        sm.roughness = 1; sm.normalMap = tiled(sf.feltN, 3); sm.normalScale.set(0.9, 0.9);
+      } else if (z.kind === 'slope') {
+        sm.roughness = 0.92; sm.normalMap = tiled(sf.feltN, 6); sm.normalScale.set(0.35, 0.35);
+      } else if (z.kind === 'conveyor' || z.kind === 'cannon') {
+        sm.roughness = 0.5; sm.metalness = 0.4;
+      } else if (z.kind === 'jump' || z.kind === 'boost' || z.kind === 'trampoline') {
+        sm.roughness = 0.45;
+      }
+    }
     if (z.kind === 'slope') {
       holeGroup.add(rampMesh(z, holeCX, holeCY, mat));
       return;
@@ -2789,7 +3114,7 @@ function setHole(hole: Hole) {
     if (z.kind === 'spinner') {
       // the disc itself turns; a dark ring marks the pit it sits in
       const r = Math.min(z.w, z.h) / 2;
-      const pit = new THREE.Mesh(new THREE.PlaneGeometry(z.w, z.h), new THREE.MeshLambertMaterial({ color: 0x1d2a20 }));
+      const pit = new THREE.Mesh(new THREE.PlaneGeometry(z.w, z.h), std({ color: 0x1d2a20 }));
       pit.rotation.x = -Math.PI / 2;
       pit.position.set(cx, FLOOR_Y + 0.011, cz);
       holeGroup.add(pit);
@@ -2808,13 +3133,13 @@ function setHole(hole: Hole) {
     m.position.set(cx, FLOOR_Y + 0.012 + i * 0.001, cz);
     m.receiveShadow = true;
     holeGroup.add(m);
-    if (z.kind === 'water') waterMats.push(mat as THREE.MeshLambertMaterial);
+    if (z.kind === 'water') waterMats.push(mat as THREE.MeshStandardMaterial);
     if (z.kind === 'boost' || z.kind === 'conveyor' || z.kind === 'fan') {
       // texture u runs along golf +x, v along golf −y (the plane is laid flat
       // by rotating −90° about x), so scroll u with cos and v against sin
       const a = ((z.angle ?? 0) * Math.PI) / 180;
       const rate = z.kind === 'conveyor' ? Math.max(1, zonePower(z)) * 0.06 : z.kind === 'fan' ? 0.9 : 0.6;
-      boostMats.push({ mat: mat as THREE.MeshLambertMaterial, dx: Math.cos(a) * z.w, dy: Math.sin(a) * z.h, rate });
+      boostMats.push({ mat: mat as THREE.MeshStandardMaterial, dx: Math.cos(a) * z.w, dy: Math.sin(a) * z.h, rate });
     }
     if (z.kind === 'magnet') magnetMats.push(mat as THREE.MeshBasicMaterial);
     if (z.kind === 'fan') {
@@ -2857,7 +3182,7 @@ function setHole(hole: Hole) {
     if (z.kind === 'tele') {
       teleMats.push(mat as THREE.MeshBasicMaterial);
       if (z.tx !== undefined && z.ty !== undefined) {
-        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.8, 0.09, 8, 24), new THREE.MeshBasicMaterial({ color: 0xc77dff }));
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.8, 0.09, 8, 24), new THREE.MeshBasicMaterial({ color: new THREE.Color(1.6, 0.9, 2.4) }));
         ring.rotation.x = Math.PI / 2;
         ring.position.set(z.tx - holeCX, FLOOR_Y + 0.05, z.ty - holeCY);
         holeGroup.add(ring);
@@ -2872,7 +3197,7 @@ function setHole(hole: Hole) {
     body.castShadow = true;
     holeGroup.add(body);
     if (bp.kick > 0) {
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(bp.r * 0.8, 0.07, 8, 24), new THREE.MeshLambertMaterial({ color: 0xffffff }));
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(bp.r * 0.8, 0.07, 8, 24), gloss({ color: 0xffffff }));
       ring.rotation.x = Math.PI / 2;
       ring.position.set(bp.x - holeCX, FLOOR_Y + h + 0.02, bp.y - holeCY);
       holeGroup.add(ring);
@@ -2881,18 +3206,19 @@ function setHole(hole: Hole) {
   // cup + flag
   {
     const cup = new THREE.Mesh(new THREE.CircleGeometry(CUP_R, 28), CUP_MAT);
+    if (!CUP_MAT.map) { CUP_MAT.map = surfaces().cup; CUP_MAT.needsUpdate = true; }
     cup.rotation.x = -Math.PI / 2;
     cup.position.set(hole.cup.x - holeCX, FLOOR_Y + 0.02, hole.cup.y - holeCY);
     holeGroup.add(cup);
-    const rim = new THREE.Mesh(new THREE.RingGeometry(CUP_R, CUP_R + 0.14, 28), new THREE.MeshBasicMaterial({ color: 0xf0f0f0 }));
+    const rim = new THREE.Mesh(new THREE.RingGeometry(CUP_R, CUP_R + 0.14, 28), gloss({ color: 0xf0f0f0, roughness: 0.4 }));
     rim.rotation.x = -Math.PI / 2;
     rim.position.set(hole.cup.x - holeCX, FLOOR_Y + 0.021, hole.cup.y - holeCY);
     holeGroup.add(rim);
-    const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, 5, 8), new THREE.MeshLambertMaterial({ color: 0xf4f4f4 }));
+    const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, 5, 8), gloss({ color: 0xf4f4f4, roughness: 0.4 }));
     stick.position.set(hole.cup.x - holeCX, FLOOR_Y + 2.5, hole.cup.y - holeCY);
     stick.castShadow = true;
     holeGroup.add(stick);
-    const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 1.0), FLAG_MAT);
+    const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 1.0, 12, 4), FLAG_MAT);
     flag.position.set(hole.cup.x - holeCX + 0.85, FLOOR_Y + 4.4, hole.cup.y - holeCY);
     flag.castShadow = true;
     holeGroup.add(flag);
@@ -2934,7 +3260,7 @@ export function drawScene(scene: GolfScene) {
     // everybody's golfer teleports to the new tee — no walking across holes
     for (const g of golfers) { g.px = NaN; g.holedAt = -1; g.wasHoled = false; g.swingStart = -1; }
   }
-  if (!scene.hole && builtHoleKey) { builtHoleKey = ''; disposeHole(); }
+  if (!scene.hole && builtHoleKey) { builtHoleKey = ''; disposeHole(); fitShadowFrustum(null); }
   const hole = scene.hole;
 
   // movers + surface animation
@@ -2952,7 +3278,10 @@ export function drawScene(scene: GolfScene) {
   for (const s of spinners) s.group.rotation.y = -s.speed * t;
   for (const f of fanBlades) f.rotation.y = -(now / 45) % (Math.PI * 2);
   for (const mm of magnetMats) mm.opacity = 0.65 + 0.3 * Math.sin(now / 180);
-  for (const w of waterMats) if (w.map) { w.map.offset.x = (now / 9000) % 1; w.map.offset.y = Math.sin(now / 1400) * 0.02; }
+  for (const w of waterMats) if (w.map) {
+    w.map.offset.x = (now / 9000) % 1; w.map.offset.y = Math.sin(now / 1400) * 0.02;
+    if (w.normalMap) { w.normalMap.offset.x = (now / 6000) % 1; w.normalMap.offset.y = (now / 9500) % 1; }
+  }
   for (const bm of boostMats) if (bm.mat.map) {
     // image moves toward −u as offset.x grows, so subtract along the belt
     const k = (now / 1000) * bm.rate;
@@ -2960,7 +3289,17 @@ export function drawScene(scene: GolfScene) {
     bm.mat.map.offset.y = ((k * bm.dy) / Math.max(1, Math.abs(bm.dy) || 1)) % 1;
   }
   for (const tm of teleMats) tm.opacity = 0.7 + 0.25 * Math.sin(now / 250);
-  if (flagMesh) flagMesh.rotation.y = Math.sin(now / 350) * 0.25;
+  if (flagMesh) {
+    // cloth ripple: waves run out from the pole and grow toward the free edge
+    flagMesh.rotation.y = Math.sin(now / 350) * 0.25;
+    const pos = flagMesh.geometry.attributes.position as THREE.BufferAttribute;
+    for (let i = 0; i < pos.count; i++) {
+      const k = (pos.getX(i) + 0.85) / 1.7;
+      pos.setZ(i, Math.sin(k * 7 - now / 140) * 0.13 * k * k + Math.sin(k * 3 + now / 300) * 0.05 * k);
+    }
+    pos.needsUpdate = true;
+    flagMesh.geometry.computeVertexNormals();
+  }
 
   // --- balls -----------------------------------------------------------------
   const seen = new Set<string>();
@@ -2994,7 +3333,7 @@ export function drawScene(scene: GolfScene) {
     prop.blob.position.set(pos.x, FLOOR_Y + ground + 0.03, pos.z);
     const sc = Math.max(0.5, 1 - Math.max(0, p.z - ground) / 12);
     prop.blob.scale.set(sc, sc, sc);
-    (prop.blob.material as THREE.MeshBasicMaterial).opacity = p.ghost ? 0.12 : 0.3 * sc;
+    (prop.blob.material as THREE.MeshBasicMaterial).opacity = p.ghost ? 0.15 : 0.45 * sc;
   }
   for (const [id, prop] of [...ballByPlayer]) {
     if (!seen.has(id)) { prop.mesh.visible = false; prop.blob.visible = false; ballByPlayer.delete(id); }
@@ -3124,7 +3463,7 @@ export function drawScene(scene: GolfScene) {
     aimHead.rotation.y = -Math.atan2(sz, sx);
     aimHead.rotation.x = -Math.PI / 2;
     aimHead.position.set(myBall.x + sx * (BALL_R + len + 0.3), FLOOR_Y + 0.045, myBall.z + sz * (BALL_R + len + 0.3));
-    const heat = new THREE.Color().setHSL(THREE.MathUtils.lerp(0.25, 0.0, a.power), 1, 0.55);
+    const heat = new THREE.Color().setHSL(THREE.MathUtils.lerp(0.25, 0.0, a.power), 1, 0.55).multiplyScalar(1.9);
     (aimArrow.material as THREE.MeshBasicMaterial).color.copy(heat);
     (aimHead.material as THREE.MeshBasicMaterial).color.copy(heat);
   } else {
@@ -3200,7 +3539,7 @@ export function drawScene(scene: GolfScene) {
   camera.lookAt(camLook.x + sx * 0.5, camLook.y + sy * 0.5, camLook.z);
   if (targetFov > 46) camera.rotateX(-THREE.MathUtils.degToRad((targetFov - 46) * 0.14));
 
-  if (!document.hidden) renderer.render(scene3, camera);
+  if (!document.hidden) composer!.render();
 }
 
 /** Reset pooled state when leaving a room (rigs/balls hide until reused). */
@@ -3250,6 +3589,7 @@ interface PreviewSlot {
   clip?: HTMLElement; // per-slot clip container (default: the select grid)
 }
 let previewRenderer: THREE.WebGLRenderer | null = null;
+let previewEnv: THREE.Texture | null = null; // the preview context's own PMREM sky
 let previewCam: THREE.PerspectiveCamera | null = null;
 let previewSlots: PreviewSlot[] = [];
 // scroll container the characters are clipped to — without it they would
@@ -3264,17 +3604,11 @@ export function initCharacterPreviews(
   previewClip = clipEl;
   previewRenderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
   previewRenderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  previewRenderer.toneMapping = THREE.ACESFilmicToneMapping;
+  previewRenderer.toneMappingExposure = 1.1;
+  previewEnv = makeEnvironment(previewRenderer);
   previewCam = new THREE.PerspectiveCamera(40, 1, 0.5, 60);
-  previewSlots = slots.map(({ char, el }, i) => {
-    const scene = new THREE.Scene();
-    const rig = makePlayerRig(0, scene);
-    applyCharacter(rig, char);
-    const sun = new THREE.DirectionalLight(0xfff2df, 2.4);
-    sun.position.set(-3, 6, 5);
-    scene.add(sun);
-    scene.add(new THREE.HemisphereLight(0xcfe4ff, 0x39406b, 1.15));
-    return { scene, rig, el, seed: i * 1.73 };
-  });
+  previewSlots = slots.map(({ char, el }, i) => ({ ...previewScene(char), el, seed: i * 1.73 }));
   requestAnimationFrame(previewFrame);
 }
 
@@ -3286,15 +3620,24 @@ export function registerPreviewSlot(
   el: HTMLElement,
   clip?: HTMLElement
 ): (next: Character) => void {
+  const slot = previewScene(char);
+  previewSlots.push({ ...slot, el, clip, seed: previewSlots.length * 1.73 });
+  return next => applyCharacter(slot.rig, next);
+}
+
+// One character on a showcase plinth: key light from the front-left, the
+// sky map for fill and the same lacquered/cloth materials as in the game.
+function previewScene(char: Character): { scene: THREE.Scene; rig: PlayerRig } {
   const scene = new THREE.Scene();
+  scene.environment = previewEnv;
+  scene.environmentIntensity = 0.6;
   const rig = makePlayerRig(0, scene);
   applyCharacter(rig, char);
-  const sun = new THREE.DirectionalLight(0xfff2df, 2.4);
+  const sun = new THREE.DirectionalLight(0xfff2df, 3.2);
   sun.position.set(-3, 6, 5);
   scene.add(sun);
-  scene.add(new THREE.HemisphereLight(0xcfe4ff, 0x39406b, 1.15));
-  previewSlots.push({ scene, rig, el, clip, seed: previewSlots.length * 1.73 });
-  return next => applyCharacter(rig, next);
+  scene.add(new THREE.HemisphereLight(0xcfe4ff, 0x39406b, 0.3));
+  return { scene, rig };
 }
 
 let previewDrew = false; // last frame put pixels on the canvas

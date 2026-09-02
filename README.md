@@ -54,10 +54,19 @@ TypeScript three.js game with a built-in course editor.
   animated 3D previews on every card) → SELECT A COURSE → lobby → play,
   with the broadcast wipe between screens, HUD plates, gold toasts for
   birdies and holes-in-one, name tags and emote pops over the balls, the
-  settings panel (resolution, shadows, MSAA, particles, crowd detail, film
-  grade, VHS, FPS cap) and the 4:3 stage. Every hole is built as meshes on
-  the arena floor: felt slabs, wooden walls, extruded blocks, textured
-  hazards, spinning windmills, sliding doors, the cup with its flag.
+  settings panel (resolution, shadows, anti-aliasing, ambient occlusion,
+  bloom, particles, crowd detail, film grade, VHS, FPS cap) and the 4:3
+  stage. Every hole is built as meshes on the arena floor: felt slabs,
+  wooden walls, extruded blocks, textured hazards, spinning windmills,
+  sliding doors, the cup with its flag.
+- **Physically based rendering.** Every surface is a PBR material lit by
+  the sun and a prefiltered sky (image-based lighting): felt with a pile,
+  oak-grain walls with rounded edges, lacquered dimpled balls, rippling
+  reflective water, glossy ice. The frame goes through a post chain —
+  ground-truth ambient occlusion, bloom on the over-bright emitters,
+  filmic tone mapping, SMAA — with a shadow map fitted to the hole. All
+  textures are painted procedurally at start-up; there are no art assets
+  to download.
 - Public room browser, live-now list, invite links (`?lobby=CODE`), room
   chat, emotes, scorecard, fullscreen, synthesized SFX (no assets).
 
