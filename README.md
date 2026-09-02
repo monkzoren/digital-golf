@@ -175,8 +175,9 @@ domain / TLS proxy at the client's port and you're done. See
 
 A hole is a JSON object (`shared/courses.ts` `Hole`): `name`, `par`, `tee`,
 `cup`, `floor` (a union of axis-aligned rects — every boundary edge is a
-wall, touching rects join up), optional `blocks` (polygons, optional `h` for
-jumpable low walls, optional `motion` rotate/slide), `zones` (sand · ice ·
+wall, touching rects join up), optional `blocks` (polygons, optional `h` —
+walls are exactly as tall as drawn, `WALL_H` = 1.1 by default, and a ball
+above a wall's top flies over it; optional `motion` rotate/slide), `zones` (sand · ice ·
 water · slope · boost · jump · tele rects), `bumpers` (round; `kick` > 0
 makes them pinball bumpers), `tip`, `theme`. Limits and normalisation are in
 `shared/mapformat.ts`. The editor's *Export* copies a whole course as JSON;

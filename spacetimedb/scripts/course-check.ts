@@ -10,6 +10,7 @@
 //
 //   npm run check-courses            # all courses
 //   npm run check-courses -- "Bank"  # courses whose name contains "Bank"
+//   npm run check-courses -- "Bank" "Ridge"  # ... only its holes whose name contains "Ridge"
 //   VERBOSE=1 npm run check-courses  # print the ace lines
 import { cannonAt, geomOf, groundZ, newEvents, restingOn, shotFrom, stepBall, DT, type BallState, type HoleGeom } from '../src/shared/physics';
 import { COURSES, type Course, type Hole } from '../src/shared/courses';
@@ -21,6 +22,7 @@ declare const process: { argv: string[]; env: Record<string, string | undefined>
 
 const ALL: Course[] = [...COURSES, ...LIBRARY];
 const filter = process.argv[2]?.toLowerCase() ?? '';
+const holeFilter = process.argv[3]?.toLowerCase() ?? '';
 const VERBOSE = !!process.env.VERBOSE;
 
 const MAX_TICKS = 450; // 15 s: the server stops a ball still rolling after this (ROLL_LIMIT_SECS)
@@ -202,6 +204,7 @@ for (const course of ALL) {
   console.log(`\n== ${course.name} (${course.holes.length} holes, ${course.theme}) ==`);
   let acesInCourse = 0;
   course.holes.forEach((raw, i) => {
+    if (holeFilter && !raw.name.toLowerCase().includes(holeFilter)) return;
     const label = `${course.name} ${i + 1} "${raw.name}"`;
     let h: Hole;
     try { h = cleanHole(JSON.parse(JSON.stringify(raw))); }
@@ -243,7 +246,7 @@ for (const course of ALL) {
     if (VERBOSE && ace.best) console.log(`      ace line: angle ${ace.best.angle}° power ${ace.best.power.toFixed(2)} at t=${ace.best.t0}s`);
     rows.push(`| ${course.name} | ${i + 1} | ${h.name} | ${h.par} | ${length.toFixed(0)} | ${ace.best ? (frac * 100).toFixed(2) + '%' : '—'} | ${noisy.toFixed(1)} | ${flags.join(', ') || 'ok'} |`);
   });
-  if (!SHOWCASE.has(course.name)) {
+  if (!SHOWCASE.has(course.name) && !holeFilter) {
     const ok = acesInCourse >= MIN_ACES;
     if (!ok) problems++;
     console.log(`  ${ok ? '✓' : '✗'} ${course.name}: ${acesInCourse}/${course.holes.length} holes have a hidden ace${ok ? '' : ` — need ${MIN_ACES}`}`);

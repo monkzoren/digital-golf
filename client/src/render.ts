@@ -2,7 +2,7 @@
 // surfaces, animated obstacles, balls with height, particles. Shared by the
 // game and the editor.
 import type { Hole, Zone, Block } from '@shared/courses';
-import { blockPtsAt, holeBounds, moverActive, rampFrac } from '@shared/courses';
+import { WALL_H, blockPtsAt, floorWalls, holeBounds, moverActive, polySegs, rampFrac } from '@shared/courses';
 import { BALL_R, CUP_R, geomOf, MAX_SHOT, MIN_SHOT, rampRise, zonePower } from '@shared/physics';
 
 export interface Camera { x: number; y: number; scale: number }
@@ -217,10 +217,12 @@ export function drawHole(g: CanvasRenderingContext2D, hole: Hole, cam: Camera, W
     }
   }
 
-  // walls (floor boundary + static blocks) — drawn as extruded strips/polys
+  // walls (floor boundary + static blocks) — drawn as extruded strips/polys;
+  // blocks with an explicit height are drawn as polys of that height below
   const wallW = 0.5;
-  for (const seg of geom.staticSegs) {
-    if (seg.h < 5) continue; // low blocks drawn separately below
+  const rails = floorWalls(hole.floor);
+  for (const bl of hole.blocks ?? []) if (!bl.motion && bl.h === undefined) rails.push(...polySegs(bl.pts));
+  for (const seg of rails) {
     const dx = seg.bx - seg.ax, dy = seg.by - seg.ay;
     const len = Math.hypot(dx, dy) || 1;
     const nx = (-dy / len) * wallW * 0.5, ny = (dx / len) * wallW * 0.5;
@@ -229,14 +231,13 @@ export function drawHole(g: CanvasRenderingContext2D, hole: Hole, cam: Camera, W
   }
   for (const bl of hole.blocks ?? []) {
     if (bl.motion) continue;
-    if (bl.h !== undefined && bl.h < 5) extruded(g, bl.pts, cam, W, H, bl.bounce && bl.bounce > 1 ? th.rubber : th.wallLow, th.wallSide, Math.min(0.3, bl.h * 0.4));
+    if (bl.h !== undefined) extruded(g, bl.pts, cam, W, H, bl.bounce && bl.bounce > 1 ? th.rubber : bl.h < WALL_H ? th.wallLow : th.wallTop, th.wallSide, Math.min(0.45, bl.h * 0.4));
     else if (bl.bounce && bl.bounce > 1) extruded(g, bl.pts, cam, W, H, th.rubber, th.wallSide, 0.45); // rubber: recoloured over the plain wall
     if (o.editor && o.selected === bl) highlightPoly(g, bl.pts, cam, W, H);
   }
   // the rounded caps hide the seams between wall strips
   g.fillStyle = th.wallTop;
-  for (const seg of geom.staticSegs) {
-    if (seg.h < 5) continue;
+  for (const seg of rails) {
     for (const [x, y] of [[seg.ax, seg.ay], [seg.bx, seg.by]]) {
       const p = w2s(cam, W, H, x, y);
       g.beginPath();
@@ -248,7 +249,7 @@ export function drawHole(g: CanvasRenderingContext2D, hole: Hole, cam: Camera, W
   // moving blocks
   for (const bl of geom.movers) {
     const pts = blockPtsAt(bl, o.t);
-    const low = bl.h !== undefined && bl.h < 5;
+    const low = bl.h !== undefined && bl.h < WALL_H;
     if (bl.motion?.type === 'blink') {
       // laser gate: a glowing beam while solid, a faint outline while open
       const on = moverActive(bl, o.t);

@@ -954,10 +954,10 @@ function tickPlay(ctx: Ctx, lobby: LobbyRow, players: PlayerRow[]) {
       if (!resting) {
         const clock = ctx.db.rollClock.identity.find(p.identity);
         const rolled = (clock?.ticks ?? 0) + 1;
-        const grounded = b.z <= groundZ(geom, b.x, b.y) + 0.001;
+        const grounded = b.z <= groundZ(geom, b.x, b.y, b.z) + 0.001;
         if (rolled > ROLL_LIMIT_SECS * TICK_HZ && grounded) {
           // still going after all this time: call it stopped
-          row.vx = 0; row.vy = 0; row.vz = 0; row.z = groundZ(geom, b.x, b.y);
+          row.vx = 0; row.vy = 0; row.vz = 0; row.z = groundZ(geom, b.x, b.y, b.z);
           resting = true;
         } else if (clock) ctx.db.rollClock.identity.update({ ...clock, ticks: rolled });
         else ctx.db.rollClock.insert({ identity: p.identity, ticks: rolled });

@@ -9,7 +9,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { CHARACTERS, type Character, type HairStyle } from './characters';
 import { getGraphics, onGraphicsChange, type GraphicsSettings } from './graphics';
 import type { Hole, Zone, Block, Rect } from '@shared/courses';
-import { holeBounds, motionAngle, moverActive, rampFrac } from '@shared/courses';
+import { WALL_H, floorWalls, holeBounds, motionAngle, moverActive, pointInFloor, rampFrac } from '@shared/courses';
 import { BALL_R, CUP_R, geomOf, groundZ, rampRise, zonePower } from '@shared/physics';
 
 // ---------------------------------------------------------------------------
@@ -2517,7 +2517,6 @@ function applyGraphics(next: GraphicsSettings, prev: GraphicsSettings) {
 // ---------------------------------------------------------------------------
 const MAX_GOLFERS = 32; // balls
 const MAX_RIGS = 10; // full 3D golfers: you + the nearest nine
-const WALL_H = 1.1;
 const rigByPlayer = new Map<string, number>();
 interface BallProp { mesh: THREE.Mesh; blob: THREE.Mesh; mat: THREE.MeshPhysicalMaterial }
 const ballPool: BallProp[] = [];
@@ -3146,27 +3145,52 @@ function setHole(hole: Hole) {
     m.receiveShadow = true;
     holeGroup.add(m);
   }
-  // boundary walls
+  // boundary rails (blocks are built as solids below)
   const geom = geomOf(hole);
   builtGeom = geom;
-  for (const seg of geom.staticSegs) {
-    if (seg.h < 5 || seg.e !== undefined) continue; // block edges are built as solids below
+  // A rail rides the felt (exactly as the physics has it): where it runs
+  // past a wedge it is split at the wedge's edges and each piece is pitched
+  // to climb with it.
+  for (const seg of floorWalls(hole.floor)) {
     const dx = seg.bx - seg.ax, dy = seg.by - seg.ay;
     const len = Math.hypot(dx, dy);
     if (len < 0.01) continue;
-    const wgeo = new RoundedBoxGeometry(len + 0.5, WALL_H, 0.5, 2, 0.07);
-    scaleUv(wgeo, (len + 0.5) / 4, 1);
-    const m = new THREE.Mesh(wgeo, WALL_MAT);
-    m.position.set((seg.ax + seg.bx) / 2 - holeCX, WALL_H / 2, (seg.ay + seg.by) / 2 - holeCY);
-    m.rotation.y = -Math.atan2(dy, dx);
-    m.castShadow = true;
-    m.receiveShadow = true;
-    holeGroup.add(m);
+    // parameter cuts where the rail enters or leaves a slope zone
+    const cuts = new Set<number>([0, 1]);
+    for (const z of geom.ramps) {
+      for (const v of dx !== 0 ? [z.x, z.x + z.w] : [z.y, z.y + z.h]) {
+        const t = dx !== 0 ? (v - seg.ax) / dx : (v - seg.ay) / dy;
+        if (t > 0 && t < 1) cuts.add(t);
+      }
+    }
+    const ts = [...cuts].sort((a, b) => a - b);
+    for (let i = 0; i + 1 < ts.length; i++) {
+      const t0 = ts[i], t1 = ts[i + 1];
+      const ax = seg.ax + dx * t0, ay = seg.ay + dy * t0, bx = seg.ax + dx * t1, by = seg.ay + dy * t1;
+      // the felt just inside the rail (the rail sits on the floor's edge)
+      const mx = (ax + bx) / 2, my = (ay + by) / 2;
+      const inX = dx !== 0 ? 0 : (pointInFloor(mx + 0.01, my, hole) ? 0.01 : -0.01);
+      const inY = dy !== 0 ? 0 : (pointInFloor(mx, my + 0.01, hole) ? 0.01 : -0.01);
+      const za = groundZ(geom, ax + inX + (bx - ax) * 0.001, ay + inY + (by - ay) * 0.001);
+      const zb = groundZ(geom, bx + inX - (bx - ax) * 0.001, by + inY - (by - ay) * 0.001);
+      const run = len * (t1 - t0);
+      const pitch = Math.atan2(zb - za, run);
+      const L = Math.hypot(run, zb - za) + 0.5;
+      const wgeo = new RoundedBoxGeometry(L, WALL_H, 0.5, 2, 0.07);
+      scaleUv(wgeo, L / 4, 1);
+      const m = new THREE.Mesh(wgeo, WALL_MAT);
+      m.position.set(mx - holeCX, FLOOR_Y + (za + zb) / 2 + WALL_H / 2, my - holeCY);
+      m.rotation.set(0, -Math.atan2(dy, dx), pitch, 'YZX');
+      m.castShadow = true;
+      m.receiveShadow = true;
+      holeGroup.add(m);
+    }
   }
   // blocks
   for (const bl of hole.blocks ?? []) {
-    const low = bl.h !== undefined && bl.h < 5;
-    const height = low ? Math.max(0.2, bl.h!) : WALL_H;
+    // built exactly as tall as the physics sees it: no invisible walls
+    const height = Math.max(0.2, bl.h ?? WALL_H);
+    const low = height < WALL_H;
     const rubber = bl.bounce !== undefined && bl.bounce > 1;
     const mat = rubber ? RUBBER_MAT : low ? WALL_LOW_MAT : WALL_MAT;
     if (!bl.motion) {
@@ -3467,7 +3491,7 @@ export function drawScene(scene: GolfScene) {
     prop.mat.needsUpdate = false;
     prop.blob.visible = true;
     // the shadow lies on the felt under the ball — up a ramp when it is on one
-    const ground = builtGeom ? groundZ(builtGeom, p.x, p.y) : 0;
+    const ground = builtGeom ? groundZ(builtGeom, p.x, p.y, p.z) : 0;
     prop.blob.position.set(pos.x, FLOOR_Y + ground + 0.03, pos.z);
     const sc = Math.max(0.5, 1 - Math.max(0, p.z - ground) / 12);
     prop.blob.scale.set(sc, sc, sc);

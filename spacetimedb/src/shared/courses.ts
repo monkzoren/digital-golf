@@ -99,13 +99,20 @@ export interface Seg {
   ay: number;
   bx: number;
   by: number;
-  /** wall height — the ball ignores this wall while its z is above it */
+  /** wall height — the ball ignores this wall while its z is above it. What
+   *  the ball hits is exactly what is drawn: there are no invisible walls. */
   h: number;
+  /** a floor rail: it runs along the felt, so `h` is measured from the
+   *  ground under the ball (it climbs a wedge with the wedge) */
+  rail?: true;
   /** restitution override (rubber walls); default WALL_E */
   e?: number;
 }
 
-const WALL_TALL = 1e9;
+/** Height of a standard wall (floor rails and blocks without an explicit
+ *  `h`): drawn this tall AND simulated this tall, so a ball that gets
+ *  higher than this flies over it. */
+export const WALL_H = 1.1;
 
 export const R = (x: number, y: number, w: number, h: number): Rect => ({ x, y, w, h });
 export const rectPts = (r: Rect) => [r.x, r.y, r.x + r.w, r.y, r.x + r.w, r.y + r.h, r.x, r.y + r.h];
@@ -217,7 +224,8 @@ export function floorWalls(floor: Rect[]): Seg[] {
         out.push({
           ax: ax + (bx - ax) * p0, ay: ay + (by - ay) * p0,
           bx: ax + (bx - ax) * p1, by: ay + (by - ay) * p1,
-          h: WALL_TALL,
+          h: WALL_H,
+          rail: true,
         });
       }
     }
@@ -225,7 +233,7 @@ export function floorWalls(floor: Rect[]): Seg[] {
   return out;
 }
 
-export function polySegs(pts: number[], h = WALL_TALL, e?: number): Seg[] {
+export function polySegs(pts: number[], h = WALL_H, e?: number): Seg[] {
   const out: Seg[] = [];
   const n = pts.length / 2;
   for (let i = 0; i < n; i++) {
@@ -625,11 +633,11 @@ export const TOYBOX: Course = {
     {
       name: 'Boing',
       par: 3,
-      tip: 'Off the ramp, onto the trampoline, over the wall.',
+      tip: 'Off the ramp, onto the trampoline, over the wall. Flat out and you fly the wall yourself.',
       tee: { x: 4, y: 5 },
       cup: { x: 40, y: 5 },
       floor: [R(0, 0, 44, 10)],
-      zones: [slope(10, 0, 6, 10, 180, 9), trampoline(18, 0, 5, 10, 14)],
+      zones: [slope(10, 0, 6, 10, 180, 9), trampoline(16, 0, 11, 10, 14)],
       blocks: [{ ...polyRect(27, 0, 1, 10), h: 1.2 }],
     },
     {

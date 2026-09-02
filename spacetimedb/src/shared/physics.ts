@@ -3,7 +3,7 @@
 // pure: no SpacetimeDB, no DOM, no randomness.
 import {
   type Block, type Bumper, type Hole, type Seg, type Zone,
-  blockPtsAt, floorWalls, moverActive, pointInFloor, pointInPoly, pointInRect, polySegs,
+  WALL_H, blockPtsAt, floorWalls, moverActive, pointInFloor, pointInPoly, pointInRect, polySegs,
   rampExtent, rampFrac,
 } from './courses';
 
@@ -37,6 +37,11 @@ export const FAN_HOVER_Z = 2.2; // a blower floats the ball about this high
 export const STEP_CLIMB = 0.25; // a rolling ball climbs a ramp side this much lower than its centre
 export const RAMP_STICK = 0.2; // a rolling ball follows a ramp down unless the drop is bigger than this
 export const RAMP_FRICTION_MUL = 0.4; // a wedge is smooth: less rolling friction than the flat felt
+export const BUMPER_H = 0.9; // a pinball bumper's height (as drawn); a ball above it flies over
+export const POST_H = WALL_H; // a plain round post is as tall as a wall
+export const HUB_EXTRA = 0.3; // a windmill / pendulum hub stands this much above its blades
+export const ON_TOP = 0.001; // a ball this close under a wall's top is on it, not against it
+export const bumperH = (p: Bumper) => (p.kick > 0 ? BUMPER_H : POST_H);
 /** a ramp steeper than this (its downhill acceleration beats the friction on it) never lets a ball rest */
 export const rampRolls = (z: Zone) => zonePower(z) > FRICTION * RAMP_FRICTION_MUL;
 
@@ -122,6 +127,7 @@ export function geomOf(hole: Hole): HoleGeom {
     const c = [z.x, z.y, z.x + z.w, z.y, z.x + z.w, z.y + z.h, z.x, z.y + z.h];
     for (let i = 0; i < 4; i++) {
       const j = (i + 1) % 4;
+      // h is a placeholder: hitRampFace measures the wedge's real height at the contact point
       rampFaces.push({ seg: { ax: c[i * 2], ay: c[i * 2 + 1], bx: c[j * 2], by: c[j * 2 + 1], h: 1e9 }, zone: z });
     }
   }
@@ -145,13 +151,28 @@ export function rampRise(z: Zone): number {
   return rampExtent(z) * Math.tan(Math.asin(sin));
 }
 
-/** Height of the felt under (x, y): 0 on the flat, up the wedge on a slope. */
-export function groundZ(g: HoleGeom, x: number, y: number): number {
-  for (const z of g.ramps) {
-    if (pointInRect(x, y, z)) return rampRise(z) * (1 - rampFrac(z, x, y));
-  }
-  return 0;
+/** The slope zone under (x, y), if any. */
+export function rampAt(g: HoleGeom, x: number, y: number): Zone | null {
+  for (const z of g.ramps) if (pointInRect(x, y, z)) return z;
+  return null;
 }
+
+/** Height of the surface under (x, y) for a ball at height `z`: 0 on the
+ *  flat, up the wedge on a slope — and the top of a wall block the ball is
+ *  above (a ball that flies onto a wall lands on it and rolls along it).
+ *  Without `z` only the felt counts. */
+export function groundZ(g: HoleGeom, x: number, y: number, z = -Infinity): number {
+  const r = rampAt(g, x, y);
+  let ground = r ? rampRise(r) * (1 - rampFrac(r, x, y)) : 0;
+  for (const s of g.solids) {
+    const top = s.h ?? WALL_H;
+    if (top > ground && z >= top - ON_TOP && pointInPoly(x, y, s.pts)) ground = top;
+  }
+  return ground;
+}
+
+/** The wedge's grade (rise over run). */
+export const rampGrade = (z: Zone) => rampRise(z) / (rampExtent(z) || 1);
 
 /** `mul` is the room's shot-power option (1 = normal, 1.3 = turbo). */
 export function shotVelocity(angle: number, power: number, mul = 1) {
@@ -186,7 +207,7 @@ export function isResting(b: BallState, ground = 0): boolean {
 
 /** isResting against the real felt height at the ball's position. */
 export function restingOn(g: HoleGeom, b: BallState): boolean {
-  return isResting(b, groundZ(g, b.x, b.y));
+  return isResting(b, groundZ(g, b.x, b.y, b.z));
 }
 
 // Priority when zones overlap: the first kind listed wins.
@@ -237,8 +258,12 @@ function capSpeed(b: BallState) {
 }
 
 /** Resolve the ball against one wall segment. Returns impact normal speed (0 = no hit). */
-function hitSeg(b: BallState, s: Seg, surfVx: number, surfVy: number): number {
-  if (b.z > s.h) return 0;
+/** Top of a wall for the ball where it is: rails ride the felt (up a wedge
+ *  with it, never up a block), blocks stand on the flat. */
+const wallTop = (g: HoleGeom, b: BallState, s: Seg) => (s.rail ? s.h + groundZ(g, b.x, b.y) : s.h);
+
+function hitSeg(g: HoleGeom, b: BallState, s: Seg, surfVx: number, surfVy: number): number {
+  if (b.z >= wallTop(g, b, s) - ON_TOP) return 0; // over it, or riding along its top
   const dx = s.bx - s.ax, dy = s.by - s.ay;
   const len2 = dx * dx + dy * dy;
   let t = len2 > 0 ? ((b.x - s.ax) * dx + (b.y - s.ay) * dy) / len2 : 0;
@@ -278,7 +303,7 @@ function hitSeg(b: BallState, s: Seg, surfVx: number, surfVy: number): number {
 
 /** A wedge's outer face: solid to a ball on the flat beside it that sits
  *  lower than the face at that point (a real ball climbs a small step). */
-function hitRampFace(b: BallState, f: RampFace): number {
+function hitRampFace(g: HoleGeom, b: BallState, f: RampFace): number {
   if (pointInRect(b.x, b.y, f.zone)) return 0; // on the ramp itself
   const s = f.seg;
   const dx = s.bx - s.ax, dy = s.by - s.ay;
@@ -288,10 +313,11 @@ function hitRampFace(b: BallState, f: RampFace): number {
   const cx = s.ax + dx * t, cy = s.ay + dy * t;
   const faceH = rampRise(f.zone) * (1 - rampFrac(f.zone, cx, cy));
   if (b.z + STEP_CLIMB >= faceH) return 0;
-  return hitSeg(b, s, 0, 0);
+  return hitSeg(g, b, s, 0, 0);
 }
 
 function hitBumper(b: BallState, p: Bumper): boolean {
+  if (b.z > bumperH(p)) return false; // sailing over it
   let nx = b.x - p.x, ny = b.y - p.y;
   const rr = p.r + BALL_R;
   const d2 = nx * nx + ny * ny;
@@ -329,11 +355,11 @@ function hitBumper(b: BallState, p: Bumper): boolean {
 export function insideSolid(g: HoleGeom, x: number, y: number, z: number, t: number): boolean {
   if (!pointInFloor(x, y, g.hole)) return true;
   for (const s of g.solids) {
-    if (s.h !== undefined && z > s.h) continue;
+    if (z >= (s.h ?? WALL_H) - ON_TOP) continue;
     if (pointInPoly(x, y, s.pts)) return true;
   }
   for (const m of g.movers) {
-    if (m.h !== undefined && z > m.h) continue;
+    if (z >= (m.h ?? WALL_H) - ON_TOP) continue;
     if (!moverActive(m, t)) continue;
     if (pointInPoly(x, y, blockPtsAt(m, t))) return true;
   }
@@ -345,18 +371,19 @@ export function insideSolid(g: HoleGeom, x: number, y: number, z: number, t: num
 function hitMovers(b: BallState, g: HoleGeom, tt: number): number {
   let wall = 0;
   for (const m of g.movers) {
-    if (m.h !== undefined && b.z > m.h) continue;
+    const mh = m.h ?? WALL_H;
+    if (b.z > mh + HUB_EXTRA) continue; // above the block and its hub
     if (!moverActive(m, tt)) continue;
     const pts = blockPtsAt(m, tt);
     const cnt = pts.length / 2;
     const e = wallE(m);
     for (let k = 0; k < cnt; k++) {
       const j = (k + 1) % cnt;
-      const seg: Seg = { ax: pts[k * 2], ay: pts[k * 2 + 1], bx: pts[j * 2], by: pts[j * 2 + 1], h: m.h ?? 1e9 };
+      const seg: Seg = { ax: pts[k * 2], ay: pts[k * 2 + 1], bx: pts[j * 2], by: pts[j * 2 + 1], h: mh };
       if (e !== undefined) seg.e = e;
       moverVelocity(m, tt, b.x, b.y, tmpV);
       const before = speedOf(b);
-      const imp = hitSeg(b, seg, tmpV.x, tmpV.y);
+      const imp = hitSeg(g, b, seg, tmpV.x, tmpV.y);
       if (imp > wall) wall = imp;
       // a mover shoves the ball along, it does not smash it across the map
       const after = speedOf(b);
@@ -366,7 +393,8 @@ function hitMovers(b: BallState, g: HoleGeom, tt: number): number {
       }
     }
     if (m.hub && m.motion && (m.motion.type === 'rotate' || m.motion.type === 'swing')) {
-      hitBumper(b, { x: m.motion.cx, y: m.motion.cy, r: m.hub, kick: 0 });
+      // the hub stands a little proud of the blades (as drawn)
+      if (b.z <= mh + HUB_EXTRA) hitBumper(b, { x: m.motion.cx, y: m.motion.cy, r: m.hub, kick: 0 });
     }
   }
   return wall;
@@ -403,7 +431,7 @@ function surfacePush(zone: Zone | null, b: BallState): { x: number; y: number } 
 function pushBlocked(g: HoleGeom, b: BallState, dx: number, dy: number): boolean {
   const px = b.x + dx * 0.12, py = b.y + dy * 0.12;
   const near = (s: Seg) => {
-    if (b.z > s.h) return false;
+    if (b.z >= wallTop(g, b, s) - ON_TOP) return false;
     const ex = s.bx - s.ax, ey = s.by - s.ay;
     const len2 = ex * ex + ey * ey;
     let t = len2 > 0 ? ((px - s.ax) * ex + (py - s.ay) * ey) / len2 : 0;
@@ -420,7 +448,7 @@ function pushBlocked(g: HoleGeom, b: BallState, dx: number, dy: number): boolean
  *  started (drives moving blocks). Writes what happened into `ev`. */
 export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, collide = true): void {
   const G = g.gravity;
-  const g0 = groundZ(g, b.x, b.y);
+  const g0 = groundZ(g, b.x, b.y, b.z);
   if (isResting(b, g0)) {
     if (b.teleTicks > 0) b.teleTicks--;
     if (b.z < g0) b.z = g0; // placed under a ramp (tee on a slope): sit on it
@@ -449,7 +477,7 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
   let carried: Zone | null = null; // a surface that drove the ball this tick
   for (let i = 0; i < n; i++) {
     const tt = t + (i + 1) * h;
-    const ground = groundZ(g, b.x, b.y);
+    const ground = groundZ(g, b.x, b.y, b.z);
     const onGround = b.z <= ground + 0.001 && b.vz <= 0;
     const zone = zoneAt(g, b.x, b.y);
     if (onGround) {
@@ -605,9 +633,17 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
       }
     }
     const px = b.x, py = b.y;
+    const rampWas = onGround ? rampAt(g, px, py) : null;
     b.x += b.vx * h;
     b.y += b.vy * h;
-    const groundNow = groundZ(g, b.x, b.y);
+    const groundNow = groundZ(g, b.x, b.y, b.z);
+    // a ball that rolls UP a wedge and off it keeps climbing: the wedge is a
+    // launch ramp, so it leaves with the slope's vertical share of its pace
+    if (rampWas && rampWas !== rampAt(g, b.x, b.y)) {
+      const d = dirOf(rampWas);
+      const up = -(b.vx * d.x + b.vy * d.y); // pace along the uphill direction
+      if (up > 0) { b.vz = up * rampGrade(rampWas); ev.jump = ev.jump || b.vz > 3; }
+    }
     // rolling DOWN a ramp the felt falls away a hair each substep: stay on
     // it rather than skipping down in micro-hops (a real step still drops)
     if (onGround && b.vz <= 0 && b.z > groundNow && b.z - groundNow < RAMP_STICK) { b.z = groundNow; b.vz = 0; }
@@ -621,19 +657,29 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
           b.vz = Math.max(zonePower(landing), -b.vz * 0.9);
           b.z = groundNow + 0.01;
           ev.jump = true;
-        } else if (b.vz < -3) { b.vz = -b.vz * 0.42; ev.land = true; }
-        else b.vz = 0;
+        } else if (b.vz < -3) { b.vz = -b.vz * 0.42; ev.land = true; } // a hard landing skips — off water too
+        else {
+          b.vz = 0;
+          if (landing && landing.kind === 'water' && groundNow <= 0) {
+            // a soft drop into a pond is a splash even when the ball comes
+            // down dead vertical: otherwise it sits on the water, resting,
+            // and is never looked at again
+            ev.water = true;
+            b.vx = 0; b.vy = 0;
+            return;
+          }
+        }
       }
     } else if (b.z < groundNow) {
       b.z = groundNow; // rolling up a ramp: stay on the felt
     }
     if (!collide) continue;
     for (const s of g.staticSegs) {
-      const imp = hitSeg(b, s, 0, 0);
+      const imp = hitSeg(g, b, s, 0, 0);
       if (imp > ev.wall) ev.wall = imp;
     }
     for (const f of g.rampFaces) {
-      const imp = hitRampFace(b, f);
+      const imp = hitRampFace(g, b, f);
       if (imp > ev.wall) ev.wall = imp;
     }
     if (g.movers.length) {
@@ -652,7 +698,7 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
     }
   }
   if (b.teleTicks > 0) b.teleTicks--;
-  const gz = groundZ(g, b.x, b.y);
+  const gz = groundZ(g, b.x, b.y, b.z);
   const grounded = b.z <= gz + 0.001 && b.vz === 0;
   const onRollingRamp = carried !== null && carried.kind === 'slope' && pointInRect(b.x, b.y, carried);
   if (grounded && speedOf(b) < REST_SPEED && !onRollingRamp) {

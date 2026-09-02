@@ -4,7 +4,7 @@
 // here is local until Save.
 import {
   type Block, type Bumper, type Hole, type Rect, type Zone, type ZoneKind,
-  barPts, holeBounds, pointInFloor, pointInPoly, pointInRect, rectPts, windmillPts,
+  WALL_H, barPts, holeBounds, pointInFloor, pointInPoly, pointInRect, rectPts, windmillPts,
 } from '@shared/courses';
 import { cleanHole, LIMITS, THEME_NAMES } from '@shared/mapformat';
 import {
@@ -669,7 +669,7 @@ function renderProps() {
     if (b.motion?.type === 'slide') html += `<div class="grid2">${field('Travel X', numIn('p-dx', b.motion.dx, 0.5, -60, 60))}${field('Travel Y', numIn('p-dy', b.motion.dy, 0.5, -60, 60))}</div><div class="grid2">${field('Period (s)', numIn('p-period', b.motion.period, 0.5, 0.5, 30))}${field('Phase (0–1)', numIn('p-phase', b.motion.phase ?? 0, 0.25, 0, 1))}</div>`;
     if (b.motion?.type === 'blink') html += `<div class="grid2">${field('Period (s)', numIn('p-period', b.motion.period, 0.5, 0.5, 30))}${field('On for (0–1 of period)', numIn('p-duty', b.motion.duty, 0.1, 0.1, 0.9))}</div>${field('Phase (0–1)', numIn('p-phase', b.motion.phase ?? 0, 0.25, 0, 1))}<div class="tiny">Solid while lit. A ball caught inside when it lights up is reset.</div>`;
     html += field('Bounce (1 = wall · 2 = rubber · 0.5 = dead)', numIn('p-bounce', b.bounce ?? 1, 0.25, 0.2, 2.5));
-    html += field('Height (blank = solid, ≤ 1 = jumpable)', numIn('p-hgt', b.h ?? 0, 0.5, 0, 50));
+    html += field(`Height (blank = standard wall, ${WALL_H}; a ball higher than this flies over)`, numIn('p-hgt', b.h ?? 0, 0.5, 0, 50));
     el.innerHTML = html + delBtn;
     const regen = () => {
       if (gen?.kind === 'rect') {

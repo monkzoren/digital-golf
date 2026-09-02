@@ -8,9 +8,10 @@
 // nothing rolls for ever.
 //
 // Reading a hole: x right, y DOWN, floors are rects (their boundary is a
-// tall wall), blocks are polygons, zones are surfaces. Ramps (slope zones)
-// are wedges: arrows point downhill, the far edge is a step you drop off,
-// so they are always entered from their low edge. A cannon loads the ball
+// rail, WALL_H tall, that a lofted ball can fly over), blocks are polygons,
+// zones are surfaces. Ramps (slope zones) are wedges: arrows point
+// downhill, the far edge is a launch — a ball rolling off the top keeps
+// climbing — so they are always entered from their low edge. A cannon loads the ball
 // that rolls in; the next shot is the player's, lofted.
 import {
   type Block, type Course, type Hole, R, polyRect,
@@ -258,12 +259,13 @@ export const RIDGE: Course = {
     {
       name: 'Launch Pad',
       par: 3,
-      tip: 'Up the ramp, off the top, over the water, through the sand. Land soft and the cup takes it.',
+      tip: 'Up the ramp, off the top, over the water and the wall behind it. Land soft and the cup takes it.',
       tee: { x: 4, y: 5 },
       cup: { x: 68, y: 5 },
       floor: [R(0, 0, 74, 10)],
-      zones: [slope(16, 0, 6, 10, 180, 10), water(24, 0, 8, 10), sand(48, 0, 4, 10)],
-      bumpers: [post(62, 2, 0.5), post(62, 8, 0.5), post(40, 5, 0.6)],
+      zones: [slope(16, 0, 6, 10, 180, 10), water(24, 0, 8, 10), sand(48, 0, 4, 7)],
+      blocks: [low(32, 0, 1, 10, 1.5)],
+      bumpers: [post(62, 2, 0.5), post(62, 8, 0.5), post(56, 8.5, 0.6)],
     },
     {
       name: 'Boing Alley',
@@ -287,13 +289,13 @@ export const RIDGE: Course = {
     },
     {
       name: 'Staircase',
-      par: 4,
-      tip: 'Four ramps, four drops, posts between. Enough pace for the next one — never more.',
+      par: 3,
+      tip: 'Four ramps, four drops, sand and posts between. Fly off one ramp and land on the next — if the pace is right.',
       tee: { x: 4, y: 5 },
       cup: { x: 86, y: 5 },
       floor: [R(0, 0, 90, 10)],
-      zones: [slope(10, 0, 6, 10, 180, 8), slope(28, 0, 6, 10, 180, 8), slope(46, 0, 6, 10, 180, 8), slope(64, 0, 6, 10, 180, 8), sand(76, 0, 3, 10)],
-      bumpers: [post(22, 3.2, 0.6), post(40, 6.8, 0.6), post(58, 3.2, 0.6), post(82, 2, 0.5), post(82, 8, 0.5)],
+      zones: [slope(10, 0, 6, 10, 180, 8), sand(22, 0, 3, 10), slope(28, 0, 6, 10, 180, 8), sand(40, 0, 3, 10), slope(46, 0, 6, 10, 180, 8), sand(58, 0, 3, 10), slope(64, 0, 6, 10, 180, 8), sand(76, 0, 3, 10)],
+      bumpers: [post(25.5, 3.2, 0.6), post(43.5, 6.8, 0.6), post(61.5, 3.2, 0.6), post(82, 2, 0.5), post(82, 8, 0.5)],
     },
     {
       name: 'Over the Walls',
@@ -313,7 +315,7 @@ export const RIDGE: Course = {
       tee: { x: 8, y: 6 },
       cup: { x: 74, y: 6 },
       floor: [R(0, 0, 80, 12)],
-      zones: [slope(6, 0, 8, 12, 0, 7), slope(30, 0, 8, 12, 180, 7), slope(50, 0, 8, 12, 180, 7), sand(64, 0, 4, 12)],
+      zones: [slope(6, 0, 8, 12, 0, 7), slope(30, 0, 8, 12, 180, 7), slope(50, 0, 8, 12, 180, 7), sand(64, 0, 2, 12)],
       bumpers: [post(72, 6, 0.6), post(73, 2, 0.5), post(73, 10, 0.5)],
     },
     {
@@ -587,7 +589,7 @@ export const GRAND: Course = {
       cup: { x: 86, y: 6 },
       floor: [R(0, 0, 90, 12)],
       blocks: [polyRect(19, 0, 2, 1.5), polyRect(19, 10.5, 2, 1.5), ...windmill(20, 6, 4.4, 1.5, 2, 0.8)],
-      zones: [boost(8, 4, 4, 4, 0, 40), slope(40, 0, 6, 12, 180, 9), sand(60, 0, 4, 12), sand(78, 0, 12, 3), sand(78, 9, 12, 3)],
+      zones: [boost(8, 4, 4, 4, 0, 40), slope(40, 0, 6, 12, 180, 9), sand(62, 0, 2, 12), sand(78, 0, 12, 3), sand(78, 9, 12, 3)],
       bumpers: [post(70, 6, 0.6), post(82, 6, 0.5)],
     },
     {

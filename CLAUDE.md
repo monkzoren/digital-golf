@@ -11,7 +11,14 @@ README.md for architecture and run instructions. Key facts:
   `mapformat.ts` (hole JSON validation/limits). Keep them pure — no
   SpacetimeDB, DOM, timers or randomness. The ball's `z` is ABSOLUTE height:
   slope zones are real wedges (`groundZ`/`rampRise`), so "on the ground"
-  means `z <= groundZ(x, y)`; use `restingOn(geom, ball)` not `isResting`.
+  means `z <= groundZ(x, y, z)`; use `restingOn(geom, ball)` not `isResting`.
+  Nothing collides that is not drawn: every wall is exactly as tall in the
+  physics as on screen (`WALL_H` = 1.1 for floor rails and blocks without
+  `h`; bumpers/posts/hubs have their drawn heights), a ball above a wall
+  flies over it, a wall block's top is ground (the ball lands and rolls on
+  it), floor rails ride the felt (they climb a wedge with it — render3d
+  splits and pitches them), and a ball rolling off the top of a wedge is
+  launched with the slope's vertical share of its pace.
   Every zone kind (the toy box: conveyor, spinner, fan, trampoline, magnet,
   cannon), block motion (rotate/slide/swing/blink) and block `bounce` must
   be handled in physics.ts, mapformat.ts, render.ts (2D), render3d.ts (3D)
