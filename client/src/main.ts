@@ -1,7 +1,7 @@
 // Digital Golf client — connection, screens, the room, the 3D game view and
 // HUD. Built on the Digital Tennis client: same screen flow (menu → player
 // select → course select → lobby → play), same broadcast skin, same three.js
-// stadium + character rigs (render3d.ts). The course editor is editor.ts.
+// lawn + character rigs (render3d.ts). The course editor is editor.ts.
 import { DbConnection } from './module_bindings';
 import type { Player, Lobby, Course, Hole as HoleRow, Chat } from './module_bindings/types';
 import type { Identity } from 'spacetimedb';
@@ -1012,7 +1012,7 @@ function frame(now: number) {
   const lobby = subscribed ? myLobby() : undefined;
   const p = subscribed ? me() : undefined;
   if (!lobby || !p || lobby.status === L_OPEN) {
-    // the stadium idles behind the menus
+    // the lawn idles behind the menus
     drawScene(emptyScene);
     for (const el of headAnnos.values()) el.style.visibility = 'hidden';
     return;
@@ -1240,7 +1240,7 @@ const GFX_ROWS: { key: keyof GraphicsSettings; name: string; hint: string; opts:
   { key: 'ao', name: 'AMBIENT OCCLUSION', hint: 'contact shade under balls and along walls — costs fill rate', opts: ON_OFF },
   { key: 'bloom', name: 'BLOOM', hint: 'glow on lasers, portals and the aim arrow', opts: ON_OFF },
   { key: 'particles', name: 'PARTICLES', hint: 'impact sparks and splashes', opts: ON_OFF },
-  { key: 'detail', name: 'CROWD & DETAIL', hint: 'crowd stands, stadium props, grass grain', opts: ON_OFF },
+  { key: 'detail', name: 'GRASS DETAIL', hint: 'fine grain on the lawn', opts: ON_OFF },
   { key: 'grade', name: 'FILM GRADE', hint: 'filmic tone curve and color punch (off = neutral)', opts: ON_OFF },
   { key: 'vhs', name: 'VHS FILTER', hint: 'retro scanlines, flicker and tracking band', opts: ON_OFF },
   { key: 'fpsCap', name: 'FPS LIMIT', hint: 'caps GPU work — the game ticks at 30Hz anyway', opts: [{ label: 'MAX', value: 0 }, { label: '120', value: 120 }, { label: '60', value: 60 }, { label: '30', value: 30 }] },

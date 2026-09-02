@@ -14,14 +14,15 @@ import { BALL_R, CUP_R, geomOf, groundZ, rampRise, zonePower } from '@shared/phy
 
 // ---------------------------------------------------------------------------
 // Real-3D Virtua Tennis-style renderer (Three.js / WebGL), inherited from
-// Digital Tennis: the same stadium bowl, crowd, lighting, character rigs and
-// body builder — with the court swapped for a minigolf hole. The whole
-// hole (felt, walls, hazards, movers) is built as meshes once per hole; the
-// balls and the golfers are pooled and repositioned every frame.
+// Digital Tennis: the same lighting, character rigs and body builder — with
+// the court swapped for a minigolf hole on an open lawn (the stadium bowl is
+// gone: it could not hold a big course). The whole hole (felt, walls,
+// hazards, movers) is built as meshes once per hole; the balls and the
+// golfers are pooled and repositioned every frame.
 //
 // Golf world coords: x right, y DOWN (the 2D course format), z up.
 // Three.js coords:   (x - cx, z, y - cy) — the hole is centred on the
-// arena floor; the camera sits behind the local ball looking down the line.
+// lawn; the camera sits behind the local ball looking down the line.
 // ---------------------------------------------------------------------------
 
 /** One golfer as the client sees them (built from the player row). */
@@ -68,17 +69,13 @@ export interface GolfScene {
 // Stereo position for a sound at three x (camera looks down -z).
 const panOf = (x: number) => Math.max(-1, Math.min(1, x / 45));
 
-const GROUND_X = 58; // generous side run-off, VT2 style
-const GROUND_Y = 64; // hoarding / stand line
-// The ground plane runs past the camera (z=84): portrait's tall FOV looks
-// steeply down near the bottom edge, and must always land on grass, never
-// off the edge of the world.
-const GROUND_EXT_Y = 100;
+// The lawn is open ground: no stands, so a hole of any size fits. It runs
+// to the fog (and well past it), so any camera angle lands on grass.
+const GROUND_R = 1500; // half-size of the ground plane
+const GROUND_TILE = 120; // the grass texture repeats every this many units
 
 const COLORS = {
   sky: 0xbcd8ee,
-  standDark: 0x232c4e,
-  hoardingText: '#1a2a8c',
   netPost: 0x2e4a2e,
   shorts: 0xf5f5f5,
   skin: 0xe8ae7e,
@@ -117,12 +114,6 @@ let composer: EffectComposer | null = null;
 let aoPass: GTAOPass | null = null;
 let bloomPass: UnrealBloomPass | null = null;
 let smaaPass: SMAAPass | null = null;
-let detailGroup: THREE.Group; // crowd stands, jumbotron, floodlights — droppable scenery
-// two-frame crowd animation: stands alternate between the A/B textures on a
-// slow clock (offset by parity so the bowl never moves in lockstep)
-let crowdMatA: THREE.MeshStandardMaterial | null = null;
-let crowdMatB: THREE.MeshStandardMaterial | null = null;
-let crowdStands: { mesh: THREE.Mesh; parity: number; cur: number }[] = [];
 let hostCanvas: HTMLCanvasElement;
 let gfx: GraphicsSettings = getGraphics();
 
@@ -146,7 +137,7 @@ function observeCanvasSize() {
   }
 }
 
-// The hole is centred on the arena floor: (cx, cy) is the current hole's
+// The hole is centred on the lawn: (cx, cy) is the current hole's
 // bounds centre in golf world units (set by setHole).
 let holeCX = 0;
 let holeCY = 0;
@@ -1664,7 +1655,7 @@ function golfSlumpPose(now: number): Pose {
   };
 }
 
-// Grass: the arena floor. The hole itself is built as meshes on top.
+// Grass: a tile of the lawn. The hole itself is built as meshes on top.
 function makeGroundTexture(): THREE.CanvasTexture {
   const c = document.createElement('canvas');
   c.width = gfx.detail ? 1024 : 512;
@@ -1672,7 +1663,7 @@ function makeGroundTexture(): THREE.CanvasTexture {
   const g = c.getContext('2d')!;
   g.fillStyle = '#458f45';
   g.fillRect(0, 0, c.width, c.height);
-  // mowing stripes running the length of the arena
+  // mowing stripes running the length of the tile
   const stripe = c.width / 14;
   for (let i = 0; i < 14; i++) {
     g.fillStyle = i % 2 ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)';
@@ -1694,167 +1685,6 @@ const texHash = (n: number) => {
   const s = Math.sin(n) * 43758.5453;
   return s - Math.floor(s);
 };
-
-// Painted spectators: seated rows with real bodies (shirt, head, hair), empty
-// seats in section colors, aisles with steps, a front wall, roof shadow.
-// Two frames (0/1) with the same deterministic layout: frame 1 bobs half the
-// crowd and raises extra arms, so swapping frames makes the crowd live.
-function makeCrowdTexture(frame: number): THREE.CanvasTexture {
-  const c = document.createElement('canvas');
-  c.width = 1024;
-  c.height = 512;
-  const g = c.getContext('2d')!;
-  const bg = g.createLinearGradient(0, 0, 0, c.height);
-  bg.addColorStop(0, '#1a2140');
-  bg.addColorStop(1, '#262f54');
-  g.fillStyle = bg;
-  g.fillRect(0, 0, c.width, c.height);
-
-  const WALL_H = 56; // front wall band at the bottom of the stand
-  const top = 24;
-  // aisles with steps, under the crowd
-  for (let ax = 0; ax < c.width; ax += 128) {
-    g.fillStyle = '#2c3454';
-    g.fillRect(ax, top - 8, 13, c.height - WALL_H - top + 8);
-    g.fillStyle = 'rgba(255,255,255,0.07)';
-    for (let sy = top; sy < c.height - WALL_H; sy += 9) g.fillRect(ax, sy, 13, 2);
-  }
-
-  const SEAT_COLS = ['#31479c', '#8f2d33', '#20745a', '#6a4aa0'];
-  const SKIN = ['#f4d6b4', '#eec39c', '#d8a06e', '#b07848', '#8a5a34', '#6e452a'];
-  const HAIR = ['#241812', '#4a3520', '#101014', '#6e6862', '#8a4a22'];
-  const ROWS = 16;
-  const rowH = (c.height - WALL_H - top) / ROWS;
-  for (let row = 0; row < ROWS; row++) {
-    const y = top + row * rowH + rowH * 0.72;
-    const depth = row / (ROWS - 1); // 0 back … 1 front
-    const s = 0.72 + 0.38 * depth; // people scale up toward the front
-    // riser shadow separating the rows
-    g.fillStyle = 'rgba(8,10,24,0.5)';
-    g.fillRect(0, y + 6 * s, c.width, 3.5);
-    const step = 15 * s;
-    for (let x = 6 + step * texHash(row * 17.7); x < c.width; x += step) {
-      if (x % 128 < 15) continue; // aisle
-      const n = row * 997 + Math.floor(x / step) * 13;
-      if (texHash(n * 1.01) < 0.15) {
-        // empty seat
-        g.fillStyle = SEAT_COLS[Math.floor(x / 128) % SEAT_COLS.length];
-        g.fillRect(x - 5 * s, y - 9 * s, 10 * s, 10 * s);
-        g.fillStyle = 'rgba(255,255,255,0.10)';
-        g.fillRect(x - 5 * s, y - 9 * s, 10 * s, 2);
-        continue;
-      }
-      const bob = frame === 1 && texHash(n * 2.17) > 0.5 ? 2.6 * s : 0;
-      const h2 = texHash(n * 3.33);
-      const shirt =
-        h2 < 0.14
-          ? `hsl(${Math.floor(texHash(n * 4.4) * 360)}, 78%, 58%)` // superfans
-          : `hsl(${150 + Math.floor(texHash(n * 4.4) * 120)}, ${22 + Math.floor(h2 * 30)}%, ${34 + Math.floor(texHash(n * 5.5) * 30)}%)`;
-      const skin = SKIN[Math.floor(texHash(n * 6.6) * SKIN.length)];
-      if (texHash(n * 7.7) < (frame === 1 ? 0.16 : 0.07)) {
-        // arms up cheering
-        g.strokeStyle = shirt;
-        g.lineWidth = 2.6 * s;
-        g.lineCap = 'round';
-        for (const dir of [-1, 1]) {
-          g.beginPath();
-          g.moveTo(x + dir * 3 * s, y - 6 * s - bob);
-          g.lineTo(x + dir * 6 * s, y - 17 * s - bob);
-          g.stroke();
-          g.fillStyle = skin;
-          g.beginPath();
-          g.arc(x + dir * 6 * s, y - 17.5 * s - bob, 1.7 * s, 0, Math.PI * 2);
-          g.fill();
-        }
-      }
-      // torso: round shoulders over a block body
-      g.fillStyle = shirt;
-      g.beginPath();
-      g.arc(x, y - 6 * s - bob, 5 * s, Math.PI, 0);
-      g.fill();
-      g.fillRect(x - 5 * s, y - 6 * s - bob, 10 * s, 8 * s);
-      // head + hair
-      g.fillStyle = skin;
-      g.beginPath();
-      g.arc(x, y - 10.5 * s - bob, 3.8 * s, 0, Math.PI * 2);
-      g.fill();
-      if (texHash(n * 8.8) > 0.22) {
-        g.fillStyle = HAIR[Math.floor(texHash(n * 9.9) * HAIR.length)];
-        g.beginPath();
-        g.arc(x, y - 11 * s - bob, 3.8 * s, Math.PI * 1.02, Math.PI * 1.98);
-        g.fill();
-      }
-    }
-  }
-  // camera flashes twinkle on the alternate frame
-  if (frame === 1) {
-    g.fillStyle = 'rgba(255,255,255,0.9)';
-    for (let i = 0; i < 12; i++) {
-      if (texHash(i * 3.7 + 1) > 0.4) continue;
-      g.fillRect(texHash(i * 12.3) * c.width, top + texHash(i * 7.1) * (c.height - WALL_H - top - 30), 3, 3);
-    }
-  }
-  // front wall below the first row, with the crowd's shadow falling on it
-  g.fillStyle = '#e4e9f0';
-  g.fillRect(0, c.height - WALL_H, c.width, WALL_H);
-  g.fillStyle = 'rgba(20,26,52,0.28)';
-  g.fillRect(0, c.height - WALL_H, c.width, 12);
-  g.fillStyle = '#aeb6c4';
-  g.fillRect(0, c.height - 6, c.width, 6);
-  // roof shadow over the back rows
-  const sh = g.createLinearGradient(0, 0, 0, 100);
-  sh.addColorStop(0, 'rgba(0,0,12,0.5)');
-  sh.addColorStop(1, 'rgba(0,0,12,0)');
-  g.fillStyle = sh;
-  g.fillRect(0, 0, c.width, 100);
-  const tex = new THREE.CanvasTexture(c);
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 4;
-  return tex;
-}
-
-// Sponsor boards: a strip of distinct advertiser panels instead of one
-// repeated wordmark, with a top sheen and ground shadow so they read as
-// physical boxes.
-function makeHoardingTexture(): THREE.CanvasTexture {
-  const c = document.createElement('canvas');
-  c.width = 2048;
-  c.height = 64;
-  const g = c.getContext('2d')!;
-  const panels: [string, string, string][] = [
-    ['DIGITAL GOLF', '#101c54', '#ffffff'],
-    ['ACE SPORTS', '#f4f6fa', '#12205a'],
-    ['VOLT ENERGY', '#f2c018', '#221a06'],
-    ['FAIRWAY TOUR', '#175c34', '#eafaf0'],
-    ['SMASH! FM', '#b8241c', '#ffffff'],
-    ['PUTT RUNNER', '#f4f6fa', '#b8241c'],
-  ];
-  const pw = c.width / panels.length;
-  g.textAlign = 'center';
-  g.textBaseline = 'middle';
-  panels.forEach(([label, bgCol, fg], i) => {
-    g.fillStyle = bgCol;
-    g.fillRect(i * pw, 0, pw, c.height);
-    g.fillStyle = fg;
-    g.font = 'italic 900 30px "Arial Black", Arial, sans-serif';
-    g.fillText(label, i * pw + pw / 2, c.height / 2 + 2);
-    g.fillStyle = 'rgba(0,0,0,0.18)';
-    g.fillRect(i * pw, 0, 3, c.height); // panel joins
-  });
-  g.fillStyle = 'rgba(255,255,255,0.28)';
-  g.fillRect(0, 0, c.width, 4);
-  const sh = g.createLinearGradient(0, c.height - 14, 0, c.height);
-  sh.addColorStop(0, 'rgba(0,0,0,0)');
-  sh.addColorStop(1, 'rgba(0,0,0,0.30)');
-  g.fillStyle = sh;
-  g.fillRect(0, c.height - 14, c.width, 14);
-  const tex = new THREE.CanvasTexture(c);
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 4;
-  return tex;
-}
 
 // The sky as an equirectangular panorama: zenith blue down to a warm haze
 // at the horizon, a sun glow where the key light sits, cumulus puffs, and a
@@ -1924,50 +1754,6 @@ function makeEnvironment(r: THREE.WebGLRenderer): THREE.Texture {
   return env;
 }
 
-// Big screen above the far stand: glowing wordmark, LIVE bug, scanlines.
-function makeJumbotronTexture(): THREE.CanvasTexture {
-  const c = document.createElement('canvas');
-  c.width = 512;
-  c.height = 192;
-  const g = c.getContext('2d')!;
-  const bg = g.createLinearGradient(0, 0, 0, c.height);
-  bg.addColorStop(0, '#0a1030');
-  bg.addColorStop(1, '#101c48');
-  g.fillStyle = bg;
-  g.fillRect(0, 0, c.width, c.height);
-  g.textAlign = 'center';
-  const word = g.createLinearGradient(0, 34, 0, 96);
-  word.addColorStop(0, '#fff8d0');
-  word.addColorStop(1, '#f2c018');
-  g.fillStyle = word;
-  g.font = 'italic 900 44px "Arial Black", Arial, sans-serif';
-  g.fillText('DIGITAL GOLF', c.width / 2, 82);
-  // golf ball dotting the tagline
-  g.fillStyle = '#ffffff';
-  g.beginPath();
-  g.arc(c.width / 2 - 78, 134, 12, 0, Math.PI * 2);
-  g.fill();
-  g.fillStyle = '#c8ccd4';
-  for (let i = 0; i < 6; i++) { g.beginPath(); g.arc(c.width / 2 - 84 + (i % 3) * 6, 129 + Math.floor(i / 3) * 8, 1.6, 0, Math.PI * 2); g.fill(); }
-  g.fillStyle = '#e83828';
-  g.beginPath();
-  g.arc(c.width / 2 - 34, 134, 7, 0, Math.PI * 2);
-  g.fill();
-  g.fillStyle = '#ffffff';
-  g.font = '700 26px Arial, sans-serif';
-  g.textAlign = 'left';
-  g.fillText('LIVE', c.width / 2 - 18, 143);
-  // scanlines + edge glow border
-  g.fillStyle = 'rgba(0,0,0,0.16)';
-  for (let y = 0; y < c.height; y += 4) g.fillRect(0, y, c.width, 1.5);
-  g.strokeStyle = '#2fb4e0';
-  g.lineWidth = 5;
-  g.strokeRect(4, 4, c.width - 8, c.height - 8);
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
-}
-
 let groundMat: THREE.MeshStandardMaterial;
 let groundBaked = false;
 
@@ -1975,12 +1761,15 @@ function bakeGround() {
   if (groundBaked) return;
   groundBaked = true;
   const old = groundMat.map;
-  groundMat.map = makeGroundTexture();
+  const map = makeGroundTexture();
+  map.wrapS = map.wrapT = THREE.RepeatWrapping;
+  map.repeat.set((GROUND_R * 2) / GROUND_TILE, (GROUND_R * 2) / (GROUND_TILE * 1.5));
+  groundMat.map = map;
   if (!groundMat.normalMap) {
     // turf: the felt's pile normal tiled fine, so the lawn has a nap that
     // shifts with the sun instead of reading as painted plastic
     groundMat.normalMap = surfaces().feltN.clone(); // own repeat, shared pixels
-    groundMat.normalMap.repeat.set((GROUND_X * 2) / 3, (GROUND_EXT_Y * 2) / 3);
+    groundMat.normalMap.repeat.set((GROUND_R * 2) / 3, (GROUND_R * 2) / 3);
     groundMat.normalMap.needsUpdate = true;
     groundMat.normalScale.set(0.55, 0.55);
     groundMat.roughness = 0.95;
@@ -1989,32 +1778,8 @@ function bakeGround() {
   old?.dispose();
 }
 
-const HOARD_H = 3;
-const STAND_TILT = 0.55;
-const STAND_H = 34;
-
-// The stadium bowl is an octagon: four main stands plus chamfered corner
-// sections, so the arena closes into a seamless ring instead of four
-// floating walls with sky gaps at the corners.
-function bowlEdges() {
-  const A = GROUND_X, B = GROUND_Y, cut = 24;
-  const pts: [number, number][] = [
-    [-A + cut, -B], [A - cut, -B], [A, -B + cut], [A, B - cut],
-    [A - cut, B], [-A + cut, B], [-A, B - cut], [-A, -B + cut],
-  ];
-  return pts.map((p, i) => {
-    const q = pts[(i + 1) % pts.length];
-    const dx = q[0] - p[0];
-    const dz = q[1] - p[1];
-    const len = Math.hypot(dx, dz);
-    const nx = -dz / len; // unit normal pointing in at the court
-    const nz = dx / len;
-    return { mx: (p[0] + q[0]) / 2, mz: (p[1] + q[1]) / 2, len, nx, nz, yaw: Math.atan2(nx, nz) };
-  });
-}
-
-// Bake a texture repeat into the geometry's UVs so every stand/hoarding can
-// share one material (and the crowd frame-swap stays two materials total).
+// Bake a texture repeat into the geometry's UVs so meshes of different
+// sizes (pond basins, wall runs) can share one material.
 function scaleUv(geo: THREE.BufferGeometry, kx: number, ky = 1) {
   const uv = geo.attributes.uv as THREE.BufferAttribute;
   for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * kx, uv.getY(i) * ky);
@@ -2022,126 +1787,11 @@ function scaleUv(geo: THREE.BufferGeometry, kx: number, ky = 1) {
 }
 
 function buildEnvironment() {
-  crowdStands = [];
   groundMat = std({});
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(GROUND_X * 2, GROUND_EXT_Y * 2), groundMat);
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(GROUND_R * 2, GROUND_R * 2), groundMat);
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
   scene3.add(ground);
-
-  // --- hoardings: sponsor boards ringing the whole octagon (always on — a
-  // thin band that caps the court against the sky) ------------------------
-  const edges = bowlEdges();
-  const hoardMat = std({ map: makeHoardingTexture() });
-  for (const e of edges) {
-    const geo = new THREE.BoxGeometry(e.len + 0.6, HOARD_H, 0.4);
-    scaleUv(geo, Math.max(1, Math.round(e.len / 56)));
-    const m = new THREE.Mesh(geo, hoardMat);
-    m.position.set(e.mx, HOARD_H / 2, e.mz);
-    m.rotation.y = e.yaw;
-    m.castShadow = true;
-    scene3.add(m);
-  }
-
-  // Scenery: the fill-hungry decoration hangs off one group so the detail
-  // option can drop it in a single flag.
-  detailGroup = new THREE.Group();
-  detailGroup.visible = gfx.detail;
-  scene3.add(detailGroup);
-
-  // --- stands: tilted crowd tiers rising from the hoarding tops, with a
-  // roof + fascia. The near stand is kept low (and roofless) so it never
-  // pokes into the bottom of the frame; its corner neighbors step down to
-  // meet it. -----------------------------------------------------------
-  const cMatA = (crowdMatA = std({ map: makeCrowdTexture(0) }));
-  const cMatB = (crowdMatB = std({ map: makeCrowdTexture(1) }));
-  const roofMat = std({ color: 0xdde3ea, roughness: 0.6 });
-  const fasciaMat = std({ color: 0xf4f6fa });
-  const sinT = Math.sin(STAND_TILT);
-  const cosT = Math.cos(STAND_TILT);
-  edges.forEach((e, i) => {
-    const near = i === 4;
-    const hs = near ? 0.55 : i === 3 || i === 5 ? 0.8 : 1;
-    const H = STAND_H * hs;
-    // widened by the lean-back offset so adjacent tiers overlap at the top
-    // instead of opening sky wedges at the octagon corners
-    const W = e.len + 0.6 + H * sinT * 0.83;
-    const geo = new THREE.PlaneGeometry(W, H);
-    // uv.y scaled by hs: shorter stands keep the front rows, crop the back
-    scaleUv(geo, Math.max(0.5, W / (2 * STAND_H)), hs);
-    const mesh = new THREE.Mesh(geo, i % 2 ? cMatB : cMatA);
-    mesh.rotation.order = 'YXZ';
-    mesh.rotation.y = e.yaw;
-    mesh.rotation.x = -STAND_TILT;
-    mesh.position.set(
-      e.mx - e.nx * (H / 2) * sinT,
-      HOARD_H + (H / 2) * cosT,
-      e.mz - e.nz * (H / 2) * sinT
-    );
-    detailGroup.add(mesh);
-    crowdStands.push({ mesh, parity: i & 1, cur: i & 1 });
-
-    if (!near) {
-      const off = H * sinT;
-      const topY = HOARD_H + H * cosT;
-      const roof = new THREE.Mesh(new THREE.BoxGeometry(W + 1, 0.6, 8), roofMat);
-      roof.rotation.y = e.yaw;
-      roof.position.set(e.mx - e.nx * (off + 0.5), topY + 0.5, e.mz - e.nz * (off + 0.5));
-      detailGroup.add(roof);
-      const fascia = new THREE.Mesh(new THREE.BoxGeometry(e.len + 1.5, 1.5, 0.22), fasciaMat);
-      fascia.rotation.y = e.yaw;
-      fascia.position.set(e.mx - e.nx * (off - 3.4), topY - 0.2, e.mz - e.nz * (off - 3.4));
-      detailGroup.add(fascia);
-    }
-  });
-
-  // --- jumbotron above the far stand --------------------------------------
-  const jumbo = new THREE.Group();
-  const jFrame = new THREE.Mesh(
-    new THREE.BoxGeometry(29.6, 11.4, 1),
-    std({ color: 0x141a2e })
-  );
-  jumbo.add(jFrame);
-  const jScreen = new THREE.Mesh(
-    new THREE.PlaneGeometry(28, 10),
-    new THREE.MeshBasicMaterial({ map: makeJumbotronTexture() }) // self-lit
-  );
-  jScreen.position.z = 0.55;
-  jumbo.add(jScreen);
-  const jLegMat = metal({ color: 0x30384a, roughness: 0.55, metalness: 0.7 });
-  for (const lx of [-9, 9]) {
-    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.55, 7, 8), jLegMat);
-    leg.position.set(lx, -8, -0.4);
-    jumbo.add(leg);
-  }
-  jumbo.position.set(0, 35.5, -88);
-  jumbo.rotation.x = 0.1; // faces down at the court
-  detailGroup.add(jumbo);
-
-  // --- floodlight towers at the four corners ------------------------------
-  const poleMat = metal({ color: 0x8a929e, roughness: 0.5 });
-  const headMat = std({ color: 0x3a4148 });
-  const lampMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.6, 2.7, 3.0) }); // self-lit, blooms
-  for (const sx of [-1, 1]) {
-    for (const sz of [-1, 1]) {
-      const px = sx * 53;
-      const pz = sz * 59;
-      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.75, 39, 10), poleMat);
-      pole.position.set(px, 19.5, pz);
-      detailGroup.add(pole);
-      const head = new THREE.Group();
-      head.position.set(px, 39.5, pz);
-      head.rotation.order = 'YXZ';
-      head.rotation.y = Math.atan2(-px, -pz); // aimed at center court
-      head.rotation.x = 0.45;
-      const back = new THREE.Mesh(new THREE.BoxGeometry(6.6, 4.4, 0.7), headMat);
-      head.add(back);
-      const lamp = new THREE.Mesh(new THREE.PlaneGeometry(6, 3.8), lampMat);
-      lamp.position.z = 0.4;
-      head.add(lamp);
-      detailGroup.add(head);
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2149,8 +1799,8 @@ function buildEnvironment() {
 // ---------------------------------------------------------------------------
 // The scene is framed for a 4:3 window with a ~46° vertical FOV. Narrower
 // frames (portrait phones fill the whole screen) keep the same HORIZONTAL
-// FOV — the full court width stays in view and the extra height shows
-// stands above / foreground court below instead of cropping the sides.
+// FOV — the full hole width stays in view and the extra height shows
+// sky above / foreground lawn below instead of cropping the sides.
 const BASE_ASPECT = 4 / 3;
 
 function fovForAspect(baseFov: number): number {
@@ -2202,11 +1852,11 @@ function buildScene() {
   envTex = makeEnvironment(renderer);
   scene3.environment = envTex;
   scene3.environmentIntensity = 0.5;
-  scene3.fog = new THREE.Fog(0xdce8f2, 200, 340);
+  scene3.fog = new THREE.Fog(0xdce8f2, FOG_NEAR_MIN, FOG_NEAR_MIN * FOG_FAR_MUL);
 
   const aspect =
     hostCanvas.clientHeight > 0 ? hostCanvas.clientWidth / hostCanvas.clientHeight : BASE_ASPECT;
-  camera = new THREE.PerspectiveCamera(46, aspect, 0.5, 400);
+  camera = new THREE.PerspectiveCamera(46, aspect, 0.5, GROUND_R * 2);
   camera.position.copy(CAM_POS);
   camera.lookAt(CAM_TARGET);
   camPos.copy(CAM_POS);
@@ -2214,7 +1864,6 @@ function buildScene() {
 
   sun = new THREE.DirectionalLight(0xfff1dc, 3.6);
   sun.position.copy(SUN_POS);
-  sun.shadow.camera.far = 250;
   sun.shadow.bias = -0.0003;
   sun.shadow.normalBias = 0.035;
   fitShadowFrustum(null);
@@ -2349,24 +1998,32 @@ function applyResolution() {
   resizeToDisplay(hostCanvas); // takes effect now rather than on the next frame
 }
 
-// The shadow map covers the hole, not the stadium: an orthographic frustum
+// The shadow map covers the hole, not the lawn: an orthographic frustum
 // wrapped around the hole bounds (plus room for the golfers and the flag)
 // spends every shadow texel where the eye is, so the golfers' shadows have
-// edges instead of stair-steps. With no hole built it falls back to the
-// whole arena for the idle stadium behind the menus.
+// edges instead of stair-steps. With no hole built it falls back to a patch
+// around the origin for the idle lawn behind the menus.
+// The fog closes in past the hole: near enough to soften the empty lawn
+// on a small hole, far enough that a big one is never lost in it.
+const FOG_NEAR_MIN = 200;
+const FOG_FAR_MUL = 1.7;
+
 function fitShadowFrustum(b: ReturnType<typeof holeBounds> | null) {
   const cam = sun.shadow.camera;
+  let r = 80;
   if (b) {
     const hw = b.w / 2 + 10, hh = b.h / 2 + 10;
     // the light looks down its own axis: size the box by the hole's
     // footprint projected onto the light's view plane (generous — the
     // golfers stand off the felt and the flag rises above it)
-    const r = Math.hypot(hw, hh) * 0.85 + 4;
-    cam.left = -r; cam.right = r; cam.top = r; cam.bottom = -r;
-  } else {
-    cam.left = -70; cam.right = 70; cam.top = 80; cam.bottom = -80;
+    r = Math.hypot(hw, hh) * 0.85 + 4;
   }
+  cam.left = -r; cam.right = r; cam.top = r; cam.bottom = -r;
+  cam.far = SUN_POS.length() + r + 20;
   cam.updateProjectionMatrix();
+  const fog = scene3.fog as THREE.Fog;
+  fog.near = Math.max(FOG_NEAR_MIN, b ? Math.hypot(b.w, b.h) * 1.3 : 0);
+  fog.far = fog.near * FOG_FAR_MUL;
 }
 
 function applyShadows() {
@@ -2402,7 +2059,6 @@ function applyGraphics(next: GraphicsSettings, prev: GraphicsSettings) {
   if (next.shadows !== prev.shadows) applyShadows();
   if (next.grade !== prev.grade) applyGrade();
   if (next.detail !== prev.detail) {
-    detailGroup.visible = next.detail;
     groundBaked = false; // re-bake the grass at the new detail level
     bakeGround();
   }
@@ -3307,7 +2963,6 @@ export function drawScene(scene: GolfScene) {
   const now = performance.now();
   const dt = Math.min(0.1, (now - lastFrame) / 1000 || 0.016);
   lastFrame = now;
-  animateCrowd(now);
 
   if (scene.hole && scene.holeKey !== builtHoleKey) {
     builtHoleKey = scene.holeKey;
@@ -3605,10 +3260,10 @@ export function drawScene(scene: GolfScene) {
     );
     if (now - lookMovedAt < 250) rate = Math.max(rate, 14); // no lag under the hand
   }
-  // never below the felt, never outside the bowl
+  // never below the felt, never off the lawn
   wantPos.y = Math.max(wantPos.y, FLOOR_Y + 2.5);
-  wantPos.x = THREE.MathUtils.clamp(wantPos.x, -GROUND_X + 6, GROUND_X - 6);
-  wantPos.z = THREE.MathUtils.clamp(wantPos.z, -GROUND_Y + 6, GROUND_Y - 6);
+  wantPos.x = THREE.MathUtils.clamp(wantPos.x, -GROUND_R + 6, GROUND_R - 6);
+  wantPos.z = THREE.MathUtils.clamp(wantPos.z, -GROUND_R + 6, GROUND_R - 6);
   if (cut) { camPos.copy(wantPos); camLook.copy(wantLook); }
   else {
     const k = 1 - Math.exp(-rate * dt);
@@ -3632,20 +3287,6 @@ export function resetScene() {
   ballByPlayer.clear();
   camMode = '';
   resetLook();
-}
-
-// The crowd lives on a slow two-frame flip: each stand swaps between the A/B
-// spectator textures, offset by parity so neighbors alternate.
-function animateCrowd(now: number) {
-  if (!detailGroup?.visible || !crowdStands.length || !crowdMatA || !crowdMatB) return;
-  const f = Math.floor(now / 480);
-  for (const s of crowdStands) {
-    const fr = (f + s.parity) & 1;
-    if (fr !== s.cur) {
-      s.cur = fr;
-      s.mesh.material = fr ? crowdMatB : crowdMatA;
-    }
-  }
 }
 
 function wrapAngle(a: number): number {

@@ -17,7 +17,7 @@ export interface GraphicsSettings {
   particles: boolean;
   /** Motion trail spheres behind the ball. */
   trail: boolean;
-  /** Crowd stands, hoardings, floodlights, court surface noise. */
+  /** Fine grain on the lawn texture. */
   detail: boolean;
   /** ACES tone mapping + the canvas color wash. */
   grade: boolean;
@@ -63,7 +63,7 @@ const STORE_KEY = 'dt_gfx';
 
 // Default a notch down unless the machine is clearly beefy — every option is
 // still one click away, this only picks where the slider starts. MEDIUM keeps
-// all of the juice (particles, trail, crowd, grade); it only softens the
+// all of the juice (particles, trail, grass grain, grade); it only softens the
 // pixel-pushing knobs.
 function autoPreset(): PresetName {
   const cores = navigator.hardwareConcurrency ?? 8;
