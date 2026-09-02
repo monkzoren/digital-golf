@@ -8,7 +8,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { CHARACTERS, type Character, type HairStyle } from './characters';
 import { getGraphics, onGraphicsChange, type GraphicsSettings } from './graphics';
-import type { Hole, Zone, Block } from '@shared/courses';
+import type { Hole, Zone, Block, Rect } from '@shared/courses';
 import { holeBounds, motionAngle, moverActive, rampFrac } from '@shared/courses';
 import { BALL_R, CUP_R, geomOf, groundZ, rampRise, zonePower } from '@shared/physics';
 
@@ -2529,7 +2529,7 @@ let builtHoleKey = '';
 let builtGeom: ReturnType<typeof geomOf> | null = null;
 interface MoverProp { block: Block; group: THREE.Group; pivotX: number; pivotY: number; mesh?: THREE.Mesh }
 let movers: MoverProp[] = [];
-let waterMats: THREE.MeshStandardMaterial[] = [];
+let waterMats: THREE.MeshPhysicalMaterial[] = [];
 // scrolling surfaces: the texture slides along the zone's own direction
 let boostMats: { mat: THREE.MeshStandardMaterial; dx: number; dy: number; rate: number }[] = [];
 let teleMats: THREE.MeshBasicMaterial[] = [];
@@ -2713,16 +2713,43 @@ function makeCupTexture(): THREE.CanvasTexture {
   return tex;
 }
 
+// Pond bed: wet pebbles in silt, seen through the water.
+function makeBedTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#3a3a2e';
+  g.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 260; i++) {
+    const x = texHash(i * 3.3) * 256, y = texHash(i * 7.1) * 256, r = 4 + texHash(i * 5.7) * 10;
+    const l = 26 + texHash(i * 9.9) * 26;
+    g.fillStyle = `hsl(${30 + texHash(i * 2.1) * 30}, ${8 + texHash(i * 4.4) * 12}%, ${l}%)`;
+    g.beginPath();
+    g.ellipse(x, y, r, r * 0.75, texHash(i) * 3, 0, Math.PI * 2);
+    g.fill();
+    g.fillStyle = 'rgba(255,255,255,0.09)';
+    g.beginPath();
+    g.ellipse(x - r * 0.25, y - r * 0.3, r * 0.35, r * 0.25, 0, 0, Math.PI * 2);
+    g.fill();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
+
 let surf: {
   feltN: THREE.CanvasTexture; wood: THREE.CanvasTexture; woodN: THREE.CanvasTexture;
   dimpleN: THREE.CanvasTexture; rippleN: THREE.CanvasTexture; blob: THREE.CanvasTexture; cup: THREE.CanvasTexture;
+  bed: THREE.CanvasTexture;
 } | null = null;
 function surfaces() {
   if (surf) return surf;
   const wood = makeWoodTexture(), woodN = makeWoodNormal();
   wood.repeat.set(0.25, 0.25); // one plank tile = 4 world units
   woodN.repeat.set(0.25, 0.25);
-  surf = { feltN: makeFeltNormal(), wood, woodN, dimpleN: makeDimpleNormal(), rippleN: makeRippleNormal(), blob: makeBlobTexture(), cup: makeCupTexture() };
+  surf = { feltN: makeFeltNormal(), wood, woodN, dimpleN: makeDimpleNormal(), rippleN: makeRippleNormal(), blob: makeBlobTexture(), cup: makeCupTexture(), bed: makeBedTexture() };
   return surf;
 }
 
@@ -2811,7 +2838,7 @@ function makeZoneTexture(z: Zone): THREE.CanvasTexture {
       const grad = g.createLinearGradient(0, 0, 0, H);
       grad.addColorStop(0, '#3a9ae6'); grad.addColorStop(1, '#1f5f9c');
       g.fillStyle = grad; g.fillRect(0, 0, W, H);
-      g.strokeStyle = 'rgba(255,255,255,0.35)'; g.lineWidth = 2;
+      g.strokeStyle = 'rgba(255,255,255,0.28)'; g.lineWidth = 2;
       for (let y = 10; y < H; y += 26) {
         g.beginPath();
         for (let x = 0; x <= W; x += 6) { const yy = y + 5 * Math.sin(x / 14); if (x === 0) g.moveTo(x, yy); else g.lineTo(x, yy); }
@@ -2966,7 +2993,95 @@ const LASER_OFF_MAT = new THREE.MeshBasicMaterial({ color: 0xff2d55, transparent
 const CANNON_MAT = metal({ color: 0x2b2f3a, roughness: 0.5, metalness: 0.7 });
 const CANNON_RIM_MAT = metal({ color: 0xffd60a, roughness: 0.3 });
 const FAN_BLADE_MAT = gloss({ color: 0xe8f6ff });
-const STOCK_MATS: THREE.Material[] = [FELT_MAT, WALL_MAT, WALL_LOW_MAT, WALL_SIDE_MAT, RUBBER_MAT, LASER_ON_MAT, LASER_OFF_MAT, CANNON_MAT, CANNON_RIM_MAT, FAN_BLADE_MAT];
+const BED_MAT = std({ color: 0xffffff, roughness: 1, side: THREE.BackSide });
+const STOCK_MATS: THREE.Material[] = [FELT_MAT, WALL_MAT, WALL_LOW_MAT, WALL_SIDE_MAT, RUBBER_MAT, LASER_ON_MAT, LASER_OFF_MAT, CANNON_MAT, CANNON_RIM_MAT, FAN_BLADE_MAT, BED_MAT];
+
+// Water is a real pond: the felt is carved away over the zone, a pebble bed
+// sits a little way down, and a translucent, rippling surface lies over it.
+// Transparency only sells with depth beneath it — over the felt it would
+// read as a spill.
+const POND_DEPTH = 0.26; // must stay above the lawn plane (y = 0), which would otherwise show through
+
+/** Axis-aligned rectangle subtraction: `a` minus `cut`, as up to four rects. */
+function subtractRect(a: Rect, cut: Rect): Rect[] {
+  const x0 = Math.max(a.x, cut.x), y0 = Math.max(a.y, cut.y);
+  const x1 = Math.min(a.x + a.w, cut.x + cut.w), y1 = Math.min(a.y + a.h, cut.y + cut.h);
+  if (x1 - x0 <= 0.001 || y1 - y0 <= 0.001) return [a];
+  const out: Rect[] = [];
+  if (y0 > a.y) out.push({ x: a.x, y: a.y, w: a.w, h: y0 - a.y }); // above
+  if (a.y + a.h > y1) out.push({ x: a.x, y: y1, w: a.w, h: a.y + a.h - y1 }); // below
+  if (x0 > a.x) out.push({ x: a.x, y: y0, w: x0 - a.x, h: y1 - y0 }); // left
+  if (a.x + a.w > x1) out.push({ x: x1, y: y0, w: a.x + a.w - x1, h: y1 - y0 }); // right
+  return out;
+}
+
+/** The floor with the ponds cut out of it. Another zone laid over a pond
+ *  (a sand island, a jump pad) keeps its felt underneath, so it reads as a
+ *  platform in the water rather than a slab floating over the bed. */
+function carvedFloor(hole: Hole): Rect[] {
+  const zones = hole.zones ?? [];
+  let rects: Rect[] = hole.floor.map(r => ({ ...r }));
+  for (const z of zones) {
+    if (z.kind !== 'water') continue;
+    let cuts: Rect[] = [z];
+    for (const o of zones) if (o !== z && o.kind !== 'water') cuts = cuts.flatMap(c => subtractRect(c, o));
+    for (const c of cuts) rects = rects.flatMap(r => subtractRect(r, c));
+  }
+  return rects;
+}
+
+/** Radial alpha for a pond surface: clearer at the banks, deeper in the middle. */
+function makePondAlpha(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d')!;
+  const grad = g.createRadialGradient(32, 32, 4, 32, 32, 40);
+  grad.addColorStop(0, '#ffffff');
+  grad.addColorStop(0.7, '#d8d8d8');
+  grad.addColorStop(1, '#9a9a9a');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c);
+}
+
+function pondMesh(z: Zone, cx: number, cz: number): THREE.Group {
+  const sf = surfaces();
+  const group = new THREE.Group();
+  // the basin: a back-faced box whose inside is the bed and the banks
+  if (!BED_MAT.map) {
+    BED_MAT.map = sf.bed;
+    BED_MAT.normalMap = sf.feltN.clone();
+    BED_MAT.normalMap.needsUpdate = true;
+    BED_MAT.normalScale.set(0.7, 0.7);
+    BED_MAT.needsUpdate = true;
+  }
+  const basinGeo = new THREE.BoxGeometry(z.w, POND_DEPTH, z.h);
+  scaleUv(basinGeo, Math.max(1, z.w / 4), Math.max(1, z.h / 4));
+  const basin = new THREE.Mesh(basinGeo, BED_MAT);
+  basin.position.set(cx, FLOOR_Y - POND_DEPTH / 2, cz);
+  basin.receiveShadow = true;
+  group.add(basin);
+  // the surface, a hair below the felt so the banks show a lip
+  const ripple = sf.rippleN.clone();
+  ripple.repeat.set(z.w / 3, z.h / 3);
+  ripple.needsUpdate = true;
+  // the painted wave lines carry the stylised read; the physical layer
+  // adds the sky reflection and sun sparkle over them
+  const waves = makeZoneTexture(z);
+  const mat = new THREE.MeshPhysicalMaterial({
+    map: waves, color: 0x9ed4ff, transparent: true, opacity: 0.76, alphaMap: makePondAlpha(),
+    roughness: 0.12, metalness: 0, normalMap: ripple, normalScale: new THREE.Vector2(0.9, 0.9),
+    envMapIntensity: 1.6, depthWrite: false,
+  });
+  const surface = new THREE.Mesh(new THREE.PlaneGeometry(z.w, z.h), mat);
+  surface.rotation.x = -Math.PI / 2;
+  surface.position.set(cx, FLOOR_Y - 0.07, cz);
+  surface.receiveShadow = true;
+  surface.renderOrder = 2; // after the bed, so the blend sees it
+  group.add(surface);
+  waterMats.push(mat);
+  return group;
+}
 const BUMPER_MAT = gloss({ color: 0xe03030, emissive: 0x400000, roughness: 0.28 });
 const POST_MAT = metal({ color: 0x9aa4b8, roughness: 0.45 });
 const CUP_MAT = new THREE.MeshBasicMaterial({ color: 0xffffff });
@@ -2977,10 +3092,11 @@ function disposeHole() {
   holeGroup.traverse(obj => {
     const mesh = obj as THREE.Mesh;
     mesh.geometry?.dispose();
-    const mat = mesh.material as THREE.Material & { map?: THREE.Texture | null; normalMap?: THREE.Texture | null };
+    const mat = mesh.material as THREE.Material & { map?: THREE.Texture | null; normalMap?: THREE.Texture | null; alphaMap?: THREE.Texture | null };
     if (!mat || [...STOCK_MATS, BUMPER_MAT, POST_MAT, CUP_MAT, FLAG_MAT].includes(mat as any)) return; // shared, lives on
     mat.map?.dispose();
     mat.normalMap?.dispose(); // per-zone clones of the tiling normals
+    mat.alphaMap?.dispose();
     mat.dispose();
   });
   holeGroup.clear();
@@ -3017,8 +3133,9 @@ function setHole(hole: Hole) {
     }
   }
 
-  // felt: one slab per floor rect (they overlap where rects join — fine)
-  for (const r of hole.floor) {
+  // felt: one slab per floor rect (they overlap where rects join — fine),
+  // with the ponds cut out
+  for (const r of carvedFloor(hole)) {
     const geo = new THREE.BoxGeometry(r.w, FLOOR_Y, r.h);
     const uv = geo.attributes.uv as THREE.BufferAttribute;
     for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * r.w / 6, uv.getY(i) * r.h / 6);
@@ -3076,11 +3193,15 @@ function setHole(hole: Hole) {
   }
   // zones
   (hole.zones ?? []).forEach((z, i) => {
-    const tex = makeZoneTexture(z);
     const cx = z.x + z.w / 2 - holeCX, cz = z.y + z.h / 2 - holeCY;
+    if (z.kind === 'water') { holeGroup.add(pondMesh(z, cx, cz)); return; }
+    const tex = makeZoneTexture(z);
     const flat = z.kind === 'tele' || z.kind === 'magnet' || z.kind === 'spinner';
+    // portals and magnets are emitters (over-bright so they bloom); the
+    // spinner is just a painted disc
+    const glow = z.kind === 'spinner' ? 1 : 1.7;
     const mat = flat
-      ? new THREE.MeshBasicMaterial({ map: tex, color: new THREE.Color(1.7, 1.7, 1.7), transparent: true, opacity: 0.85 })
+      ? new THREE.MeshBasicMaterial({ map: tex, color: new THREE.Color(glow, glow, glow), transparent: true, opacity: 0.85 })
       : std({ map: tex });
     if (!flat) {
       const sm = mat as THREE.MeshStandardMaterial;
@@ -3093,9 +3214,7 @@ function setHole(hole: Hole) {
         t.needsUpdate = true;
         return t;
       };
-      if (z.kind === 'water') {
-        sm.roughness = 0.08; sm.normalMap = tiled(sf.rippleN, 6); sm.normalScale.set(0.5, 0.5);
-      } else if (z.kind === 'ice') {
+      if (z.kind === 'ice') {
         sm.roughness = 0.14;
       } else if (z.kind === 'sand') {
         sm.roughness = 1; sm.normalMap = tiled(sf.feltN, 3); sm.normalScale.set(0.9, 0.9);
@@ -3133,7 +3252,6 @@ function setHole(hole: Hole) {
     m.position.set(cx, FLOOR_Y + 0.012 + i * 0.001, cz);
     m.receiveShadow = true;
     holeGroup.add(m);
-    if (z.kind === 'water') waterMats.push(mat as THREE.MeshStandardMaterial);
     if (z.kind === 'boost' || z.kind === 'conveyor' || z.kind === 'fan') {
       // texture u runs along golf +x, v along golf −y (the plane is laid flat
       // by rotating −90° about x), so scroll u with cos and v against sin
@@ -3278,9 +3396,11 @@ export function drawScene(scene: GolfScene) {
   for (const s of spinners) s.group.rotation.y = -s.speed * t;
   for (const f of fanBlades) f.rotation.y = -(now / 45) % (Math.PI * 2);
   for (const mm of magnetMats) mm.opacity = 0.65 + 0.3 * Math.sin(now / 180);
-  for (const w of waterMats) if (w.map) {
-    w.map.offset.x = (now / 9000) % 1; w.map.offset.y = Math.sin(now / 1400) * 0.02;
-    if (w.normalMap) { w.normalMap.offset.x = (now / 6000) % 1; w.normalMap.offset.y = (now / 9500) % 1; }
+  for (const w of waterMats) if (w.normalMap) {
+    // two drifts at different rates so the ripple never visibly loops
+    w.normalMap.offset.x = (now / 7000) % 1;
+    w.normalMap.offset.y = (now / 11000) % 1 + Math.sin(now / 1900) * 0.03;
+    if (w.map) { w.map.offset.x = (now / 9000) % 1; w.map.offset.y = Math.sin(now / 1400) * 0.02; }
   }
   for (const bm of boostMats) if (bm.mat.map) {
     // image moves toward −u as offset.x grows, so subtract along the belt

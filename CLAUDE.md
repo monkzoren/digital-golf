@@ -43,7 +43,10 @@ README.md for architecture and run instructions. Key facts:
   (`makeEnvironment`, one per WebGL context — the character previews make
   their own). Surface detail (felt pile, oak grain, dimples, ripples) is
   painted procedurally in `surfaces()`; zones clone the tiling normal maps
-  so each can set its own repeat. Frames go through an EffectComposer
+  so each can set its own repeat. Water zones are real ponds: `carvedFloor` cuts
+  them out of the felt slabs (keeping felt under any other zone laid over
+  the pond), `pondMesh` adds a back-faced basin with a pebble bed and a
+  translucent rippling surface just below felt level. Frames go through an EffectComposer
   (`buildComposer`: RenderPass → GTAO → UnrealBloom → OutputPass → SMAA);
   MSAA lives on the composer's render target, so changing anti-aliasing
   rebuilds the composer, not the WebGL context. Bloom only catches colours
