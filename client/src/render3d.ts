@@ -2448,6 +2448,30 @@ const camLook = new THREE.Vector3();
 const camDir = new THREE.Vector3(1, 0, 0);
 let camMode: GolfScene['cam'] | '' = '';
 
+// Free look: a yaw / pitch / distance offset the player lays over the
+// automatic camera (drag to orbit, wheel or pinch to zoom — see freelook.ts).
+// It rides on top of whatever the mode wants, so the camera still follows
+// the ball, and it clears whenever the view cuts (new hole, new mode).
+const look = { yaw: 0, pitch: 0, zoom: 1 };
+let lookMovedAt = -1e9; // the camera snaps to the hand while it is being dragged
+const LOOK_ZOOM_MIN = 0.45, LOOK_ZOOM_MAX = 2.4;
+
+/** Orbit the view: radians of yaw (around up) and pitch (elevation). */
+export function orbitLook(dyaw: number, dpitch: number) {
+  look.yaw += dyaw;
+  look.pitch = THREE.MathUtils.clamp(look.pitch + dpitch, -1.4, 1.4);
+  lookMovedAt = performance.now();
+}
+/** Scale the camera's distance from what it looks at (> 1 backs away). */
+export function zoomLook(factor: number) {
+  look.zoom = THREE.MathUtils.clamp(look.zoom * factor, LOOK_ZOOM_MIN, LOOK_ZOOM_MAX);
+  lookMovedAt = performance.now();
+}
+export function resetLook() {
+  look.yaw = 0; look.pitch = 0; look.zoom = 1;
+}
+const lookIsDefault = () => look.yaw === 0 && look.pitch === 0 && look.zoom === 1;
+
 // per-rig animation bookkeeping (index = rig slot)
 interface GolferState {
   px: number; pz: number; // current feet position (three)
@@ -3268,6 +3292,7 @@ export function burstAt(x: number, y: number, z: number, color: number, count = 
 
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
+const _v3 = new THREE.Vector3();
 const _axis = new THREE.Vector3();
 const _UPV = new THREE.Vector3(0, 1, 0);
 
@@ -3287,6 +3312,7 @@ export function drawScene(scene: GolfScene) {
   if (scene.hole && scene.holeKey !== builtHoleKey) {
     builtHoleKey = scene.holeKey;
     setHole(scene.hole);
+    resetLook();
     // everybody's golfer teleports to the new tee — no walking across holes
     for (const g of golfers) { g.px = NaN; g.holedAt = -1; g.wasHoled = false; g.swingStart = -1; }
   }
@@ -3565,6 +3591,20 @@ export function drawScene(scene: GolfScene) {
     wantPos.copy(CAM_POS);
     wantLook.copy(CAM_TARGET);
   }
+  if (cut) resetLook();
+  if (!lookIsDefault()) {
+    // swing the mode's camera around its own look target
+    const off = _v3.subVectors(wantPos, wantLook);
+    const az = Math.atan2(off.z, off.x) + look.yaw;
+    const elev = THREE.MathUtils.clamp(Math.atan2(off.y, Math.hypot(off.x, off.z)) + look.pitch, 0.06, 1.5);
+    const dist = off.length() * look.zoom;
+    wantPos.set(
+      wantLook.x + Math.cos(az) * Math.cos(elev) * dist,
+      wantLook.y + Math.sin(elev) * dist,
+      wantLook.z + Math.sin(az) * Math.cos(elev) * dist
+    );
+    if (now - lookMovedAt < 250) rate = Math.max(rate, 14); // no lag under the hand
+  }
   // never below the felt, never outside the bowl
   wantPos.y = Math.max(wantPos.y, FLOOR_Y + 2.5);
   wantPos.x = THREE.MathUtils.clamp(wantPos.x, -GROUND_X + 6, GROUND_X - 6);
@@ -3591,6 +3631,7 @@ export function resetScene() {
   for (const [, prop] of ballByPlayer) { prop.mesh.visible = false; prop.blob.visible = false; }
   ballByPlayer.clear();
   camMode = '';
+  resetLook();
 }
 
 // The crowd lives on a slow two-frame flip: each stand swaps between the A/B
