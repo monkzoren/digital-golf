@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
+import { CopyShader } from 'three/addons/shaders/CopyShader.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
@@ -1940,22 +1941,58 @@ function buildScene() {
 }
 
 // ---------------------------------------------------------------------------
-// Post-processing. The scene renders into a half-float (HDR) target —
-// multisampled when anti-aliasing is on — then: ground-truth ambient
-// occlusion (contact shade under balls, along wall feet, between limbs),
-// bloom (only what is brighter than white glows: lasers, portals, the
-// aim arrow, floodlights), the tone-mapped output, and SMAA to catch the
-// shading aliasing MSAA cannot. Passes toggle with the graphics options.
+// Post-processing. The scene renders into a half-float (HDR) target, then:
+// ground-truth ambient occlusion (contact shade under balls, along wall
+// feet, between limbs), bloom (only what is brighter than white glows:
+// lasers, portals, the aim arrow, floodlights), the tone-mapped output, and
+// SMAA to catch the shading aliasing MSAA cannot. Passes toggle with the
+// graphics options.
+//
+// MSAA lives in the scene pass alone. The composer's own buffers must NOT
+// be multisampled: the bloom pass blends its glow additively back into the
+// buffer it just read, and three.js invalidates a multisampled buffer's
+// contents after every resolve, so on GPUs that honour the invalidate
+// (Apple, mobile) the blend lands on garbage and the frame flickers.
 // ---------------------------------------------------------------------------
+
+/** Renders the scene through a multisampled HDR target and hands the
+ *  resolved image to the composer as an ordinary single-sample buffer. */
+class ScenePass extends Pass {
+  private msaa: THREE.WebGLRenderTarget | null;
+  private quad: FullScreenQuad;
+  private copy: THREE.ShaderMaterial;
+  constructor(w: number, h: number, samples: number) {
+    super();
+    this.needsSwap = true;
+    this.msaa = samples > 0 ? new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, samples }) : null;
+    this.copy = new THREE.ShaderMaterial({ ...CopyShader, uniforms: THREE.UniformsUtils.clone(CopyShader.uniforms), depthTest: false, depthWrite: false });
+    this.quad = new FullScreenQuad(this.copy);
+  }
+  override setSize(w: number, h: number) { this.msaa?.setSize(w, h); }
+  override dispose() { this.msaa?.dispose(); this.copy.dispose(); this.quad.dispose(); }
+  override render(r: THREE.WebGLRenderer, writeBuffer: THREE.WebGLRenderTarget) {
+    if (!this.msaa) {
+      r.setRenderTarget(this.renderToScreen ? null : writeBuffer);
+      r.render(scene3, camera);
+      return;
+    }
+    r.setRenderTarget(this.msaa);
+    r.render(scene3, camera); // resolved into msaa.texture when this returns
+    this.copy.uniforms.tDiffuse.value = this.msaa.texture;
+    r.setRenderTarget(this.renderToScreen ? null : writeBuffer);
+    this.quad.render(r);
+  }
+}
+
 function buildComposer() {
-  composer?.dispose();
+  if (composer) {
+    for (const p of composer.passes) p.dispose(); // the composer only frees its own buffers
+    composer.dispose();
+  }
   const w = Math.max(2, hostCanvas.width), h = Math.max(2, hostCanvas.height);
-  const target = new THREE.WebGLRenderTarget(w, h, {
-    type: THREE.HalfFloatType,
-    samples: gfx.antialias ? 4 : 0,
-  });
+  const target = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType });
   composer = new EffectComposer(renderer, target);
-  composer.addPass(new RenderPass(scene3, camera));
+  composer.addPass(new ScenePass(w, h, gfx.antialias ? 4 : 0));
   aoPass = new GTAOPass(scene3, camera, w, h);
   aoPass.output = GTAOPass.OUTPUT.Default;
   // world-space radius: about two ball widths, so the occlusion hugs the
@@ -2029,7 +2066,8 @@ function fitShadowFrustum(b: ReturnType<typeof holeBounds> | null) {
 function applyShadows() {
   const on = gfx.shadows > 0;
   renderer.shadowMap.enabled = on;
-  renderer.shadowMap.type = gfx.shadows >= 2 ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
+  renderer.shadowMap.type = THREE.PCFShadowMap; // (PCFSoft is deprecated in this three.js)
+  sun.shadow.radius = gfx.shadows >= 2 ? 2.5 : 1; // blur the filtered edge on HIGH
   sun.castShadow = on;
   const size = gfx.shadows >= 2 ? 2048 : 1024;
   if (!on || sun.shadow.mapSize.x !== size) {
@@ -2053,7 +2091,7 @@ function applyGrade() {
 
 function applyGraphics(next: GraphicsSettings, prev: GraphicsSettings) {
   gfx = next;
-  if (next.antialias !== prev.antialias) buildComposer(); // MSAA is baked into the render target
+  if (next.antialias !== prev.antialias) buildComposer(); // MSAA is baked into the scene pass's target
   else if (next.ao !== prev.ao || next.bloom !== prev.bloom) applyPost();
   if (next.resolution !== prev.resolution) applyResolution();
   if (next.shadows !== prev.shadows) applyShadows();
