@@ -2415,7 +2415,8 @@ let builtGeom: ReturnType<typeof geomOf> | null = null;
 interface MoverProp { block: Block; group: THREE.Group; pivotX: number; pivotY: number; mesh?: THREE.Mesh }
 let movers: MoverProp[] = [];
 let waterMats: THREE.MeshLambertMaterial[] = [];
-let boostMats: THREE.MeshLambertMaterial[] = [];
+// scrolling surfaces: the texture slides along the zone's own direction
+let boostMats: { mat: THREE.MeshLambertMaterial; dx: number; dy: number; rate: number }[] = [];
 let teleMats: THREE.MeshBasicMaterial[] = [];
 // the toy box: things that spin, whirr and pulse every frame
 let spinners: { group: THREE.Group; speed: number }[] = [];
@@ -2808,7 +2809,13 @@ function setHole(hole: Hole) {
     m.receiveShadow = true;
     holeGroup.add(m);
     if (z.kind === 'water') waterMats.push(mat as THREE.MeshLambertMaterial);
-    if (z.kind === 'boost' || z.kind === 'conveyor' || z.kind === 'fan') boostMats.push(mat as THREE.MeshLambertMaterial);
+    if (z.kind === 'boost' || z.kind === 'conveyor' || z.kind === 'fan') {
+      // texture u runs along golf +x, v along golf −y (the plane is laid flat
+      // by rotating −90° about x), so scroll u with cos and v against sin
+      const a = ((z.angle ?? 0) * Math.PI) / 180;
+      const rate = z.kind === 'conveyor' ? Math.max(1, zonePower(z)) * 0.06 : z.kind === 'fan' ? 0.9 : 0.6;
+      boostMats.push({ mat: mat as THREE.MeshLambertMaterial, dx: Math.cos(a) * z.w, dy: Math.sin(a) * z.h, rate });
+    }
     if (z.kind === 'magnet') magnetMats.push(mat as THREE.MeshBasicMaterial);
     if (z.kind === 'fan') {
       // a propeller whirring in a hub at the centre
@@ -2946,7 +2953,12 @@ export function drawScene(scene: GolfScene) {
   for (const f of fanBlades) f.rotation.y = -(now / 45) % (Math.PI * 2);
   for (const mm of magnetMats) mm.opacity = 0.65 + 0.3 * Math.sin(now / 180);
   for (const w of waterMats) if (w.map) { w.map.offset.x = (now / 9000) % 1; w.map.offset.y = Math.sin(now / 1400) * 0.02; }
-  for (const bm of boostMats) if (bm.map) bm.map.offset.x = -((now / 600) % 1) * 0.15;
+  for (const bm of boostMats) if (bm.mat.map) {
+    // image moves toward −u as offset.x grows, so subtract along the belt
+    const k = (now / 1000) * bm.rate;
+    bm.mat.map.offset.x = -((k * bm.dx) / Math.max(1, Math.abs(bm.dx) || 1)) % 1;
+    bm.mat.map.offset.y = ((k * bm.dy) / Math.max(1, Math.abs(bm.dy) || 1)) % 1;
+  }
   for (const tm of teleMats) tm.opacity = 0.7 + 0.25 * Math.sin(now / 250);
   if (flagMesh) flagMesh.rotation.y = Math.sin(now / 350) * 0.25;
 

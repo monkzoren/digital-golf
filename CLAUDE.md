@@ -28,7 +28,13 @@ README.md for architecture and run instructions. Key facts:
   wipe), room, game loop, HUD. `aim.ts` is the drag-to-putt reading (screen-space
   pull through a camera basis frozen at pointer-down) shared with the
   editor's test mode, which hides `#editor` and plays on the game stage via
-  `render3d.drawScene`. There is deliberately no shot-path preview. `render3d.ts` is the three.js renderer
+  `render3d.drawScene`. There is deliberately no shot-path preview. Shots are
+  predicted client-side (`predicted` in main.ts steps the shared physics from
+  release until the server row with that `shotSeq` arrives) so the swing and
+  launch are instant on timing holes. The course picker is a keyed list
+  (rows updated in place, thumbnails subscribed as they scroll into view via
+  IntersectionObserver) beside a detail pane; it must never rebuild on a
+  hole-row insert. `render3d.ts` is the three.js renderer
   copied from Digital Tennis and adapted: stadium/crowd/lighting/rigs/body
   builder/previews are the tennis code verbatim; `setHole` builds a hole
   as meshes, `drawScene` takes a `GolfScene`. Golf world (x, y-down, z-up)

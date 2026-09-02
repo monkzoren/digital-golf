@@ -250,12 +250,14 @@ export const RIDGE: Course = {
     {
       name: 'Tilted Green',
       par: 2,
-      tip: 'The whole green leans downhill. Aim up the slope and let it drift.',
-      tee: { x: 4, y: 6 },
+      tip: 'The whole green leans toward the water. Aim up the slope and let it drift — not too far.',
+      tee: { x: 4, y: 4 },
       cup: { x: 32, y: 3 },
       floor: [R(0, 0, 36, 12)],
-      zones: [slope(0, 0, 36, 12, 90, 3), sand(18, 0, 3, 12)],
-      bumpers: [post(24, 4, 0.6), post(28, 2.5, 0.6), post(30, 5.5, 0.6), post(33, 7, 0.5)],
+      // the cup sits in a post alcove that only opens uphill: bank off the
+      // far wall and let the lean carry the ball in — the low edge is water
+      zones: [slope(0, 0, 36, 12, 90, 2), sand(18, 0, 3, 10), water(0, 10, 36, 2)],
+      bumpers: [post(30, 1.5, 0.6), post(30, 4.5, 0.6), post(33, 5.7, 0.6), post(24, 8, 0.6), post(14, 3, 0.6)],
     },
     {
       name: 'Staircase',
@@ -285,7 +287,7 @@ export const RIDGE: Course = {
       tee: { x: 8, y: 6 },
       cup: { x: 37, y: 6 },
       floor: [R(0, 0, 40, 12)],
-      zones: [slope(6, 0, 8, 12, 0, 7), slope(26, 0, 8, 12, 180, 7), sand(34, 0, 6, 3), sand(34, 9, 6, 3)],
+      zones: [slope(6, 0, 8, 12, 0, 7), slope(26, 0, 8, 12, 180, 7), sand(34, 0, 6, 3), sand(34, 9, 6, 3), sand(34, 3, 1.5, 6)],
       bumpers: [post(35, 6, 0.6), post(36, 2, 0.5), post(36, 10, 0.5)],
     },
     {
@@ -473,12 +475,12 @@ export const FROST: Course = {
     {
       name: 'Glacier',
       par: 3,
-      tip: 'An ice sheet that leans. Everything slides downhill, slowly.',
-      tee: { x: 4, y: 4 },
-      cup: { x: 34, y: 14 },
+      tip: 'An ice sheet that leans toward the lava. Everything slides downhill, slowly.',
+      tee: { x: 4, y: 3 },
+      cup: { x: 34, y: 13 },
       floor: [R(0, 0, 40, 18)],
-      zones: [slope(0, 0, 40, 18, 90, 2), ice(0, 0, 40, 18)],
-      bumpers: [post(24, 10, 0.7), post(30, 16, 0.6), post(18, 7, 0.6), post(32, 11, 0.6)],
+      zones: [slope(0, 0, 40, 18, 90, 1.5), ice(0, 0, 40, 18), sand(26, 11, 6, 5), water(0, 16, 40, 2)],
+      bumpers: [post(32, 11.5, 0.6), post(32, 14.5, 0.6), post(35, 15.4, 0.5), post(24, 10, 0.7), post(18, 7, 0.6), post(36, 9, 0.6), post(12, 12, 0.6)],
     },
     {
       name: 'Firewalk',

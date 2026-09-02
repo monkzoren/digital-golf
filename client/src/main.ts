@@ -7,7 +7,7 @@ import type { Player, Lobby, Course, Hole as HoleRow, Chat } from './module_bind
 import type { Identity } from 'spacetimedb';
 import type { Hole } from '@shared/courses';
 import { parseHole } from '@shared/mapformat';
-import { TICK_HZ } from '@shared/physics';
+import { type BallState, DT, TICK_HZ, geomOf, newEvents, shotVelocity, stepBall } from '@shared/physics';
 import {
   COLORS, DATABASE_NAME, EMOTES, EV, L_FINISHED, L_OPEN, L_RUNNING, MAX_PLAYERS, POWER_MULS,
   PH_FINAL, PH_INTRO, PH_PLAY, PH_RESULTS, SPACETIMEDB_URI,
@@ -181,7 +181,7 @@ function subscribeCourse(courseId: bigint) {
     .onError(e => console.error('[dg] hole sub error', e))
     .subscribe([`SELECT * FROM hole WHERE course_id = ${key}`]);
   holeSubs.set(key, h);
-  if (holeSubs.size > 6) {
+  if (holeSubs.size > 40) {
     const oldest = holeSubs.keys().next().value!;
     if (oldest !== key) { try { holeSubs.get(oldest)!.unsubscribe(); } catch { /* */ } holeSubs.delete(oldest); }
   }
@@ -421,46 +421,123 @@ function coursesFor(tab: typeof courseTab): Course[] {
   for (const c of conn.db.myCourses.iter()) mine.push(c as unknown as Course);
   return mine.sort((a, b) => (a.id < b.id ? 1 : -1));
 }
-let courseGridSig = '';
+// The picker: a scrolling list of courses (any number — rows are cheap and
+// their thumbnails load only as they scroll into view) beside a detail pane
+// for the chosen course: hole 1 large, every hole small, the round options.
+let courseSearch = '';
+const courseRows = new Map<string, HTMLButtonElement>(); // course id → row element
+let courseListOrder = '';
+let courseDetailSig = '';
+const thumbWatcher = typeof IntersectionObserver !== 'undefined'
+  ? new IntersectionObserver(entries => {
+    for (const e of entries) if (e.isIntersecting) { const id = (e.target as HTMLElement).dataset.id; if (id) subscribeCourse(BigInt(id)); }
+  }, { root: null, rootMargin: '120px' })
+  : null;
+
+function drawThumb(cv: HTMLCanvasElement, h: Hole, w: number, hgt: number, margin = 2) {
+  cv.width = w; cv.height = hgt;
+  const g = cv.getContext('2d')!;
+  drawHole(g, h, fitCamera(h, w, hgt, margin), w, hgt, { t: 0, theme: themeFor(h, h.theme) });
+}
+
+function matchesSearch(c: Course): boolean {
+  if (!courseSearch) return true;
+  const q = courseSearch.toLowerCase();
+  return c.name.toLowerCase().includes(q) || c.authorName.toLowerCase().includes(q);
+}
+
 function renderCourseGrid(force = false) {
   document.querySelectorAll('#course-tabs .sel-card').forEach(b => b.classList.toggle('selected', (b as HTMLElement).dataset.tab === courseTab));
-  const grid = $('course-grid');
-  const rows = coursesFor(courseTab);
-  // rebuild only when something visible changed — a rebuild restarts the
-  // cards' entrance animation, and hole rows trickle in one by one
-  const sig = [courseTab, String(selectedCourse), intent, JSON.stringify(rules),
-    ...rows.map(c => `${c.id}:${c.rev}:${c.plays}:${holeRows(c.id).length > 0 ? 1 : 0}`)].join('|');
-  if (!force && sig === courseGridSig) return;
-  courseGridSig = sig;
-  grid.innerHTML = '';
-  if (!rows.length) grid.innerHTML = `<div class="course-empty">${courseTab === 'mine' ? 'YOU HAVE NO COURSES YET — OPEN THE COURSE EDITOR' : 'NOTHING HERE YET — BE THE FIRST TO PUBLISH ONE'}</div>`;
+  const list = $('course-list');
+  const all = coursesFor(courseTab);
+  const rows = all.filter(matchesSearch);
   if (selectedCourse === null || !rows.some(c => c.id === selectedCourse)) selectedCourse = rows[0]?.id ?? null;
-  for (const c of rows) {
-    const card = document.createElement('button');
-    card.className = 'sel-card' + (c.id === selectedCourse ? ' selected' : '');
-    card.innerHTML = `<span class="course-art${c.name.toLowerCase().includes('neon') ? ' neon' : ''}"></span><div class="cname">${esc(c.name)}</div><div class="cmeta">${c.holeCount} HOLES · PAR ${c.totalPar}</div><div class="cmeta">${c.builtin ? '★ FEATURED' : `BY ${esc(c.authorName)} · ${c.plays} PLAYS`}${c.published ? '' : ' · DRAFT'}</div>`;
-    card.onclick = () => { selectedCourse = c.id; sfx.ui(); renderCourseGrid(); };
-    grid.appendChild(card);
-    // live top-down thumbnail of hole 1 (drawn with the editor's renderer)
-    const first = holeRows(c.id)[0];
-    const h0 = first ? parsedHole(first) : null;
-    if (h0) {
-      const art = card.querySelector('.course-art') as HTMLElement;
-      const cv = document.createElement('canvas');
-      cv.width = 380; cv.height = 172;
-      const g = cv.getContext('2d')!;
-      drawHole(g, h0, fitCamera(h0, cv.width, cv.height, 2), cv.width, cv.height, { t: 0, theme: themeFor(h0, h0.theme) });
-      art.classList.add('has-art');
-      art.appendChild(cv);
-    } else if (rows.indexOf(c) < 6) subscribeCourse(c.id);
+  // rows are keyed by course id and updated in place, so a hole row arriving
+  // (thumbnail) or a selection change never rebuilds the list or loses scroll
+  const order = rows.map(c => c.id.toString()).join(',');
+  if (force || order !== courseListOrder) {
+    courseListOrder = order;
+    for (const [id, el] of courseRows) if (!rows.some(c => c.id.toString() === id)) { thumbWatcher?.unobserve(el); el.remove(); courseRows.delete(id); }
+    list.querySelector('.course-empty')?.remove();
+    if (!rows.length) {
+      const empty = document.createElement('div');
+      empty.className = 'course-empty';
+      empty.textContent = courseSearch ? 'NO COURSE MATCHES THAT' : courseTab === 'mine' ? 'YOU HAVE NO COURSES YET — OPEN THE COURSE EDITOR' : 'NOTHING HERE YET — BE THE FIRST TO PUBLISH ONE';
+      list.appendChild(empty);
+    }
+    for (const c of rows) {
+      const key = c.id.toString();
+      let row = courseRows.get(key);
+      if (!row) {
+        row = document.createElement('button');
+        row.className = 'sel-card course-row';
+        row.dataset.id = key;
+        row.innerHTML = `<span class="course-art"></span><span class="course-text"><div class="cname"></div><div class="cmeta"></div></span>`;
+        row.onclick = () => { selectedCourse = c.id; sfx.ui(); renderCourseGrid(); };
+        courseRows.set(key, row);
+        thumbWatcher?.observe(row);
+      }
+      list.appendChild(row); // (re)append in order
+    }
+    if (!thumbWatcher) for (const c of rows.slice(0, 12)) subscribeCourse(c.id);
   }
-  staggerChildren(grid);
+  for (const c of rows) {
+    const row = courseRows.get(c.id.toString())!;
+    row.classList.toggle('selected', c.id === selectedCourse);
+    (row.querySelector('.cname') as HTMLElement).textContent = c.name;
+    (row.querySelector('.cmeta') as HTMLElement).textContent = `${c.holeCount} HOLES · PAR ${c.totalPar}${c.builtin ? ' · ★' : ` · ${c.authorName}`}${c.published ? '' : ' · DRAFT'}`;
+    const art = row.querySelector('.course-art') as HTMLElement;
+    art.classList.toggle('neon', c.name.toLowerCase().includes('neon'));
+    if (!art.classList.contains('has-art')) {
+      const first = holeRows(c.id)[0];
+      const h0 = first ? parsedHole(first) : null;
+      if (h0) { const cv = document.createElement('canvas'); drawThumb(cv, h0, 168, 84); art.appendChild(cv); art.classList.add('has-art'); }
+    }
+  }
+  $('course-count').textContent = rows.length === all.length ? `${all.length} COURSE${all.length === 1 ? '' : 'S'}` : `${rows.length} OF ${all.length} COURSES`;
+  renderCourseDetail();
   $('mode-options').classList.toggle('hidden', intent === 'change');
   document.querySelectorAll('#visibility-grid .sel-card').forEach(b => b.classList.toggle('selected', ((b as HTMLElement).dataset.vis === '1') === rules.isPublic));
   renderRuleSegs();
   ($('course-confirm') as HTMLButtonElement).disabled = selectedCourse === null;
 }
-document.querySelectorAll('#course-tabs .sel-card').forEach(b => { (b as HTMLButtonElement).onclick = () => { courseTab = (b as HTMLElement).dataset.tab as any; selectedCourse = null; renderCourseGrid(true); }; });
+
+function renderCourseDetail() {
+  const c = selectedCourse !== null ? courseById(selectedCourse) : undefined;
+  const hero = $('course-hero');
+  if (!c) {
+    if (courseDetailSig !== '') { courseDetailSig = ''; hero.classList.remove('has-art'); $('course-detail-name').textContent = '—'; $('course-detail-meta').textContent = ''; $('course-holes').innerHTML = ''; }
+    return;
+  }
+  subscribeCourse(c.id);
+  const rows = holeRows(c.id);
+  const sig = `${c.id}:${c.rev}:${c.plays}:${rows.length}`;
+  if (sig === courseDetailSig) return;
+  courseDetailSig = sig;
+  $('course-detail-name').textContent = c.name.toUpperCase();
+  $('course-detail-meta').textContent = `${c.holeCount} HOLES · PAR ${c.totalPar} · ${c.builtin ? '★ FEATURED' : `BY ${c.authorName.toUpperCase()} · ${c.plays} PLAYS`}${c.published ? '' : ' · DRAFT'}`;
+  const first = rows[0] ? parsedHole(rows[0]) : null;
+  if (first) { drawThumb($('course-hero-canvas') as HTMLCanvasElement, first, 960, 360, 2.5); hero.classList.add('has-art'); }
+  else hero.classList.remove('has-art');
+  const strip = $('course-holes');
+  strip.innerHTML = '';
+  if (!rows.length) { strip.innerHTML = `<div class="course-empty">${c.holeCount ? 'LOADING HOLES…' : 'NO HOLES YET'}</div>`; return; }
+  rows.forEach((r, i) => {
+    const h = parsedHole(r);
+    if (!h) return;
+    const chip = document.createElement('div');
+    chip.className = 'hole-chip';
+    const cv = document.createElement('canvas');
+    drawThumb(cv, h, 236, 124, 2);
+    chip.appendChild(cv);
+    // (not innerHTML += — that would rebuild the canvas and lose the drawing)
+    chip.insertAdjacentHTML('beforeend', `<div class="hname">${i + 1} · ${esc(h.name.toUpperCase())}</div><div class="hpar">PAR ${h.par}</div>`);
+    strip.appendChild(chip);
+  });
+}
+document.querySelectorAll('#course-tabs .sel-card').forEach(b => { (b as HTMLButtonElement).onclick = () => { courseTab = (b as HTMLElement).dataset.tab as any; selectedCourse = null; sfx.ui(); renderCourseGrid(true); }; });
+$('course-search').addEventListener('input', () => { courseSearch = ($('course-search') as HTMLInputElement).value.trim(); renderCourseGrid(); });
+$('course-search').addEventListener('keydown', e => { if (e.key === 'Escape') { ($('course-search') as HTMLInputElement).value = ''; courseSearch = ''; renderCourseGrid(); } e.stopPropagation(); });
 document.querySelectorAll('#visibility-grid .sel-card').forEach(b => { (b as HTMLButtonElement).onclick = () => { rules.isPublic = (b as HTMLElement).dataset.vis === '1'; renderCourseGrid(); }; });
 $('course-back').onclick = () => { if (intent === 'change') { intent = null; showOverlay('waiting'); } else showOverlay('select-player'); };
 $('course-confirm').onclick = () => {
@@ -690,6 +767,11 @@ function wireRowEvents() {
     clearTimeout(holeRefresh);
     holeRefresh = window.setTimeout(() => renderCourseGrid(), 80);
   });
+  conn.db.hole.onDelete(() => {
+    if (overlayTarget !== 'select-course') return;
+    clearTimeout(holeRefresh);
+    holeRefresh = window.setTimeout(() => { courseDetailSig = ''; renderCourseGrid(); }, 80);
+  });
   conn.db.myCourses.onInsert(refresh); conn.db.myCourses.onUpdate(refresh); conn.db.myCourses.onDelete(refresh);
 }
 
@@ -716,8 +798,9 @@ function notePlayer(row: Player, old: Player) {
     d.emoteUntil = performance.now() + 2500;
   }
   if (row.shotSeq !== d.lastShotSeq) {
+    const already = isMe(row.identity) && d.lastShotSeq === row.shotSeq; // predicted locally
     d.lastShotSeq = row.shotSeq;
-    if (inMyRoom) { sfx.putt(row.eventPower); burstAt(row.x, row.y, 0, 0xffffff, 6, 6); }
+    if (inMyRoom && !already) { sfx.putt(row.eventPower); burstAt(row.x, row.y, 0, 0xffffff, 6, 6); }
   }
   if (row.eventSeq !== d.lastEventSeq) {
     d.lastEventSeq = row.eventSeq;
@@ -788,6 +871,11 @@ interface DragAim { active: boolean; angle: number; shown: number; power: number
 let drag: DragAim = { active: false, angle: 0, shown: 0, power: 0, x0: 0, y0: 0, basis: { rx: 1, ry: 0, fx: 0, fy: -1 } };
 const kbAim = { active: false, angle: 0, charging: false, chargeStart: 0 };
 const held = { left: false, right: false, fine: false };
+// Client-side prediction: the ball (and the swing) go the instant you
+// release — the server's copy takes over when it arrives a round trip
+// later, so timing a windmill never depends on latency you can't see.
+interface Predicted { ball: BallState; shotSeq: number; power: number; startedAt: number; t: number; acc: number }
+let predicted: Predicted | null = null;
 let gameHoleObj: Hole | null = null;
 let gameHoleKey = '';
 let tLocal = 0;
@@ -802,7 +890,7 @@ function enterGame() {
 }
 function canShoot(): boolean {
   const lobby = myLobby(); const p = me();
-  return !!lobby && !!p && lobby.phase === PH_PLAY && p.resting && !p.holed && p.strokes < lobby.maxStrokes && overlayTarget === null && $('match-menu').classList.contains('hidden');
+  return !!lobby && !!p && lobby.phase === PH_PLAY && p.resting && !p.holed && !predicted && p.strokes < lobby.maxStrokes && overlayTarget === null && $('match-menu').classList.contains('hidden');
 }
 canvas.addEventListener('pointerdown', e => {
   unlockAudio();
@@ -819,8 +907,23 @@ canvas.addEventListener('pointerup', e => {
   updateDrag(e);
   drag.active = false;
   // what you saw is what you get: the eased angle is the one that flies
-  if (drag.power > 0.04 && canShoot()) { kbAim.angle = drag.shown; rd().shoot({ angle: drag.shown, power: drag.power }); }
+  if (drag.power > 0.04 && canShoot()) { kbAim.angle = drag.shown; fire(drag.shown, drag.power); }
 });
+/** Send the shot and start living it locally right now. */
+function fire(angle: number, power: number) {
+  const p = me(); const lobby = myLobby();
+  if (!p || !lobby) return;
+  rd().shoot({ angle, power });
+  const d = dispOf(p);
+  const v = shotVelocity(angle, power, lobby.powerMul / 100);
+  predicted = {
+    ball: { x: d.x, y: d.y, z: d.z, vx: v.vx, vy: v.vy, vz: 0, teleTicks: 0 },
+    shotSeq: p.shotSeq + 1, power, startedAt: performance.now(), t: tLocal, acc: 0,
+  };
+  d.lastShotSeq = predicted.shotSeq; // the server's echo of this shot is not a second putt
+  sfx.putt(power);
+  burstAt(d.x, d.y, d.z, 0xffffff, 6, 6);
+}
 canvas.addEventListener('pointercancel', () => { drag.active = false; });
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 function updateDrag(e: PointerEvent) {
@@ -863,7 +966,7 @@ window.addEventListener('keyup', e => {
   if (e.key === ' ' && kbAim.charging) {
     kbAim.charging = false;
     const power = kbPower();
-    if (canShoot() && power > 0.03) rd().shoot({ angle: kbAim.angle, power });
+    if (canShoot() && power > 0.03) fire(kbAim.angle, power);
   }
 });
 window.addEventListener('blur', () => { held.left = held.right = held.fine = false; });
@@ -923,16 +1026,35 @@ function frame(now: number) {
   const aimAngle = drag.active ? drag.shown : kbAim.angle;
   const aimPower = drag.active ? drag.power : kbAim.charging ? kbPower() : 0.35;
 
+  // prediction: step my ball locally with the shared physics until the
+  // server row carrying this shot arrives (or it has clearly been lost)
+  if (predicted && hole) {
+    if (p.shotSeq >= predicted.shotSeq || now - predicted.startedAt > 2000 || lobby.phase !== PH_PLAY) predicted = null;
+    else {
+      const geom = geomOf(hole);
+      predicted.acc += dt;
+      let guard = 0;
+      while (predicted.acc >= DT && guard++ < 6) {
+        predicted.acc -= DT; predicted.t += DT;
+        const ev = newEvents();
+        stepBall(predicted.ball, geom, predicted.t, ev);
+        if (ev.holed || ev.water || ev.oob || ev.tele) { predicted.startedAt = -1e9; break; } // let the server tell it
+      }
+    }
+  }
   const scenePlayers: GolfPlayer[] = [];
   for (const q of players) {
     const d = dispOf(q);
-    const age = Math.min(0.15, (now - d.at) / 1000);
-    const tx = d.sx + d.svx * age, ty = d.sy + d.svy * age, tz = Math.max(0, d.sz + d.svz * age);
-    const k = 1 - Math.exp(-dt * 22);
-    d.x += (tx - d.x) * k; d.y += (ty - d.y) * k; d.z += (tz - d.z) * k;
     const mine = isMe(q.identity);
-    const speed = Math.hypot(q.vx, q.vy);
+    const age = Math.min(0.15, (now - d.at) / 1000);
+    let tx = d.sx + d.svx * age, ty = d.sy + d.svy * age, tz = Math.max(0, d.sz + d.svz * age);
+    if (mine && predicted && predicted.startedAt > 0) { const b = predicted.ball; tx = b.x + b.vx * predicted.acc; ty = b.y + b.vy * predicted.acc; tz = Math.max(0, b.z + b.vz * predicted.acc); }
+    const k = 1 - Math.exp(-dt * (mine && predicted ? 40 : 22));
+    d.x += (tx - d.x) * k; d.y += (ty - d.y) * k; d.z += (tz - d.z) * k;
+    const pv = mine && predicted && predicted.startedAt > 0 ? predicted.ball : null;
+    const speed = pv ? Math.hypot(pv.vx, pv.vy) : Math.hypot(q.vx, q.vy);
     if (mine && aiming) d.facing = aimAngle;
+    else if (pv && speed > 1.5) d.facing = Math.atan2(pv.vy, pv.vx);
     else if (speed > 1.5) d.facing = Math.atan2(q.vy, q.vx);
     else if (q.resting && hole && !q.holed) {
       // set up toward the cup once the ball has stopped (keep the shot facing briefly)
@@ -942,9 +1064,10 @@ function frame(now: number) {
     scenePlayers.push({
       id: q.identity.toHexString(), name: q.name, characterId: q.characterId,
       color: parseInt(COLORS[q.color].slice(1), 16),
-      x: d.x, y: d.y, z: d.z, vx: q.vx, vy: q.vy, resting: q.resting, holed: q.holed,
+      x: d.x, y: d.y, z: d.z, vx: pv ? pv.vx : q.vx, vy: pv ? pv.vy : q.vy, resting: pv ? false : q.resting, holed: q.holed,
       ghost: q.strokes === 0 && !mine && lobby.collisions, me: mine, facing: d.facing,
-      shotSeq: q.shotSeq, shotPower: q.eventPower, emote: d.emoteUntil > now ? d.emote : undefined,
+      shotSeq: mine && predicted ? Math.max(q.shotSeq, predicted.shotSeq) : q.shotSeq, shotPower: mine && predicted ? predicted.power : q.eventPower,
+      emote: d.emoteUntil > now ? d.emote : undefined,
       seat: q.seat,
     });
   }

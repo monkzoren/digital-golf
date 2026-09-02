@@ -3548,14 +3548,45 @@
     .mine-list .lobby-row { cursor: pointer; }
     .mine-list .lobby-row .lobby-join { margin-left: auto; }
     #course-grid .sel-card { min-width: 190px; max-width: 220px; }
-    #course-grid .course-art { display: block; width: 100%; height: 86px; border-radius: 8px; margin-bottom: 6px; background: linear-gradient(135deg, #2c8a3d, #1b5a2a); position: relative; overflow: hidden; }
-    #course-grid .course-art.neon { background: linear-gradient(135deg, #2b2b6e, #101040); }
-    #course-grid .course-art::after { content: '⛳'; position: absolute; right: 10px; bottom: 6px; font-size: 30px; filter: drop-shadow(0 3px 4px rgba(0,0,0,0.5)); }
-    #course-grid .course-art canvas { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 8px; }
-    #course-grid .course-art.has-art::after { display: none; }
-    .course-tabs { display: flex; gap: 8px; justify-content: center; }
-    .course-tabs .sel-card { padding: 8px 18px; min-width: 0; }
-    .course-empty { color: var(--dim-2); font-style: italic; letter-spacing: 1px; padding: 20px; }
+    /* ---- course picker: a scrolling list on the left, the chosen course on
+       the right (its holes + the round options). Nothing here grows with the
+       number of courses: both panes scroll inside the screen. ---- */
+    #select-course { justify-content: flex-start; gap: 12px; padding: 14px 0 12px; }
+    #select-course .screen-head { flex-shrink: 0; }
+    #course-picker { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 14px; width: 94%; flex: 1 1 auto; min-height: 0; }
+    #course-list-pane { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+    .course-tabs { display: flex; gap: 6px; justify-content: stretch; }
+    .course-tabs .sel-card { padding: 7px 6px; min-width: 0; flex: 1; font-size: 11px; letter-spacing: 1px; }
+    #course-search { width: 100%; padding: 8px 12px; font-family: var(--font); font-style: italic; font-size: 12px; letter-spacing: 1px; border-radius: 999px; border: 1px solid var(--line-2); background: rgba(4, 7, 28, 0.8); color: var(--ink); }
+    #course-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding: 4px 6px 4px 2px; }
+    #course-count { color: var(--dim-2); font-size: 10px; letter-spacing: 2px; text-align: left; padding-left: 4px; }
+    .course-row, .course-row:active { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 10px; align-items: center; min-width: 0; padding: 6px; text-align: left; border-radius: 10px; }
+    .course-row:hover { transform: none; }
+    .course-row .course-art { display: block; width: 84px; height: 42px; border-radius: 6px; background: linear-gradient(135deg, #2c8a3d, #1b5a2a); position: relative; overflow: hidden; }
+    .course-row .course-art.neon { background: linear-gradient(135deg, #2b2b6e, #101040); }
+    .course-row .course-art canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+    .course-row .cname { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .course-row .cmeta { font-size: 9px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .course-row.selected::after { top: 4px; right: 4px; }
+    .course-empty { color: var(--dim-2); font-style: italic; letter-spacing: 1px; padding: 20px; font-size: 12px; }
+    #course-detail { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 2px 8px 2px 2px; }
+    #course-hero { position: relative; flex-shrink: 0; width: 100%; aspect-ratio: 16 / 6; border-radius: var(--r-md); overflow: hidden; background: linear-gradient(135deg, #1e6a2f, #0e3a1a); border: 1px solid var(--line); }
+    #course-hero canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+    #course-hero-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--dim); letter-spacing: 3px; font-style: italic; font-size: 13px; }
+    #course-hero.has-art #course-hero-empty { display: none; }
+    #course-detail-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; text-align: left; }
+    #course-detail-name { font-size: 20px; font-weight: 700; font-style: italic; letter-spacing: 2px; color: var(--gold); }
+    #course-detail-meta { font-size: 11px; color: var(--dim); letter-spacing: 2px; }
+    #course-holes { display: flex; gap: 8px; overflow-x: auto; flex-shrink: 0; padding: 4px 2px 6px; }
+    .hole-chip { flex: 0 0 auto; width: 118px; text-align: left; }
+    .hole-chip canvas { display: block; width: 118px; height: 62px; border-radius: 6px; background: #1b5a2a; border: 1px solid var(--line); }
+    .hole-chip .hname { font-size: 10px; letter-spacing: 1px; color: var(--ink); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-style: italic; }
+    .hole-chip .hpar { font-size: 9px; color: var(--dim); letter-spacing: 2px; }
+    #course-detail #mode-options { width: 100%; flex-shrink: 0; }
+    @media (max-width: 760px) {
+      #course-picker { grid-template-columns: 1fr; grid-template-rows: minmax(0, 42%) minmax(0, 1fr); width: 100%; }
+      #course-hero { aspect-ratio: 16 / 5; }
+    }
     .rules-cta { display: flex; gap: 10px; align-items: center; }
     .rules-summary { color: var(--dim); font-size: 12px; font-style: italic; letter-spacing: 1px; }
     #host-settings .setting-row { flex-wrap: wrap; }
@@ -3753,12 +3784,24 @@
         </div>
         <div class="select-title">SELECT A COURSE</div>
       </header>
-      <div class="seg course-tabs" id="course-tabs">
-        <button class="sel-card selected" data-tab="featured">FEATURED</button>
-        <button class="sel-card" data-tab="community">COMMUNITY</button>
-        <button class="sel-card" data-tab="mine">MY COURSES</button>
-      </div>
-      <div class="card-grid" id="course-grid"></div>
+      <div id="course-picker">
+        <aside id="course-list-pane">
+          <div class="seg course-tabs" id="course-tabs">
+            <button class="sel-card selected" data-tab="featured">FEATURED</button>
+            <button class="sel-card" data-tab="community">COMMUNITY</button>
+            <button class="sel-card" data-tab="mine">MINE</button>
+          </div>
+          <input id="course-search" type="text" placeholder="SEARCH COURSES…" autocomplete="off" />
+          <div id="course-list"></div>
+          <div id="course-count" class="tiny"></div>
+        </aside>
+        <section id="course-detail">
+          <div id="course-hero"><canvas id="course-hero-canvas"></canvas><div id="course-hero-empty">PICK A COURSE</div></div>
+          <div id="course-detail-head">
+            <div id="course-detail-name">—</div>
+            <div id="course-detail-meta"></div>
+          </div>
+          <div id="course-holes"></div>
       <div id="mode-options">
         <div class="opt-row" id="visibility-section">
           <div class="field-label">VISIBILITY</div>
@@ -3772,6 +3815,8 @@
         <div class="opt-row"><div class="field-label">BALL COLLISIONS</div><div class="seg" id="collide-grid"></div></div>
         <div class="opt-row"><div class="field-label">WATER</div><div class="seg" id="water-grid"></div></div>
         <div class="opt-row"><div class="field-label">SHOT POWER</div><div class="seg" id="power-grid"></div></div>
+      </div>
+        </section>
       </div>
       <div class="action-bar">
         <button id="course-back" class="alt">◀ Back</button>

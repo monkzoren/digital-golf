@@ -110,6 +110,12 @@ export const Player = __t.object("Player", {
 });
 export type Player = __Infer<typeof Player>;
 
+export const RollClock = __t.object("RollClock", {
+  identity: __t.identity(),
+  ticks: __t.u32(),
+});
+export type RollClock = __Infer<typeof RollClock>;
+
 export const Session = __t.object("Session", {
   connectionId: __t.connectionId(),
   identity: __t.identity(),

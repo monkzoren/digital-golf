@@ -36,6 +36,9 @@ export const BUMPER_OUT_MAX = 14; // the fastest a bumper kick sends the ball ou
 export const FAN_HOVER_Z = 2.2; // a blower floats the ball about this high
 export const STEP_CLIMB = 0.25; // a rolling ball climbs a ramp side this much lower than its centre
 export const RAMP_STICK = 0.2; // a rolling ball follows a ramp down unless the drop is bigger than this
+export const RAMP_FRICTION_MUL = 0.4; // a wedge is smooth: less rolling friction than the flat felt
+/** a ramp steeper than this (its downhill acceleration beats the friction on it) never lets a ball rest */
+export const rampRolls = (z: Zone) => zonePower(z) > FRICTION * RAMP_FRICTION_MUL;
 
 // Defaults for the zone `power` field (and cannon `lift`), by kind.
 export const ZONE_DEFAULT_POWER: Record<Zone['kind'], number> = {
@@ -357,6 +360,7 @@ function surfacePush(zone: Zone | null, b: BallState): { x: number; y: number } 
   if (!zone) return null;
   switch (zone.kind) {
     case 'conveyor': case 'fan': case 'cannon': return dirOf(zone);
+    case 'slope': return rampRolls(zone) ? dirOf(zone) : null;
     case 'magnet': {
       const c = zoneCentre(zone);
       const dx = c.x - b.x, dy = c.y - b.y, d = Math.hypot(dx, dy);
@@ -530,6 +534,8 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
             const p = zonePower(zone);
             b.vx += d.x * p * h;
             b.vy += d.y * p * h;
+            fr = FRICTION * RAMP_FRICTION_MUL;
+            if (rampRolls(zone)) carried = zone; // it keeps rolling until something stops it
             break;
           }
           case 'sand': fr = FRICTION_SAND; break;
@@ -632,7 +638,8 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
   if (b.teleTicks > 0) b.teleTicks--;
   const gz = groundZ(g, b.x, b.y);
   const grounded = b.z <= gz + 0.001 && b.vz === 0;
-  if (grounded && speedOf(b) < REST_SPEED) {
+  const onRollingRamp = carried !== null && carried.kind === 'slope' && pointInRect(b.x, b.y, carried);
+  if (grounded && speedOf(b) < REST_SPEED && !onRollingRamp) {
     b.vx = 0; b.vy = 0; b.z = gz;
   }
   // pinned: a belt / fan / magnet driving the ball into a wall moves it
