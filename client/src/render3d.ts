@@ -117,7 +117,7 @@ let composer: EffectComposer | null = null;
 let aoPass: GTAOPass | null = null;
 let bloomPass: UnrealBloomPass | null = null;
 let smaaPass: SMAAPass | null = null;
-let detailGroup: THREE.Group; // crowd stands + umpire chair — droppable scenery
+let detailGroup: THREE.Group; // crowd stands, jumbotron, floodlights — droppable scenery
 // two-frame crowd animation: stands alternate between the A/B textures on a
 // slow clock (offset by parity so the bowl never moves in lockstep)
 let crowdMatA: THREE.MeshStandardMaterial | null = null;
@@ -2142,102 +2142,6 @@ function buildEnvironment() {
       detailGroup.add(head);
     }
   }
-
-  // --- player benches flanking the umpire chair ---------------------------
-  const benchSeatMat = gloss({ color: 0x2e6cb0, roughness: 0.4 });
-  const benchLegMat = metal({ color: 0x9aa4b0, roughness: 0.5 });
-  const towelMat = std({ color: 0xf6f6f2 });
-  for (const bz of [-13, 13]) {
-    const bench = new THREE.Group();
-    const seatB = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.3, 6), benchSeatMat);
-    seatB.position.y = 1.5;
-    seatB.castShadow = true;
-    bench.add(seatB);
-    const backB = new THREE.Mesh(new THREE.BoxGeometry(0.25, 1.2, 6), benchSeatMat);
-    backB.position.set(0.85, 2.2, 0);
-    backB.castShadow = true;
-    bench.add(backB);
-    for (const lz of [-2.4, 2.4]) {
-      const leg = new THREE.Mesh(new THREE.BoxGeometry(1.3, 1.35, 0.3), benchLegMat);
-      leg.position.set(0, 0.68, lz);
-      bench.add(leg);
-    }
-    const towel = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.1, 1.5), towelMat);
-    towel.position.set(0, 1.7, bz > 0 ? -1.6 : 1.6);
-    bench.add(towel);
-    bench.position.set(GROUND_X - 25, 0, bz);
-    detailGroup.add(bench);
-  }
-
-  // umpire chair: white frame, green seat, ladder rungs, and a parasol
-  const chairMat = std({ color: 0xeef0ee });
-  const chairGreen = std({ color: 0x1d6a38 });
-  const chair = new THREE.Group();
-  const seat = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.4, 1.4), chairGreen);
-  seat.position.y = 5.2;
-  seat.castShadow = true;
-  chair.add(seat);
-  const pole = new THREE.Mesh(new THREE.BoxGeometry(1.1, 4.6, 1.1), chairMat);
-  pole.position.y = 2.3;
-  pole.castShadow = true;
-  chair.add(pole);
-  for (let s = 0; s < 4; s++) {
-    const rung = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.14, 1.1), chairMat);
-    rung.position.set(-0.85, 1.0 + s * 1.1, 0);
-    chair.add(rung);
-  }
-  const brollyPole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 3.4, 8), chairMat);
-  brollyPole.position.set(0.8, 8.3, 0);
-  chair.add(brollyPole);
-  const canopy = new THREE.Mesh(new THREE.ConeGeometry(2.7, 1.2, 8), chairGreen);
-  canopy.position.set(0.4, 9.9, 0);
-  canopy.castShadow = true;
-  chair.add(canopy);
-
-  // the REF: seated on the chair, navy blazer + cap, facing the court (-x).
-  // Same stylized proportions as the players, built from primitives.
-  const refSkin = std({ color: COLORS.skin });
-  const refBlazer = std({ color: 0x24356e });
-  const refSlacks = std({ color: 0xf5f5f5 });
-  const refPart = (mesh: THREE.Mesh, x: number, y: number, z: number, rz = 0) => {
-    mesh.position.set(x, y, z);
-    mesh.rotation.z = rz;
-    mesh.castShadow = true;
-    chair.add(mesh);
-    return mesh;
-  };
-  const seatTop = 5.9;
-  // torso leaning slightly over the court
-  refPart(
-    new THREE.Mesh(new THREE.CapsuleGeometry(0.6, 1.3, 4, 10), refBlazer),
-    -0.15, seatTop + 1.15, 0, -0.12
-  );
-  // head + cap with a forward brim
-  refPart(new THREE.Mesh(new THREE.SphereGeometry(0.5, 14, 12), refSkin), -0.2, seatTop + 2.45, 0);
-  refPart(
-    new THREE.Mesh(new THREE.CylinderGeometry(0.52, 0.54, 0.26, 12), refBlazer),
-    -0.2, seatTop + 2.85, 0
-  );
-  refPart(new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.08, 0.62), refBlazer), -0.7, seatTop + 2.78, 0);
-  for (const s of [-1, 1]) {
-    // thighs run forward along the seat, shins hang toward the footrest
-    refPart(
-      new THREE.Mesh(new THREE.CapsuleGeometry(0.26, 0.75, 4, 8), refSlacks),
-      -0.65, seatTop + 0.28, s * 0.34, Math.PI / 2
-    );
-    refPart(
-      new THREE.Mesh(new THREE.CapsuleGeometry(0.22, 0.85, 4, 8), refSlacks),
-      -1.15, seatTop - 0.75, s * 0.34
-    );
-    refPart(new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.22, 0.3), refSlacks), -1.3, seatTop - 1.35, s * 0.34);
-    // arms angled down to rest on the knees
-    refPart(
-      new THREE.Mesh(new THREE.CapsuleGeometry(0.18, 0.85, 4, 8), refBlazer),
-      -0.5, seatTop + 1.15, s * 0.68, 2.45
-    );
-  }
-  chair.position.set(GROUND_X - 26, 0, 0.8);
-  detailGroup.add(chair);
 }
 
 // ---------------------------------------------------------------------------
