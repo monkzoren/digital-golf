@@ -2132,6 +2132,8 @@ let boostMats: { mat: THREE.MeshStandardMaterial; dx: number; dy: number; rate: 
 let teleMats: THREE.MeshBasicMaterial[] = [];
 // the toy box: things that spin, whirr and pulse every frame
 let spinners: { group: THREE.Group; speed: number }[] = [];
+// conveyor end rollers: faceted drums turning at the belt's speed
+let rollers: { mesh: THREE.Mesh; rate: number }[] = [];
 let fanBlades: THREE.Group[] = [];
 let magnetMats: THREE.MeshBasicMaterial[] = [];
 let cannons: { zone: Zone; group: THREE.Group; restAngle: number }[] = [];
@@ -2421,8 +2423,11 @@ function makeFeltTexture(): THREE.CanvasTexture {
 function makeZoneTexture(z: Zone): THREE.CanvasTexture {
   const PX = 24;
   const c = document.createElement('canvas');
-  c.width = Math.max(8, Math.min(1024, Math.round(z.w * PX)));
-  c.height = Math.max(8, Math.min(1024, Math.round(z.h * PX)));
+  // a spinner's texture wraps its disc (which fills the rect's shorter
+  // side), so it is square; everything else spans the rect
+  const tw = z.kind === 'spinner' ? Math.min(z.w, z.h) : z.w, th = z.kind === 'spinner' ? Math.min(z.w, z.h) : z.h;
+  c.width = Math.max(8, Math.min(1024, Math.round(tw * PX)));
+  c.height = Math.max(8, Math.min(1024, Math.round(th * PX)));
   const g = c.getContext('2d')!;
   const W = c.width, H = c.height;
   const arrows = (color: string, spacing: number) => {
@@ -2476,10 +2481,16 @@ function makeZoneTexture(z: Zone): THREE.CanvasTexture {
       arrows('rgba(255,255,255,0.35)', 3);
       break;
     }
-    case 'boost':
-      g.fillStyle = '#b8542a'; g.fillRect(0, 0, W, H);
-      arrows('#ffb060', 2);
+    case 'boost': {
+      // a rubber speed mat: warm gradient, dark hazard border, bright chevrons
+      const grad = g.createLinearGradient(0, 0, W, H);
+      grad.addColorStop(0, '#c9622f'); grad.addColorStop(1, '#a4441f');
+      g.fillStyle = grad; g.fillRect(0, 0, W, H);
+      arrows('#ffc27a', 2);
+      g.strokeStyle = 'rgba(0,0,0,0.45)'; g.lineWidth = 6; g.strokeRect(0, 0, W, H);
+      g.strokeStyle = 'rgba(255,205,120,0.5)'; g.lineWidth = 2; g.strokeRect(5, 5, W - 10, H - 10);
       break;
+    }
     case 'jump':
       g.fillStyle = '#ffd60a'; g.fillRect(0, 0, W, H);
       g.fillStyle = 'rgba(0,0,0,0.75)';
@@ -2490,19 +2501,56 @@ function makeZoneTexture(z: Zone): THREE.CanvasTexture {
       g.strokeStyle = '#e9c8ff'; g.lineWidth = 4; g.strokeRect(4, 4, W - 8, H - 8);
       for (let r = 6; r < Math.min(W, H) / 2; r += 12) { g.beginPath(); g.arc(W / 2, H / 2, r, 0, Math.PI * 2); g.strokeStyle = 'rgba(255,255,255,0.35)'; g.lineWidth = 2; g.stroke(); }
       break;
-    case 'conveyor':
-      g.fillStyle = '#2a2a33'; g.fillRect(0, 0, W, H);
-      g.fillStyle = 'rgba(255,255,255,0.06)';
-      for (let x = 0; x < W; x += 12) g.fillRect(x, 0, 6, H);
+    case 'conveyor': {
+      // black rubber belt: cross-ribs every half unit (a light edge over a
+      // dark one so they read as relief) with the chevrons riding on top
+      g.fillStyle = '#1f2228'; g.fillRect(0, 0, W, H);
+      const a = ((z.angle ?? 0) * Math.PI) / 180;
+      const ux = Math.cos(a), uy = Math.sin(a), vx = -uy, vy = ux;
+      const cx = W / 2, cy = H / 2, len = Math.hypot(W, H);
+      g.lineCap = 'butt';
+      for (let d = -len / 2; d < len / 2; d += 0.5 * PX) {
+        for (const [off, col, wdt] of [[1.5, 'rgba(0,0,0,0.55)', 3], [-1, 'rgba(255,255,255,0.13)', 2]] as [number, string, number][]) {
+          g.strokeStyle = col; g.lineWidth = wdt;
+          g.beginPath();
+          g.moveTo(cx + ux * (d + off) - vx * len, cy + uy * (d + off) - vy * len);
+          g.lineTo(cx + ux * (d + off) + vx * len, cy + uy * (d + off) + vy * len);
+          g.stroke();
+        }
+      }
       arrows('#ffd60a', 1.5);
       break;
+    }
     case 'spinner': {
-      g.fillStyle = 'rgba(0,0,0,0)'; g.clearRect(0, 0, W, H);
-      const r = Math.min(W, H) / 2;
-      g.beginPath(); g.arc(W / 2, H / 2, r, 0, Math.PI * 2); g.fillStyle = '#7c5cff'; g.fill();
-      g.strokeStyle = 'rgba(255,255,255,0.6)'; g.lineWidth = 3;
-      for (let i = 0; i < 6; i++) { const t = (i / 6) * Math.PI * 2; g.beginPath(); g.moveTo(W / 2, H / 2); g.lineTo(W / 2 + Math.cos(t) * r * 0.92, H / 2 + Math.sin(t) * r * 0.92); g.stroke(); }
-      g.beginPath(); g.arc(W / 2, H / 2, r * 0.18, 0, Math.PI * 2); g.fillStyle = '#fff'; g.fill();
+      // a felt turntable: twelve wedges in two purples, a few turned grooves
+      // and chevrons around the outer ring that point the way it spins
+      g.clearRect(0, 0, W, H);
+      const r = Math.min(W, H) / 2, cx = W / 2, cy = H / 2;
+      for (let i = 0; i < 12; i++) {
+        g.beginPath(); g.moveTo(cx, cy);
+        g.arc(cx, cy, r, (i / 12) * Math.PI * 2, ((i + 1) / 12) * Math.PI * 2);
+        g.closePath();
+        g.fillStyle = i % 2 ? '#6647d6' : '#8a6cff';
+        g.fill();
+      }
+      g.strokeStyle = 'rgba(255,255,255,0.16)'; g.lineWidth = 1.5;
+      for (const k of [0.32, 0.5, 0.86]) { g.beginPath(); g.arc(cx, cy, r * k, 0, Math.PI * 2); g.stroke(); }
+      const s = zonePower(z) < 0 ? -1 : 1;
+      g.strokeStyle = 'rgba(255,255,255,0.85)'; g.lineWidth = 3; g.lineCap = 'round'; g.lineJoin = 'round';
+      for (let i = 0; i < 6; i++) {
+        const t = (i / 6) * Math.PI * 2 + Math.PI / 12;
+        const nx = Math.cos(t), ny = Math.sin(t);
+        const tx = -ny * s, ty = nx * s; // the felt's direction of travel here
+        const ring = r * 0.68, px = cx + nx * ring, py = cy + ny * ring;
+        const arm = Math.max(5, r * 0.09);
+        g.beginPath();
+        g.moveTo(px - tx * arm * 0.6 + nx * arm, py - ty * arm * 0.6 + ny * arm);
+        g.lineTo(px + tx * arm, py + ty * arm);
+        g.lineTo(px - tx * arm * 0.6 - nx * arm, py - ty * arm * 0.6 - ny * arm);
+        g.stroke();
+      }
+      g.strokeStyle = 'rgba(255,255,255,0.7)'; g.lineWidth = 3;
+      g.beginPath(); g.arc(cx, cy, r - 2.5, 0, Math.PI * 2); g.stroke();
       break;
     }
     case 'fan':
@@ -2594,6 +2642,107 @@ function shapeFromPts(pts: number[], ox: number, oy: number): THREE.Shape {
   return sh;
 }
 
+const SPINNER_H = 0.07; // the turntable stands this proud of the felt
+const BELT_H = 0.06; // belt slab thickness
+const ROLLER_R = 0.11;
+
+/** A spinner: a felt turntable in a steel collar set straight into the felt,
+ *  with a chromed hub. The disc (and hub) turn; the collar stays put. */
+function spinnerMesh(z: Zone, cx: number, cz: number, topMat: THREE.Material): THREE.Group {
+  const r = Math.min(z.w, z.h) / 2;
+  const root = new THREE.Group();
+  root.position.set(cx, FLOOR_Y, cz);
+  // the collar: a flat steel ring around the disc with a gap it turns in
+  const collar = new THREE.Mesh(new THREE.RingGeometry(r + 0.05, r + 0.22, 64), SPINNER_RIM_MAT);
+  collar.rotation.x = -Math.PI / 2;
+  collar.position.y = SPINNER_H + 0.012;
+  collar.receiveShadow = true;
+  root.add(collar);
+  const lip = new THREE.Mesh(new THREE.CylinderGeometry(r + 0.22, r + 0.22, SPINNER_H, 64, 1, true), SPINNER_RIM_MAT);
+  lip.position.y = SPINNER_H / 2 + 0.011;
+  lip.castShadow = true;
+  root.add(lip);
+  const group = new THREE.Group();
+  group.position.y = 0.012;
+  const rd = r - 0.01;
+  const top = new THREE.Mesh(new THREE.CircleGeometry(rd, 64), topMat);
+  top.rotation.x = -Math.PI / 2;
+  top.position.y = SPINNER_H;
+  top.receiveShadow = true;
+  group.add(top);
+  const side = new THREE.Mesh(new THREE.CylinderGeometry(rd, rd, SPINNER_H, 64, 1, true), SPINNER_RIM_MAT);
+  side.position.y = SPINNER_H / 2;
+  side.castShadow = true;
+  group.add(side);
+  const hr = Math.max(0.28, r * 0.13);
+  const hub = new THREE.Mesh(new THREE.CylinderGeometry(hr * 0.9, hr, 0.1, 24), HUB_MAT);
+  hub.position.y = SPINNER_H + 0.05;
+  hub.castShadow = true;
+  group.add(hub);
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(hr * 0.75, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2), HUB_MAT);
+  dome.position.y = SPINNER_H + 0.1;
+  dome.castShadow = true;
+  group.add(dome);
+  root.add(group);
+  spinners.push({ group, speed: zonePower(z) });
+  return root;
+}
+
+/** A conveyor: a rubber belt slab in a steel tray. Belts running along an
+ *  axis get yellow rails down their sides and a faceted roller at each end
+ *  that turns at belt speed; a belt set at an odd angle gets a plain frame. */
+function conveyorMesh(z: Zone, cx: number, cz: number, topMat: THREE.MeshStandardMaterial): THREE.Group {
+  const root = new THREE.Group();
+  root.position.set(cx, FLOOR_Y + 0.012, cz);
+  const angle = ((z.angle ?? 0) % 360 + 360) % 360;
+  const alongX = angle % 180 === 0, alongY = angle % 180 === 90;
+  const speed = zonePower(z);
+  const belt = new THREE.Mesh(new THREE.BoxGeometry(z.w, BELT_H, z.h), [BELT_SIDE_MAT, BELT_SIDE_MAT, topMat, BELT_SIDE_MAT, BELT_SIDE_MAT, BELT_SIDE_MAT]);
+  belt.position.y = BELT_H / 2;
+  belt.receiveShadow = true;
+  belt.castShadow = true;
+  root.add(belt);
+  const RAIL_W = 0.16, RAIL_H = 0.16;
+  const rail = (w: number, d: number, x: number, zz: number) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, RAIL_H, d), RAIL_MAT);
+    m.position.set(x, RAIL_H / 2, zz);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    root.add(m);
+  };
+  if (alongX || alongY) {
+    // rails on the edges the belt runs along; rollers across the two ends
+    const L = alongX ? z.w : z.h, Wd = alongX ? z.h : z.w;
+    for (const s of [-1, 1]) {
+      if (alongX) rail(z.w, RAIL_W, 0, s * (z.h / 2 - RAIL_W / 2));
+      else rail(RAIL_W, z.h, s * (z.w / 2 - RAIL_W / 2), 0);
+    }
+    // three's +x is golf +x and +z is golf +y, so the belt's direction is
+    // (cos a, 0, sin a); a roller's axis lies across it
+    const a = (angle * Math.PI) / 180;
+    const axis = new THREE.Vector3(-Math.sin(a), 0, Math.cos(a));
+    for (const s of [-1, 1]) {
+      const pivot = new THREE.Group();
+      pivot.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), axis);
+      pivot.position.set(alongX ? s * (L / 2 - ROLLER_R) : 0, BELT_H - ROLLER_R + 0.02, alongY ? s * (L / 2 - ROLLER_R) : 0);
+      const drum = new THREE.Mesh(new THREE.CylinderGeometry(ROLLER_R, ROLLER_R, Wd - RAIL_W * 2 - 0.04, 10), ROLLER_MAT);
+      drum.castShadow = true;
+      pivot.add(drum);
+      root.add(pivot);
+      // spinning about the axis by +θ moves the top of the drum against the
+      // belt direction (θ̇·axis × up), so turn it the other way
+      rollers.push({ mesh: drum, rate: -speed / ROLLER_R });
+    }
+  } else {
+    const t = 0.1;
+    rail(z.w, t, 0, -(z.h / 2 - t / 2));
+    rail(z.w, t, 0, z.h / 2 - t / 2);
+    rail(t, z.h - t * 2, -(z.w / 2 - t / 2), 0);
+    rail(t, z.h - t * 2, z.w / 2 - t / 2, 0);
+  }
+  return root;
+}
+
 function extrudedBlock(pts: number[], ox: number, oy: number, height: number, mat: THREE.Material): THREE.Mesh {
   const geo = new THREE.ExtrudeGeometry(shapeFromPts(pts, ox, oy), {
     depth: height, bevelEnabled: true, bevelThickness: 0.06, bevelSize: 0.05, bevelOffset: -0.05, bevelSegments: 2,
@@ -2616,7 +2765,14 @@ const CANNON_MAT = metal({ color: 0x2b2f3a, roughness: 0.5, metalness: 0.7 });
 const CANNON_RIM_MAT = metal({ color: 0xffd60a, roughness: 0.3 });
 const FAN_BLADE_MAT = gloss({ color: 0xe8f6ff });
 const BED_MAT = std({ color: 0xffffff, roughness: 1, side: THREE.BackSide });
-const STOCK_MATS: THREE.Material[] = [FELT_MAT, WALL_MAT, WALL_LOW_MAT, WALL_SIDE_MAT, RUBBER_MAT, LASER_ON_MAT, LASER_OFF_MAT, CANNON_MAT, CANNON_RIM_MAT, FAN_BLADE_MAT, BED_MAT];
+// the toy box's hardware: painted steel frames, brushed rollers, a chromed hub
+const BELT_SIDE_MAT = metal({ color: 0x353a45, roughness: 0.55, metalness: 0.6 });
+const RAIL_MAT = gloss({ color: 0xffc21a, roughness: 0.4 });
+const ROLLER_MAT = metal({ color: 0xb8bcc4, roughness: 0.3, flatShading: true });
+const SPINNER_RIM_MAT = metal({ color: 0x9aa4b8, roughness: 0.42 });
+const HUB_MAT = metal({ color: 0xc9cfd8, roughness: 0.34 });
+const STOCK_MATS: THREE.Material[] = [FELT_MAT, WALL_MAT, WALL_LOW_MAT, WALL_SIDE_MAT, RUBBER_MAT, LASER_ON_MAT, LASER_OFF_MAT, CANNON_MAT, CANNON_RIM_MAT, FAN_BLADE_MAT, BED_MAT,
+  BELT_SIDE_MAT, RAIL_MAT, ROLLER_MAT, SPINNER_RIM_MAT, HUB_MAT];
 
 // Water is a real pond: the felt is carved away over the zone, a pebble bed
 // sits a little way down, and a translucent, rippling surface lies over it.
@@ -2714,12 +2870,14 @@ function disposeHole() {
   holeGroup.traverse(obj => {
     const mesh = obj as THREE.Mesh;
     mesh.geometry?.dispose();
-    const mat = mesh.material as THREE.Material & { map?: THREE.Texture | null; normalMap?: THREE.Texture | null; alphaMap?: THREE.Texture | null };
-    if (!mat || [...STOCK_MATS, BUMPER_MAT, POST_MAT, CUP_MAT, FLAG_MAT].includes(mat as any)) return; // shared, lives on
-    mat.map?.dispose();
-    mat.normalMap?.dispose(); // per-zone clones of the tiling normals
-    mat.alphaMap?.dispose();
-    mat.dispose();
+    const mats = (Array.isArray(mesh.material) ? mesh.material : [mesh.material]) as (THREE.Material & { map?: THREE.Texture | null; normalMap?: THREE.Texture | null; alphaMap?: THREE.Texture | null })[];
+    for (const mat of mats) {
+      if (!mat || [...STOCK_MATS, BUMPER_MAT, POST_MAT, CUP_MAT, FLAG_MAT].includes(mat as any)) continue; // shared, lives on
+      mat.map?.dispose();
+      mat.normalMap?.dispose(); // per-zone clones of the tiling normals
+      mat.alphaMap?.dispose();
+      mat.dispose();
+    }
   });
   holeGroup.clear();
   movers = [];
@@ -2727,6 +2885,7 @@ function disposeHole() {
   boostMats = [];
   teleMats = [];
   spinners = [];
+  rollers = [];
   fanBlades = [];
   magnetMats = [];
   cannons = [];
@@ -2844,10 +3003,9 @@ function setHole(hole: Hole) {
     const cx = z.x + z.w / 2 - holeCX, cz = z.y + z.h / 2 - holeCY;
     if (z.kind === 'water') { holeGroup.add(pondMesh(z, cx, cz)); return; }
     const tex = makeZoneTexture(z);
-    const flat = z.kind === 'tele' || z.kind === 'magnet' || z.kind === 'spinner';
-    // portals and magnets are emitters (over-bright so they bloom); the
-    // spinner is just a painted disc
-    const glow = z.kind === 'spinner' ? 1 : 1.7;
+    const flat = z.kind === 'tele' || z.kind === 'magnet';
+    // portals and magnets are emitters (over-bright so they bloom)
+    const glow = 1.7;
     const mat = flat
       ? new THREE.MeshBasicMaterial({ map: tex, color: new THREE.Color(glow, glow, glow), transparent: true, opacity: 0.85 })
       : std({ map: tex });
@@ -2868,7 +3026,12 @@ function setHole(hole: Hole) {
         sm.roughness = 1; sm.normalMap = tiled(sf.feltN, 3); sm.normalScale.set(0.9, 0.9);
       } else if (z.kind === 'slope') {
         sm.roughness = 0.92; sm.normalMap = tiled(sf.feltN, 6); sm.normalScale.set(0.35, 0.35);
-      } else if (z.kind === 'conveyor' || z.kind === 'cannon') {
+      } else if (z.kind === 'conveyor') {
+        sm.roughness = 0.62; sm.metalness = 0.05; // rubber, not steel
+      } else if (z.kind === 'spinner') {
+        const d = Math.min(z.w, z.h);
+        sm.roughness = 0.9; sm.normalMap = sf.feltN.clone(); sm.normalMap.repeat.set(d / 6, d / 6); sm.normalMap.needsUpdate = true; sm.normalScale.set(0.35, 0.35);
+      } else if (z.kind === 'cannon') {
         sm.roughness = 0.5; sm.metalness = 0.4;
       } else if (z.kind === 'jump' || z.kind === 'boost' || z.kind === 'trampoline') {
         sm.roughness = 0.45;
@@ -2879,27 +3042,18 @@ function setHole(hole: Hole) {
       return;
     }
     if (z.kind === 'spinner') {
-      // the disc itself turns; a dark ring marks the pit it sits in
-      const r = Math.min(z.w, z.h) / 2;
-      const pit = new THREE.Mesh(new THREE.PlaneGeometry(z.w, z.h), std({ color: 0x1d2a20 }));
-      pit.rotation.x = -Math.PI / 2;
-      pit.position.set(cx, FLOOR_Y + 0.011, cz);
-      holeGroup.add(pit);
-      const group = new THREE.Group();
-      group.position.set(cx, FLOOR_Y + 0.02 + i * 0.001, cz);
-      const disc = new THREE.Mesh(new THREE.CircleGeometry(r, 40), mat);
-      disc.rotation.x = -Math.PI / 2;
-      disc.receiveShadow = true;
-      group.add(disc);
-      holeGroup.add(group);
-      spinners.push({ group, speed: zonePower(z) });
+      holeGroup.add(spinnerMesh(z, cx, cz, mat));
       return;
     }
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(z.w, z.h), mat);
-    m.rotation.x = -Math.PI / 2;
-    m.position.set(cx, FLOOR_Y + 0.012 + i * 0.001, cz);
-    m.receiveShadow = true;
-    holeGroup.add(m);
+    if (z.kind === 'conveyor') {
+      holeGroup.add(conveyorMesh(z, cx, cz, mat as THREE.MeshStandardMaterial));
+    } else {
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(z.w, z.h), mat);
+      m.rotation.x = -Math.PI / 2;
+      m.position.set(cx, FLOOR_Y + 0.012 + i * 0.001, cz);
+      m.receiveShadow = true;
+      holeGroup.add(m);
+    }
     if (z.kind === 'boost' || z.kind === 'conveyor' || z.kind === 'fan') {
       // texture u runs along golf +x, v along golf −y (the plane is laid flat
       // by rotating −90° about x), so scroll u with cos and v against sin
@@ -3049,6 +3203,7 @@ export function drawScene(scene: GolfScene) {
     }
   }
   for (const s of spinners) s.group.rotation.y = -s.speed * t;
+  for (const r of rollers) r.mesh.rotation.y = (r.rate * t) % (Math.PI * 2);
   // a loaded cannon tracks the loaded player's aim; otherwise it rests
   const meAim = scene.players.find(p => p.me);
   for (const c of cannons) {
