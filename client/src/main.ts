@@ -7,15 +7,16 @@ import type { Player, Lobby, Course, Hole as HoleRow, Chat } from './module_bind
 import type { Identity } from 'spacetimedb';
 import type { Hole } from '@shared/courses';
 import { parseHole } from '@shared/mapformat';
-import { type BallState, TICK_HZ, geomOf, newEvents, shotVelocity, stepBall } from '@shared/physics';
+import { TICK_HZ } from '@shared/physics';
 import {
   COLORS, DATABASE_NAME, EMOTES, EV, L_FINISHED, L_OPEN, L_RUNNING, MAX_PLAYERS, POWER_MULS,
   PH_FINAL, PH_INTRO, PH_PLAY, PH_RESULTS, SPACETIMEDB_URI,
 } from './config';
 import {
-  type GolfPlayer, type GolfScene, addShake, ballScreenPos, burstAt, drawScene, groundPointAt,
-  initCharacterPreviews, initRenderer, resetScene,
+  type AimBasis, type GolfPlayer, type GolfScene, addShake, ballScreenPos, burstAt, cameraGroundBasis,
+  canvasCssSize, drawScene, initCharacterPreviews, initRenderer, resetScene,
 } from './render3d';
+import { KB_TURN_RATE, KB_TURN_RATE_FINE, dragAim, smoothAngle } from './aim';
 import { CHARACTERS, type Character } from './characters';
 import { type GraphicsSettings, type PresetName, applyPreset, getGraphics, onGraphicsChange, presetOf, setGraphics } from './graphics';
 import { isMuted, setMuted, sfx, unlockAudio } from './audio';
@@ -34,7 +35,6 @@ const store = {
   set: (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* ignore */ } },
   del: (k: string) => { try { localStorage.removeItem(k); } catch { /* ignore */ } },
 };
-const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 function notify(msg: string, error = false) {
   const el = document.createElement('div');
   el.className = 'toast' + (error ? ' error' : '');
@@ -628,6 +628,8 @@ function launchEditor(course: Course | null, duplicate = false) {
       holes,
       published: !!course && !duplicate && course.published,
       myName: me()?.name ?? 'ANON',
+      myCharacter: me()?.characterId ?? 0,
+      myColor: parseInt(COLORS[me()?.color ?? 0].slice(1), 16),
       onSave: (courseId, name, holesJson) => rd().saveCourse({ courseId, name, holesJson }),
       onPublish: (courseId, published) => rd().publishCourse({ courseId, published }),
       onExit: () => { closeEditor(); $('editor').classList.add('hidden'); route(); renderMenu(); },
@@ -779,11 +781,13 @@ function toastBig(text: string) {
 const canvas = $('game-canvas') as HTMLCanvasElement;
 initRenderer(canvas);
 
-let drag: { active: boolean; angle: number; power: number } = { active: false, angle: 0, power: 0 };
+// Pointer aim: a pull in screen space from where the pointer went down,
+// through the camera axes frozen at that moment (see aim.ts). `angle` is
+// the raw reading, `shown` the eased one the arrow and the shot both use.
+interface DragAim { active: boolean; angle: number; shown: number; power: number; x0: number; y0: number; basis: AimBasis }
+let drag: DragAim = { active: false, angle: 0, shown: 0, power: 0, x0: 0, y0: 0, basis: { rx: 1, ry: 0, fx: 0, fy: -1 } };
 const kbAim = { active: false, angle: 0, charging: false, chargeStart: 0 };
-const MAX_DRAG_UNITS = 7;
-let previewPath: { x: number; y: number }[] = [];
-let previewKey = '';
+const held = { left: false, right: false, fine: false };
 let gameHoleObj: Hole | null = null;
 let gameHoleKey = '';
 let tLocal = 0;
@@ -800,57 +804,29 @@ function canShoot(): boolean {
   const lobby = myLobby(); const p = me();
   return !!lobby && !!p && lobby.phase === PH_PLAY && p.resting && !p.holed && p.strokes < lobby.maxStrokes && overlayTarget === null && $('match-menu').classList.contains('hidden');
 }
-function pointerWorld(e: PointerEvent) {
-  const r = canvas.getBoundingClientRect();
-  return groundPointAt(e.clientX - r.left, e.clientY - r.top);
-}
 canvas.addEventListener('pointerdown', e => {
   unlockAudio();
-  if (!canShoot()) return;
+  if (editorIsOpen() || !canShoot()) return;
   if (e.button !== 0) return;
   canvas.setPointerCapture(e.pointerId);
-  drag = { active: true, angle: kbAim.angle, power: 0 };
+  // press anywhere, then pull: the aim starts from wherever it was pointing
+  drag = { active: true, angle: kbAim.angle, shown: kbAim.angle, power: 0, x0: e.clientX, y0: e.clientY, basis: cameraGroundBasis() };
   kbAim.active = false;
-  updateDrag(e);
 });
 canvas.addEventListener('pointermove', e => { if (drag.active) updateDrag(e); });
 canvas.addEventListener('pointerup', e => {
   if (!drag.active) return;
   updateDrag(e);
   drag.active = false;
-  if (drag.power > 0.04 && canShoot()) rd().shoot({ angle: drag.angle, power: drag.power });
+  // what you saw is what you get: the eased angle is the one that flies
+  if (drag.power > 0.04 && canShoot()) { kbAim.angle = drag.shown; rd().shoot({ angle: drag.shown, power: drag.power }); }
 });
 canvas.addEventListener('pointercancel', () => { drag.active = false; });
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 function updateDrag(e: PointerEvent) {
-  const p = me(); if (!p) return;
-  const w = pointerWorld(e); if (!w) return;
-  const d = dispOf(p);
-  // slingshot: pull away from the ball; the shot goes the other way
-  const dx = d.x - w.x, dy = d.y - w.y;
-  const dist = Math.hypot(dx, dy);
-  if (dist > 0.3) drag.angle = Math.atan2(dy, dx);
-  drag.power = clamp((dist - 0.6) / MAX_DRAG_UNITS, 0, 1);
-}
-function computePreview(angle: number, power: number) {
-  const p = me(); const lobby = myLobby();
-  if (!p || !lobby || !gameHoleObj) { previewPath = []; return; }
-  const key = `${angle.toFixed(2)}|${power.toFixed(2)}|${p.x}|${p.y}`;
-  if (key === previewKey) return;
-  previewKey = key;
-  const v = shotVelocity(angle, power, lobby.powerMul / 100);
-  const b: BallState = { x: p.x, y: p.y, z: 0, vx: v.vx, vy: v.vy, vz: 0, teleTicks: 0 };
-  const geom = geomOf(gameHoleObj);
-  const t0 = lobby.holeTick / TICK_HZ;
-  const path = [{ x: b.x, y: b.y }];
-  const ev = newEvents();
-  for (let i = 0; i < 50; i++) {
-    stepBall(b, geom, t0 + i / TICK_HZ, ev);
-    if (i % 2 === 0) path.push({ x: b.x, y: b.y });
-    if (ev.holed || ev.water || ev.oob || ev.tele) break;
-    if (b.vx === 0 && b.vy === 0 && b.z === 0) break;
-  }
-  previewPath = path;
+  const r = dragAim(e.clientX - drag.x0, e.clientY - drag.y0, drag.basis, canvasCssSize().h, drag.angle);
+  drag.angle = r.angle;
+  drag.power = r.power;
 }
 const kbPower = () => { const t = (performance.now() - kbAim.chargeStart) / 1200; const k = t % 2; return k < 1 ? k : 2 - k; };
 
@@ -872,12 +848,17 @@ window.addEventListener('keydown', e => {
   if (e.key === 'Enter') { const ci = $('chat-input'); ci.classList.add('open'); ci.focus(); unreadChat = 0; e.preventDefault(); return; }
   if (e.key === 'Tab') { e.preventDefault(); const open = $('scores-modal').classList.contains('hidden'); modal('scores-modal', open); if (open) renderScorecard('scores-table'); return; }
   if (e.key >= '1' && e.key <= '6') { rd().sendEmote({ index: Number(e.key) - 1 }); return; }
+  if (e.key === 'Shift') held.fine = true;
   if (!canShoot()) return;
-  if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') { kbAim.active = true; kbAim.angle -= e.shiftKey ? 0.01 : 0.05; e.preventDefault(); }
-  if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') { kbAim.active = true; kbAim.angle += e.shiftKey ? 0.01 : 0.05; e.preventDefault(); }
+  // held keys turn the aim at a steady rate (integrated in the frame loop)
+  if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') { held.left = true; kbAim.active = true; e.preventDefault(); }
+  if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') { held.right = true; kbAim.active = true; e.preventDefault(); }
   if (e.key === ' ' && !kbAim.charging) { kbAim.active = true; kbAim.charging = true; kbAim.chargeStart = performance.now(); e.preventDefault(); }
 });
 window.addEventListener('keyup', e => {
+  if (e.key === 'Shift') held.fine = false;
+  if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') held.left = false;
+  if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') held.right = false;
   if (overlayTarget !== null || editorIsOpen()) return;
   if (e.key === ' ' && kbAim.charging) {
     kbAim.charging = false;
@@ -885,6 +866,7 @@ window.addEventListener('keyup', e => {
     if (canShoot() && power > 0.03) rd().shoot({ angle: kbAim.angle, power });
   }
 });
+window.addEventListener('blur', () => { held.left = held.right = held.fine = false; });
 $('chat-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') { sendChatFrom('chat-input'); $('chat-input').classList.remove('open'); $('chat-input').blur(); }
 });
@@ -921,7 +903,6 @@ function frame(now: number) {
     gameHoleKey = lobby.holeId.toString();
     gameHoleObj = currentHole(lobby);
     tLocal = lobby.holeTick / TICK_HZ;
-    previewKey = '';
   }
   if (!gameHoleObj) { gameHoleObj = currentHole(lobby); if (!gameHoleObj) subscribeCourse(lobby.courseId); }
   const hole = gameHoleObj;
@@ -932,10 +913,15 @@ function frame(now: number) {
   if (lobby.phase !== PH_PLAY) tLocal = tServer;
   else tLocal += (tServer - tLocal) * 0.1;
 
-  const aiming = canShoot() && (drag.active || kbAim.active);
-  const aimAngle = drag.active ? drag.angle : kbAim.angle;
+  const shootable = canShoot();
+  if (shootable && !drag.active && (held.left || held.right)) {
+    const rate = held.fine ? KB_TURN_RATE_FINE : KB_TURN_RATE;
+    kbAim.angle += ((held.right ? 1 : 0) - (held.left ? 1 : 0)) * rate * dt;
+  }
+  if (drag.active) drag.shown = smoothAngle(drag.shown, drag.angle, dt);
+  const aiming = shootable && (drag.active || kbAim.active);
+  const aimAngle = drag.active ? drag.shown : kbAim.angle;
   const aimPower = drag.active ? drag.power : kbAim.charging ? kbPower() : 0.35;
-  if (aiming) computePreview(aimAngle, aimPower);
 
   const scenePlayers: GolfPlayer[] = [];
   for (const q of players) {
@@ -965,7 +951,7 @@ function frame(now: number) {
   const cam: GolfScene['cam'] = lobby.phase === PH_INTRO ? 'overview' : lobby.phase === PH_RESULTS ? 'cup' : lobby.phase === PH_FINAL ? 'overview' : p.holed ? 'cup' : 'play';
   drawScene({
     hole, holeKey: hole ? gameHoleKey : '', t: tLocal, players: scenePlayers,
-    aim: aiming && hole ? { angle: aimAngle, power: aimPower, path: previewPath } : null,
+    aim: aiming && hole ? { angle: aimAngle, power: aimPower, lockCam: drag.active } : null,
     cam, meId: p.identity.toHexString(),
   });
   if (kbAim.active && !drag.active) kbAim.active = kbAim.charging || kbAim.active; // stays until the shot
@@ -1005,7 +991,7 @@ function renderHud(lobby: Lobby, p: Player, players: Player[], hole: Hole | null
   const boardHtml = html + (more > 0 ? `<div class="r"><span class="nm" style="color:var(--dim)">+${more} MORE · TAB</span></div>` : '');
   if (board.innerHTML !== boardHtml) board.innerHTML = boardHtml;
   $('help').textContent = p.holed ? 'IN THE HOLE — WAITING FOR THE OTHERS' : lobby.phase === PH_PLAY
-    ? (p.resting ? (p.strokes >= lobby.maxStrokes ? 'OUT OF STROKES' : 'DRAG BACK FROM YOUR BALL · RELEASE TO PUTT · ←/→ AIM · HOLD SPACE · TAB SCORECARD · ENTER CHAT · ESC MENU') : 'ROLLING…')
+    ? (p.resting ? (p.strokes >= lobby.maxStrokes ? 'OUT OF STROKES' : 'PRESS AND PULL BACK · RELEASE TO PUTT · HOLD ←/→ TO AIM (SHIFT = FINE) · HOLD SPACE · TAB SCORECARD · ENTER CHAT · ESC MENU') : 'ROLLING…')
     : '';
   // name tags + emotes above the other balls
   const seen = new Set<string>();

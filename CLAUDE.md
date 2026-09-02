@@ -11,7 +11,10 @@ README.md for architecture and run instructions. Key facts:
   `mapformat.ts` (hole JSON validation/limits). Keep them pure — no
   SpacetimeDB, DOM, timers or randomness.
 - `client/src/main.ts` owns connection, screens (tennis-style overlays +
-  wipe), room, game loop, HUD. `render3d.ts` is the three.js renderer
+  wipe), room, game loop, HUD. `aim.ts` is the drag-to-putt reading (screen-space
+  pull through a camera basis frozen at pointer-down) shared with the
+  editor's test mode, which hides `#editor` and plays on the game stage via
+  `render3d.drawScene`. There is deliberately no shot-path preview. `render3d.ts` is the three.js renderer
   copied from Digital Tennis and adapted: stadium/crowd/lighting/rigs/body
   builder/previews are the tennis code verbatim; `setHole` builds a hole
   as meshes, `drawScene` takes a `GolfScene`. Golf world (x, y-down, z-up)

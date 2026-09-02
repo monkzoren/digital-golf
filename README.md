@@ -12,9 +12,12 @@ TypeScript three.js game with a built-in course editor.
 
 ## What it plays like
 
-- **Everyone shoots at once.** Up to 32 players per room, no turns. Drag back
-  from your ball and release to putt (or aim with ←/→ and hold Space). Balls
-  collide with each other — bump a rival off the line, or get bumped.
+- **Everyone shoots at once.** Up to 32 players per room, no turns. Press,
+  pull back and release to putt (or hold ←/→ to aim, Shift for fine, and
+  hold Space for power). The arrow shows direction and power only — no
+  bounce preview, reading the walls is the skill. Balls collide with each
+  other — bump a rival off the line, or get bumped. A ball a moving block
+  squeezes into a wall is reset, never left stuck.
 - **Real hazards.** Bouncy walls, pinball bumpers, posts, sand, ice, water
   (+1 stroke and back you go), slopes, boost pads, jump pads that launch the
   ball over low walls and water, teleporters, spinning windmills and sliding
@@ -30,8 +33,8 @@ TypeScript three.js game with a built-in course editor.
   player-made ones.**
 - **Course editor.** Draw floors, walls, movers, surfaces and hazards on a
   grid, tweak every parameter in a properties panel, undo/redo, duplicate,
-  import/export JSON, **test-play with the exact physics the server runs**,
-  save drafts, publish to everyone. Built-in courses can be duplicated as a
+  import/export JSON, **test-play on the real 3D stage with the exact
+  physics the server runs**, save drafts, publish to everyone. Built-in courses can be duplicated as a
   starting point. Published courses appear under *Community* when creating a
   room, sorted by plays.
 - **The tennis presentation, one to one.** Menu → SELECT A GOLFER (live
@@ -48,15 +51,15 @@ TypeScript three.js game with a built-in course editor.
 ## How it works
 
 ```
-client/  (Vite + TS, Canvas 2D)          spacetimedb/  (TypeScript module)
+client/  (Vite + TS, three.js)           spacetimedb/  (TypeScript module)
 ┌──────────────────────────────┐         ┌─────────────────────────────────┐
 │ send intent:                 │ ──────► │ tables: lobby, player, chat,    │
 │   shoot(angle, power)        │reducers │   course, hole (+ my_courses)   │
 │   save_course(json) …        │         │ reducers: create/join/leave,    │
 │ render from subscriptions:   │ ◄────── │   shoot, settings, save/publish │
 │   lobby / player / hole rows │  subs   │ game_tick (scheduled, 30 Hz):   │
-│ + interpolation + shot       │         │   ball physics, collisions,     │
-│   preview via SHARED physics │         │   hazards, cup, phases, scores  │
+│ + interpolation; the editor  │         │   ball physics, collisions,     │
+│   test-plays w/ SHARED physics│         │   hazards, cup, phases, scores  │
 └──────────────────────────────┘         └─────────────────────────────────┘
                       spacetimedb/src/shared/  ← imported by BOTH
                       courses.ts (types, geometry, built-ins)
@@ -68,10 +71,11 @@ client/  (Vite + TS, Canvas 2D)          spacetimedb/  (TypeScript module)
   bumpers, movers, zones and ball-ball hits, detects the cup, applies
   penalties, caps strokes, runs the hole timer and phases. No client can
   cheat.
-- **One physics, three uses:** `shared/physics.ts` is bundled into the
-  module *and* the client. The server simulates with it, the client previews
-  your shot path with it, and the editor's test mode plays with it. What you
-  test is what you get.
+- **One physics, two uses:** `shared/physics.ts` is bundled into the
+  module *and* the client. The server simulates with it and the editor's
+  test mode plays with it, so what you test is what you get. There is no
+  trajectory preview in play — the aim arrow shows direction and power,
+  reading the bounces is your skill.
 - **Courses are data.** A `course` row is metadata; each hole is a `hole` row
   holding a validated JSON document (`shared/mapformat.ts` is the schema and
   the validator, used by both ends). Clients subscribe only to the holes of

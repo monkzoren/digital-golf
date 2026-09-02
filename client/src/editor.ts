@@ -1,13 +1,16 @@
-// The course editor: draw floors, obstacles and hazards on a grid, tweak
-// them in a properties panel, test-play the hole with the SAME physics the
-// server runs, then save/publish. Everything here is local until Save.
+// The course editor: draw floors, obstacles and hazards on a top-down grid,
+// tweak them in a properties panel, then test-play the hole on the real 3D
+// stage with the SAME physics the server runs, and save/publish. Everything
+// here is local until Save.
 import {
   type Block, type Bumper, type Hole, type Rect, type Zone, type ZoneKind,
-  holeBounds, pointInPoly, pointInRect, rectPts, windmillPts,
+  holeBounds, pointInFloor, pointInPoly, pointInRect, rectPts, windmillPts,
 } from '@shared/courses';
 import { cleanHole, LIMITS, THEME_NAMES } from '@shared/mapformat';
-import { type BallState, BALL_R, DT, geomOf, invalidateGeom, isResting, newEvents, shotVelocity, stepBall } from '@shared/physics';
-import { type Camera, drawAim, drawBall, drawHole, fitCamera, s2w, THEMES, w2s } from './render';
+import { type BallState, DT, geomOf, invalidateGeom, isResting, newEvents, shotVelocity, stepBall } from '@shared/physics';
+import { type Camera, drawHole, fitCamera, s2w, THEMES, w2s } from './render';
+import { type AimBasis, type GolfScene, addShake, burstAt, cameraGroundBasis, canvasCssSize, drawScene, resetScene } from './render3d';
+import { dragAim, smoothAngle } from './aim';
 import { sfx } from './audio';
 
 export interface EditorOpts {
@@ -16,6 +19,9 @@ export interface EditorOpts {
   holes: Hole[];
   published: boolean;
   myName: string;
+  /** roster character + ball colour for the test-play golfer */
+  myCharacter: number;
+  myColor: number;
   onSave(courseId: bigint, name: string, holesJson: string): void;
   onPublish(courseId: bigint, published: boolean): void;
   onExit(): void;
@@ -98,17 +104,24 @@ type Drag =
   | null;
 let drag: Drag = null;
 
-// test mode
+// test mode — played on the game's 3D stage (render3d), the editor hidden
 let testing = false;
 let testBall: BallState = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, teleTicks: 0 };
 let testStrokes = 0;
 let testT = 0;
 let testAcc = 0;
-let testDrag: { active: boolean; angle: number; power: number } = { active: false, angle: 0, power: 0 };
+interface TestAim { active: boolean; angle: number; shown: number; power: number; x0: number; y0: number; basis: AimBasis }
+let testAim: TestAim = { active: false, angle: 0, shown: 0, power: 0, x0: 0, y0: 0, basis: { rx: 1, ry: 0, fx: 0, fy: -1 } };
 let testSafe = { x: 0, y: 0 };
 let testStruck = false;
+let testGen = 0; // bumps per test session: a new holeKey rebuilds the 3D hole
+let testCam: GolfScene['cam'] = 'play';
+let testShotSeq = 0;
+let testShotPower = 0;
+let testFacing = 0;
 
 const canvas = () => $('ed-canvas') as HTMLCanvasElement;
+const gameCanvas = () => $('game-canvas') as HTMLCanvasElement;
 const hole = () => holes[cur];
 
 export function editorIsOpen() { return open; }
@@ -137,6 +150,7 @@ export function openEditor(o: EditorOpts) {
 }
 
 export function closeEditor() {
+  stopTest();
   open = false;
   if (raf) { cancelAnimationFrame(raf); raf = 0; }
 }
@@ -173,6 +187,16 @@ function wire() {
     cam.x += before.x - after.x; cam.y += before.y - after.y;
   }, { passive: false });
   c.addEventListener('contextmenu', e => e.preventDefault());
+  // test play happens on the game canvas (main.ts's own handlers on it
+  // stand down while the editor is open)
+  const gc = gameCanvas();
+  gc.addEventListener('pointerdown', testDown);
+  gc.addEventListener('pointermove', testMove);
+  gc.addEventListener('pointerup', testUp);
+  gc.addEventListener('pointercancel', () => { testAim.active = false; });
+  $('ed-test-stop').onclick = () => stopTest();
+  $('ed-test-reset').onclick = () => resetTestBall();
+  $('ed-test-cam').onclick = () => toggleTestCam();
   window.addEventListener('keydown', onKey);
   window.addEventListener('keyup', e => { if (e.key === ' ') spaceHeld = false; });
   $('ed-exit').onclick = () => {
@@ -274,10 +298,9 @@ function worldAt(e: PointerEvent) {
 }
 
 function onDown(e: PointerEvent) {
-  if (!open) return;
+  if (!open || testing) return;
   canvas().setPointerCapture(e.pointerId);
   const w = worldAt(e);
-  if (testing) { testDown(w); return; }
   if (e.button === 1 || e.button === 2 || tool === 'pan' || spaceHeld) {
     drag = { mode: 'pan', sx: e.clientX, sy: e.clientY, cx: cam.x, cy: cam.y };
     return;
@@ -323,10 +346,9 @@ function onDown(e: PointerEvent) {
 }
 
 function onMove(e: PointerEvent) {
-  if (!open) return;
+  if (!open || testing) return;
   const w = worldAt(e);
   hoverWorld = w;
-  if (testing) { if (testDrag.active) testAim(w); return; }
   if (!drag) return;
   const h = hole();
   if (drag.mode === 'pan') {
@@ -352,8 +374,7 @@ function onMove(e: PointerEvent) {
 }
 
 function onUp(e: PointerEvent) {
-  if (!open) return;
-  if (testing) { if (testDrag.active) testFire(); return; }
+  if (!open || testing) return;
   if (!drag) return;
   const d = drag;
   drag = null;
@@ -469,7 +490,11 @@ function onKey(e: KeyboardEvent) {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); save(); return; }
-  if (testing) return;
+  if (testing) {
+    if (e.key === 'r' || e.key === 'R') resetTestBall();
+    if (e.key === 'c' || e.key === 'C') toggleTestCam();
+    return;
+  }
   if (e.key === 'Delete' || e.key === 'Backspace') { deleteSel(); return; }
   if (e.key === 'g') { snap = snap === 0.5 ? 1 : snap === 1 ? 0.25 : 0.5; toast(`Grid snap ${snap}`); return; }
   if (e.key === 't') { startTest(); return; }
@@ -524,7 +549,7 @@ function renderProps() {
       <h3>Stats</h3>
       <div class="tiny">${h.floor.length} floors · ${h.blocks?.length ?? 0} blocks · ${h.zones?.length ?? 0} zones · ${h.bumpers?.length ?? 0} bumpers</div>
       <h3>Shortcuts</h3>
-      <div class="tiny">V select · F floor · B block · S sand · I ice · W water · J jump<br>T test · G grid snap (${snap}) · Ctrl+Z undo · Ctrl+D duplicate · Del delete<br>Wheel zoom · Space/right-drag pan</div>`;
+      <div class="tiny">V select · F floor · B block · S sand · I ice · W water · J jump<br>T test in 3D · G grid snap (${snap}) · Ctrl+Z undo · Ctrl+D duplicate · Del delete<br>Wheel zoom · Space/right-drag pan</div>`;
     ($('p-name') as HTMLInputElement).onchange = e => { pushUndo(); h.name = (e.target as HTMLInputElement).value.slice(0, LIMITS.holeNameLen) || 'Untitled'; };
     ($('p-tip') as HTMLInputElement).onchange = e => { pushUndo(); h.tip = (e.target as HTMLInputElement).value.slice(0, LIMITS.tipLen); };
     ($('p-theme') as HTMLSelectElement).onchange = e => { pushUndo(); h.theme = (e.target as HTMLSelectElement).value; };
@@ -664,44 +689,80 @@ function updatePublishBtn() {
 }
 
 // ---------------------------------------------------------------------------
-// Test play (local physics — identical code to the server's)
+// Test play: the editor steps aside and the hole is played on the game's
+// 3D stage — same renderer, same camera, same drag-to-putt, and the exact
+// physics the server runs. Local only; nothing is sent anywhere.
 // ---------------------------------------------------------------------------
+const TEST_ID = 'editor-test';
 function startTest() {
   const h = hole();
   try { cleanHole(h); } catch (e) { toast(`Fix first: ${(e as Error).message}`, true); return; }
   testing = true;
+  testGen++;
   invalidateGeom(h);
-  testBall = { x: h.tee.x, y: h.tee.y, z: 0, vx: 0, vy: 0, vz: 0, teleTicks: 0 };
+  placeTestBall(h.tee.x, h.tee.y);
   testSafe = { x: h.tee.x, y: h.tee.y };
   testStrokes = 0; testT = 0; testAcc = 0; testStruck = false;
-  $('ed-test').textContent = '■ Stop test';
+  testAim.active = false;
+  testFacing = Math.atan2(h.cup.y - h.tee.y, h.cup.x - h.tee.x);
+  testAim.angle = testAim.shown = testFacing;
+  testCam = 'play';
   sel = null;
-  toast('TEST: drag back from the ball to putt · Esc to stop');
+  $('ed-test').textContent = '■ Stop test';
+  $('editor').classList.add('testing');
+  document.body.classList.add('ed-testing');
+  $('ed-test-bar').classList.remove('hidden');
+  toast('TEST · press and pull back to putt · C camera · R reset ball · Esc back to the editor');
 }
 function stopTest() {
+  if (!testing) return;
   testing = false;
-  testDrag.active = false;
+  testAim.active = false;
   $('ed-test').textContent = '▶ Test';
+  $('editor').classList.remove('testing');
+  document.body.classList.remove('ed-testing');
+  $('ed-test-bar').classList.add('hidden');
+  resetScene();
   renderProps();
 }
-function testDown(w: { x: number; y: number }) {
-  if (!isResting(testBall)) return;
-  testDrag = { active: true, angle: 0, power: 0 };
-  testAim(w);
+function placeTestBall(x: number, y: number) {
+  testBall = { x, y, z: 0, vx: 0, vy: 0, vz: 0, teleTicks: 0 };
 }
-function testAim(w: { x: number; y: number }) {
-  const dx = testBall.x - w.x, dy = testBall.y - w.y;
-  testDrag.angle = Math.atan2(dy, dx);
-  testDrag.power = Math.min(1, Math.max(0, (Math.hypot(dx, dy) - 0.4) / 7));
+function resetTestBall() {
+  const h = hole();
+  placeTestBall(h.tee.x, h.tee.y);
+  testSafe = { x: h.tee.x, y: h.tee.y };
+  testStrokes = 0; testStruck = false; testAim.active = false;
+  testAim.angle = testAim.shown = Math.atan2(h.cup.y - h.tee.y, h.cup.x - h.tee.x);
 }
-function testFire() {
-  testDrag.active = false;
-  if (testDrag.power < 0.04 || !isResting(testBall)) return;
-  const v = shotVelocity(testDrag.angle, testDrag.power);
+function toggleTestCam() {
+  testCam = testCam === 'play' ? 'overview' : 'play';
+  $('ed-test-cam').textContent = testCam === 'play' ? 'Camera' : 'Camera: overview';
+}
+function testDown(e: PointerEvent) {
+  if (!open || !testing || e.button !== 0 || !isResting(testBall)) return;
+  gameCanvas().setPointerCapture(e.pointerId);
+  testAim = { active: true, angle: testAim.angle, shown: testAim.angle, power: 0, x0: e.clientX, y0: e.clientY, basis: cameraGroundBasis() };
+}
+function testMove(e: PointerEvent) {
+  if (!testAim.active) return;
+  const r = dragAim(e.clientX - testAim.x0, e.clientY - testAim.y0, testAim.basis, canvasCssSize().h, testAim.angle);
+  testAim.angle = r.angle;
+  testAim.power = r.power;
+}
+function testUp(e: PointerEvent) {
+  if (!testAim.active) return;
+  testMove(e);
+  testAim.active = false;
+  if (testAim.power < 0.04 || !isResting(testBall)) return;
+  const v = shotVelocity(testAim.shown, testAim.power);
   testSafe = { x: testBall.x, y: testBall.y };
   testBall.vx = v.vx; testBall.vy = v.vy; testStruck = true;
   testStrokes++;
-  sfx.putt(testDrag.power);
+  testShotSeq++;
+  testShotPower = testAim.power;
+  sfx.putt(testAim.power);
+  burstAt(testBall.x, testBall.y, 0, 0xffffff, 6, 6);
 }
 function testStep(dt: number) {
   testAcc += dt;
@@ -711,24 +772,57 @@ function testStep(dt: number) {
     testAcc -= DT;
     testT += DT;
     const ev = newEvents();
+    const ox = testBall.x, oy = testBall.y;
     stepBall(testBall, geom, testT, ev);
-    if (ev.wall > 2.5) sfx.wall(ev.wall);
-    if (ev.bumper) sfx.bumper();
-    if (ev.jump) sfx.jump();
-    if (ev.tele) sfx.tele();
+    if (ev.wall > 2.5) { sfx.wall(ev.wall); burstAt(testBall.x, testBall.y, 0, 0xfff8a0, 6 + Math.min(12, ev.wall / 3), 8 + ev.wall / 3); if (ev.wall > 20) addShake(0.3); }
+    if (ev.bumper) { sfx.bumper(); burstAt(testBall.x, testBall.y, 0, 0xff8a8a, 18, 16); addShake(0.5); }
+    if (ev.jump) { sfx.jump(); burstAt(testBall.x, testBall.y, 0, 0xffd60a, 10, 10); }
+    if (ev.land) { sfx.land(); burstAt(testBall.x, testBall.y, 0, 0xc9c9c9, 8, 7); }
+    if (ev.tele) { sfx.tele(); burstAt(testBall.x, testBall.y, 0, 0xc77dff, 24, 14); burstAt(ox, oy, 0, 0xc77dff, 14, 10); }
+    if (ev.boost) sfx.boost();
     if (ev.holed) {
-      sfx.holed(testStrokes, hole().par);
-      toast(`IN! ${testStrokes} stroke${testStrokes === 1 ? '' : 's'} (par ${hole().par})`);
       const h = hole();
-      testBall = { x: h.tee.x, y: h.tee.y, z: 0, vx: 0, vy: 0, vz: 0, teleTicks: 0 };
+      sfx.holed(testStrokes, h.par);
+      burstAt(testBall.x, testBall.y, 0, 0xffd400, 30, 22, -30);
+      addShake(0.6);
+      toast(`IN! ${testStrokes} stroke${testStrokes === 1 ? '' : 's'} (par ${h.par})`);
+      placeTestBall(h.tee.x, h.tee.y);
+      testSafe = { x: h.tee.x, y: h.tee.y };
       testStrokes = 0; testStruck = false;
     } else if (ev.water || ev.oob) {
-      if (ev.water) { sfx.water(); if (testStruck) testStrokes++; toast(ev.water ? 'Splash! +1' : 'Off the map — reset'); }
-      testBall = { x: testSafe.x, y: testSafe.y, z: 0, vx: 0, vy: 0, vz: 0, teleTicks: 0 };
+      if (ev.water) { sfx.water(); burstAt(ox, oy, 0, 0x7fc8ff, 24, 14, -30); if (testStruck) testStrokes++; toast('Splash! +1'); }
+      else { sfx.reset(); toast(pointInFloor(testBall.x, testBall.y, hole()) ? 'Squeezed into a wall — reset' : 'Off the map — reset'); }
+      placeTestBall(testSafe.x, testSafe.y);
       testStruck = false;
     }
     if (isResting(testBall)) testStruck = false;
   }
+}
+/** Draw the test on the 3D stage (the editor's own canvas is hidden). */
+function drawTest(dt: number) {
+  const h = hole();
+  testStep(dt);
+  if (testAim.active) testAim.shown = smoothAngle(testAim.shown, testAim.angle, dt);
+  const resting = isResting(testBall);
+  const speed = Math.hypot(testBall.vx, testBall.vy);
+  if (testAim.active) testFacing = testAim.shown;
+  else if (speed > 1.5) testFacing = Math.atan2(testBall.vy, testBall.vx);
+  else if (resting) testFacing = Math.atan2(h.cup.y - testBall.y, h.cup.x - testBall.x);
+  // dead-reckon the leftover sub-tick so a 30 Hz step reads smooth at any frame rate
+  const lead = resting ? 0 : testAcc;
+  drawScene({
+    hole: h, holeKey: `edit:${testGen}`, t: testT + testAcc,
+    players: [{
+      id: TEST_ID, name: opts?.myName ?? 'TEST', characterId: opts?.myCharacter ?? 0, color: opts?.myColor ?? 0xffd60a,
+      x: testBall.x + testBall.vx * lead, y: testBall.y + testBall.vy * lead, z: Math.max(0, testBall.z + testBall.vz * lead),
+      vx: testBall.vx, vy: testBall.vy, resting, holed: false, ghost: false, me: true, facing: testFacing,
+      seat: 0, shotSeq: testShotSeq, shotPower: testShotPower,
+    }],
+    aim: testAim.active ? { angle: testAim.shown, power: testAim.power, lockCam: true } : null,
+    cam: testCam, meId: TEST_ID,
+  });
+  $('ed-test-info').textContent = `TEST · HOLE ${cur + 1} · ${h.name.toUpperCase()} · STROKES ${testStrokes} · PAR ${h.par}`;
+  $('ed-test-hint').textContent = resting ? (testAim.active ? `POWER ${Math.round(testAim.power * 100)}%` : 'PRESS AND PULL BACK · RELEASE TO PUTT') : 'ROLLING…';
 }
 
 // ---------------------------------------------------------------------------
@@ -742,6 +836,7 @@ function frame(now: number) {
   const dt = Math.min(0.05, (now - lastT) / 1000);
   lastT = now;
   animT += dt;
+  if (testing) { drawTest(dt); return; }
   if (W !== canvas().clientWidth || H !== canvas().clientHeight) resize();
   if (!Number.isFinite(cam.scale) || cam.scale <= 0.01 || !Number.isFinite(cam.x) || !Number.isFinite(cam.y)) fitView();
   if (W === 0 || H === 0) return;
@@ -750,18 +845,11 @@ function frame(now: number) {
   const h = hole();
   // the hole object is edited in place, so its derived geometry must not be
   // cached across frames while editing (test mode keeps it stable)
-  if (!testing) invalidateGeom(h);
-  if (testing) testStep(dt);
+  invalidateGeom(h);
   const theme = THEMES[h.theme ?? 'park'] ?? THEMES.park;
   const selObj = selectedObject();
-  drawHole(g, h, cam, W, H, { t: testing ? testT : animT, theme, editor: !testing, selected: selObj });
+  drawHole(g, h, cam, W, H, { t: animT, theme, editor: true, selected: selObj });
 
-  if (testing) {
-    drawBall(g, cam, W, H, testBall.x, testBall.y, testBall.z, '#ffd60a', { me: true });
-    if (testDrag.active) drawAim(g, cam, W, H, testBall.x, testBall.y, testDrag.angle, testDrag.power, '#fff');
-    $('ed-status').textContent = `TEST · strokes ${testStrokes} · par ${h.par}`;
-    return;
-  }
   // editor overlays
   drawSelection(g, h);
   if (drag?.mode === 'create') {
@@ -812,5 +900,4 @@ function drawSelection(g: CanvasRenderingContext2D, h: Hole) {
     }
   }
   g.setLineDash([]);
-  void BALL_R;
 }

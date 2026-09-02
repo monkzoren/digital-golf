@@ -1,9 +1,9 @@
 // Ball physics — SHARED between the module (authoritative) and the client
-// (shot preview, dead-reckoning). Deterministic, allocation-light, and pure:
-// no SpacetimeDB, no DOM, no randomness.
+// (editor test play, dead-reckoning). Deterministic, allocation-light, and
+// pure: no SpacetimeDB, no DOM, no randomness.
 import {
   type Block, type Bumper, type Hole, type Seg, type Zone,
-  blockPtsAt, floorWalls, pointInFloor, pointInRect, polySegs,
+  blockPtsAt, floorWalls, pointInFloor, pointInPoly, pointInRect, polySegs,
 } from './courses';
 
 export const TICK_HZ = 30;
@@ -59,6 +59,8 @@ export const newEvents = (): StepEvents => ({
 export interface HoleGeom {
   hole: Hole;
   staticSegs: Seg[];
+  /** static blocks as polygons (for the "is the ball inside a wall" test) */
+  solids: Block[];
   movers: Block[];
   bumpers: Bumper[];
   zones: Zone[];
@@ -79,11 +81,12 @@ export function geomOf(hole: Hole): HoleGeom {
   if (g) return g;
   const staticSegs = floorWalls(hole.floor);
   const movers: Block[] = [];
+  const solids: Block[] = [];
   for (const b of hole.blocks ?? []) {
     if (b.motion) movers.push(b);
-    else staticSegs.push(...polySegs(b.pts, b.h));
+    else { solids.push(b); staticSegs.push(...polySegs(b.pts, b.h)); }
   }
-  g = { hole, staticSegs, movers, bumpers: hole.bumpers ?? [], zones: hole.zones ?? [] };
+  g = { hole, staticSegs, solids, movers, bumpers: hole.bumpers ?? [], zones: hole.zones ?? [] };
   geomCache.set(hole, g);
   return g;
 }
@@ -196,17 +199,64 @@ function hitBumper(b: BallState, p: Bumper): boolean {
   return vn < 0;
 }
 
+/** Is the ball's centre somewhere it can never legitimately be: off the
+ *  floor, or inside a wall block / moving block at time `t`? A ball that
+ *  gets there (squeezed by a mover) is stuck for good — the caller resets it. */
+export function insideSolid(g: HoleGeom, x: number, y: number, z: number, t: number): boolean {
+  if (!pointInFloor(x, y, g.hole)) return true;
+  for (const s of g.solids) {
+    if (s.h !== undefined && z > s.h) continue;
+    if (pointInPoly(x, y, s.pts)) return true;
+  }
+  for (const m of g.movers) {
+    if (m.h !== undefined && z > m.h) continue;
+    if (pointInPoly(x, y, blockPtsAt(m, t))) return true;
+  }
+  return false;
+}
+
+/** Resolve the ball against every moving block (edges + windmill hubs) at
+ *  time `tt`. Returns the strongest impact. */
+function hitMovers(b: BallState, g: HoleGeom, tt: number): number {
+  let wall = 0;
+  for (const m of g.movers) {
+    if (m.h !== undefined && b.z > m.h) continue;
+    const pts = blockPtsAt(m, tt);
+    const cnt = pts.length / 2;
+    for (let k = 0; k < cnt; k++) {
+      const j = (k + 1) % cnt;
+      const seg: Seg = { ax: pts[k * 2], ay: pts[k * 2 + 1], bx: pts[j * 2], by: pts[j * 2 + 1], h: m.h ?? 1e9 };
+      moverVelocity(m, tt, b.x, b.y, tmpV);
+      const imp = hitSeg(b, seg, tmpV.x, tmpV.y);
+      if (imp > wall) wall = imp;
+    }
+    if (m.hub && m.motion && m.motion.type === 'rotate') {
+      hitBumper(b, { x: m.motion.cx, y: m.motion.cy, r: m.hub, kick: 0 });
+    }
+  }
+  return wall;
+}
+
 /** Advance the ball one tick (with substeps). `t` = seconds since the hole
  *  started (drives moving blocks). Writes what happened into `ev`. */
 export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, collide = true): void {
   if (isResting(b)) {
     if (b.teleTicks > 0) b.teleTicks--;
-    return;
+    if (!collide || !g.movers.length) return;
+    // A moving block shoves a ball that is sitting in its path — and if it
+    // has already swept over the ball's centre, the ball is stuck: reset.
+    const imp = hitMovers(b, g, t + DT);
+    if (imp > ev.wall) ev.wall = imp;
+    if (isResting(b)) {
+      if (insideSolid(g, b.x, b.y, b.z, t + DT)) ev.oob = true;
+      return;
+    }
   }
   const sp = Math.hypot(b.vx, b.vy, b.vz);
   const n = Math.max(1, Math.min(14, Math.ceil((sp * DT) / (BALL_R * 0.45))));
   const h = DT / n;
   const cup = g.hole.cup;
+  let stuck = false;
   for (let i = 0; i < n; i++) {
     const tt = t + (i + 1) * h;
     const onGround = b.z <= 0.001 && b.vz <= 0;
@@ -303,35 +353,26 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
       const imp = hitSeg(b, s, 0, 0);
       if (imp > ev.wall) ev.wall = imp;
     }
-    for (const m of g.movers) {
-      if (m.h !== undefined && b.z > m.h) continue;
-      const pts = blockPtsAt(m, tt);
-      const cnt = pts.length / 2;
-      for (let k = 0; k < cnt; k++) {
-        const j = (k + 1) % cnt;
-        const seg: Seg = { ax: pts[k * 2], ay: pts[k * 2 + 1], bx: pts[j * 2], by: pts[j * 2 + 1], h: m.h ?? 1e9 };
-        moverVelocity(m, tt, b.x, b.y, tmpV);
-        const imp = hitSeg(b, seg, tmpV.x, tmpV.y);
-        if (imp > ev.wall) ev.wall = imp;
-      }
-      if (m.hub && m.motion && m.motion.type === 'rotate') {
-        hitBumper(b, { x: m.motion.cx, y: m.motion.cy, r: m.hub, kick: 0 });
-      }
+    if (g.movers.length) {
+      const imp = hitMovers(b, g, tt);
+      if (imp > ev.wall) ev.wall = imp;
     }
     for (const p of g.bumpers) if (hitBumper(b, p)) ev.bumper = true;
-    // A moving block can squeeze the ball against a wall and out of the
-    // world: rather than let it through, hold it where it was — the mover
-    // passes and the ball is free again.
-    if (g.movers.length && !pointInFloor(b.x, b.y, g.hole) && pointInFloor(px, py, g.hole)) {
-      b.x = px; b.y = py;
-      b.vx *= 0.5; b.vy *= 0.5;
+    // A moving block can squeeze the ball against a wall and through it —
+    // off the floor or into a block, where the wall pushes it the wrong way
+    // for ever. Rather than let it through, hold it where it was so the
+    // mover passes and the ball is free again; if where it was is already
+    // inside something too, it is stuck and gets reset (ev.oob).
+    if (g.movers.length && insideSolid(g, b.x, b.y, b.z, tt)) {
+      if (insideSolid(g, px, py, b.z, tt)) stuck = true;
+      else { b.x = px; b.y = py; b.vx *= 0.5; b.vy *= 0.5; }
     }
   }
   if (b.teleTicks > 0) b.teleTicks--;
   if (b.z <= 0.001 && b.vz === 0 && speedOf(b) < REST_SPEED) {
     b.vx = 0; b.vy = 0; b.z = 0;
   }
-  if (!pointInFloor(b.x, b.y, g.hole)) ev.oob = true;
+  if (stuck || !pointInFloor(b.x, b.y, g.hole)) ev.oob = true;
 }
 
 /** Elastic ball-vs-ball. Returns true when the two touched. */

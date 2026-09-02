@@ -3600,6 +3600,14 @@
     #ed-props button { padding: 6px 10px; font-size: 11px; transform: none; }
     #ed-props .tiny { font-size: 10px; color: var(--dim-2); letter-spacing: 1px; line-height: 1.5; }
     @media (max-width: 900px) { #editor { grid-template-columns: 150px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; } #ed-props { grid-column: 1 / -1; border-left: none; border-top: 1px solid var(--line); max-height: 30vh; } }
+    /* test play steps out of the editor onto the real 3D stage; this bar is
+       the only editor UI left on screen */
+    #editor.testing { display: none; }
+    /* the menu overlay the editor was opened from must not cover the stage */
+    body.ed-testing .overlay { display: none !important; }
+    #ed-test-bar { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: rgba(7, 10, 44, 0.86); border: 1px solid var(--line-2); border-radius: var(--r-md); z-index: 7; max-width: calc(100% - 24px); flex-wrap: wrap; justify-content: center; }
+    #ed-test-bar .ed-test-info { font-size: 11px; letter-spacing: 2px; font-style: italic; font-weight: 700; color: var(--gold); white-space: nowrap; }
+    #ed-test-bar .ed-test-hint { font-size: 10px; letter-spacing: 1px; font-style: italic; color: var(--dim); white-space: nowrap; }
   </style>
 </head>
 <body>
@@ -3642,6 +3650,13 @@
     </div>
     <div id="head-annos"></div>
     <div id="help"></div>
+    <div id="ed-test-bar" class="hidden">
+      <span class="ed-test-info" id="ed-test-info">TEST</span>
+      <span class="ed-test-hint" id="ed-test-hint">DRAG BACK FROM THE BALL · RELEASE TO PUTT</span>
+      <button class="util-btn" id="ed-test-cam" title="Camera (C)">Camera</button>
+      <button class="util-btn" id="ed-test-reset" title="Reset ball (R)">Reset ball</button>
+      <button class="util-btn" id="ed-test-stop" title="Back to the editor (Esc)">■ Stop test</button>
+    </div>
     <div id="chat-feed"></div>
     <input id="chat-input" type="text" maxlength="140" placeholder="SAY SOMETHING… (ENTER)" autocomplete="off" />
     <div id="emote-bar" class="hidden"></div>

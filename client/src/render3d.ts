@@ -47,8 +47,11 @@ export interface GolfScene {
   holeKey: string; // change = rebuild the hole meshes
   t: number; // seconds since the hole went live (drives movers)
   players: GolfPlayer[];
-  /** local aim in progress: angle (golf world radians), power 0..1, preview path */
-  aim: { angle: number; power: number; path: { x: number; y: number }[] } | null;
+  /** local aim in progress: angle (golf world radians), power 0..1. No
+   *  trajectory preview — reading the bounces is the player's skill.
+   *  `lockCam`: a mouse drag is in progress, so the camera must not swing
+   *  under the pointer (it would change the aim it is being read from). */
+  aim: { angle: number; power: number; lockCam?: boolean } | null;
   /** 'play' behind the local ball · 'overview' whole hole · 'cup' slow orbit */
   cam: 'play' | 'overview' | 'cup';
   /** the local player's id (camera follows their ball) */
@@ -160,6 +163,23 @@ export function ballScreenPos(playerId: string): { x: number; y: number } | null
  *  changes, so callers can't cache their own reference to measure). */
 export function canvasCssSize(): { w: number; h: number } {
   return { w: cssW, h: cssH };
+}
+
+/** The camera's screen axes on the ground, in golf-world units: `r` is
+ *  screen-right, `f` is screen-up (away from the camera). Drag aiming maps
+ *  pointer deltas through this so a pull reads the same wherever the camera
+ *  sits — and, frozen at pointer-down, stays put while the camera moves. */
+export interface AimBasis { rx: number; ry: number; fx: number; fy: number }
+export function cameraGroundBasis(): AimBasis {
+  if (!camera) return { rx: 1, ry: 0, fx: 0, fy: -1 };
+  const e = camera.matrixWorld.elements; // column-major: x axis 0..2, z axis 8..10
+  let rx = e[0], ry = e[2];
+  let l = Math.hypot(rx, ry) || 1;
+  rx /= l; ry /= l;
+  let fx = -e[8], fy = -e[10];
+  l = Math.hypot(fx, fy) || 1;
+  fx /= l; fy /= l;
+  return { rx, ry, fx, fy };
 }
 
 /** True while transient FX (particles, camera shake) are still settling —
@@ -2255,7 +2275,7 @@ function buildScene() {
     ballPool.push({ mesh, blob, mat });
   }
 
-  // aim arrow + preview dots
+  // aim arrow (direction + power only — no bounce preview)
   aimArrow = new THREE.Mesh(
     new THREE.PlaneGeometry(1, 1),
     new THREE.MeshBasicMaterial({ color: 0xa4ff3d, transparent: true, opacity: 0.9, depthWrite: false, depthTest: false, side: THREE.DoubleSide })
@@ -2272,17 +2292,6 @@ function buildScene() {
   aimHead.visible = false;
   aimHead.renderOrder = 10;
   scene3.add(aimHead);
-  pathDots.length = 0;
-  const dotGeo = new THREE.CircleGeometry(0.16, 8);
-  const dotMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55, depthWrite: false, depthTest: false });
-  for (let i = 0; i < 24; i++) {
-    const d = new THREE.Mesh(dotGeo, dotMat);
-    d.rotation.x = -Math.PI / 2;
-    d.visible = false;
-    d.renderOrder = 9;
-    scene3.add(d);
-    pathDots.push(d);
-  }
 
   holeGroup = new THREE.Group();
   scene3.add(holeGroup);
@@ -2400,7 +2409,6 @@ const ballPool: BallProp[] = [];
 const ballByPlayer = new Map<string, BallProp>();
 let aimArrow: THREE.Mesh;
 let aimHead: THREE.Mesh;
-const pathDots: THREE.Mesh[] = [];
 let holeGroup: THREE.Group;
 let builtHoleKey = '';
 interface MoverProp { block: Block; group: THREE.Group; pivotX: number; pivotY: number }
@@ -2932,15 +2940,9 @@ export function drawScene(scene: GolfScene) {
     const heat = new THREE.Color().setHSL(THREE.MathUtils.lerp(0.25, 0.0, a.power), 1, 0.55);
     (aimArrow.material as THREE.MeshBasicMaterial).color.copy(heat);
     (aimHead.material as THREE.MeshBasicMaterial).color.copy(heat);
-    for (let i = 0; i < pathDots.length; i++) {
-      const pt = a.path[i + 1];
-      pathDots[i].visible = !!pt;
-      if (pt) pathDots[i].position.set(pt.x - holeCX, FLOOR_Y + 0.035, pt.y - holeCY);
-    }
   } else {
     aimArrow.visible = false;
     aimHead.visible = false;
-    for (const d of pathDots) d.visible = false;
   }
 
   // --- juice -----------------------------------------------------------------
@@ -2961,9 +2963,12 @@ export function drawScene(scene: GolfScene) {
   const cut = camMode !== scene.cam;
   camMode = scene.cam;
   if (scene.cam === 'play' && myBall && myPlayer && hole) {
-    // direction: the aim while aiming, the roll while rolling, else the cup
+    // direction: the aim while aiming (held still during a pointer drag —
+    // the drag is read in screen space, so a camera that chased the aim
+    // would feed back into it and judder), the roll while rolling, else the cup
     let dx: number, dz: number;
-    if (scene.aim) { dx = Math.cos(scene.aim.angle); dz = Math.sin(scene.aim.angle); }
+    if (scene.aim && scene.aim.lockCam) { dx = camDir.x; dz = camDir.z; }
+    else if (scene.aim) { dx = Math.cos(scene.aim.angle); dz = Math.sin(scene.aim.angle); }
     else if (!myPlayer.resting && Math.hypot(myPlayer.vx, myPlayer.vy) > 2) { const l = Math.hypot(myPlayer.vx, myPlayer.vy); dx = myPlayer.vx / l; dz = myPlayer.vy / l; }
     else if (myPlayer.holed) { dx = camDir.x; dz = camDir.z; }
     else { const cx = hole.cup.x - holeCX - myBall.x, cz = hole.cup.y - holeCY - myBall.z; const l = Math.hypot(cx, cz) || 1; dx = cx / l; dz = cz / l; }
@@ -3009,20 +3014,6 @@ export function drawScene(scene: GolfScene) {
   if (targetFov > 46) camera.rotateX(-THREE.MathUtils.degToRad((targetFov - 46) * 0.14));
 
   if (!document.hidden) renderer.render(scene3, camera);
-}
-
-const _ray = new THREE.Raycaster();
-const _ndc = new THREE.Vector2();
-const _plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-const _hit = new THREE.Vector3();
-/** The golf-world point under a canvas CSS pixel, on the ball's rolling plane. */
-export function groundPointAt(cssX: number, cssY: number): { x: number; y: number } | null {
-  if (!camera || cssW === 0 || cssH === 0) return null;
-  _ndc.set((cssX / cssW) * 2 - 1, -(cssY / cssH) * 2 + 1);
-  _ray.setFromCamera(_ndc, camera);
-  _plane.constant = -(FLOOR_Y + BALL_R);
-  if (!_ray.ray.intersectPlane(_plane, _hit)) return null;
-  return { x: _hit.x + holeCX, y: _hit.z + holeCY };
 }
 
 /** Reset pooled state when leaving a room (rigs/balls hide until reused). */
