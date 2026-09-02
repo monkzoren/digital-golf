@@ -16,6 +16,14 @@ README.md for architecture and run instructions. Key facts:
   cannon), block motion (rotate/slide/swing/blink) and block `bounce` must
   be handled in physics.ts, mapformat.ts, render.ts (2D), render3d.ts (3D)
   and editor.ts (tool + props); `TOYBOX` in courses.ts has one hole per piece.
+- `spacetimedb/src/shared/library.ts` holds the launch courses (six, all
+  designed around hidden holes-in-one); `spacetimedb/scripts/course-check.ts`
+  (`npm run check-courses` in spacetimedb/) verifies every built-in hole
+  with the real physics: ace exists, is narrow (< 4.5% of shots) and
+  hittable, greedy play finishes within par + 1, no shot rolls for ever.
+  Run it after touching physics or courses. The module's private
+  `roll_clock` table stops any ball still rolling after 15 s (pinball
+  loops) — a safety net, not a design tool.
 - `client/src/main.ts` owns connection, screens (tennis-style overlays +
   wipe), room, game loop, HUD. `aim.ts` is the drag-to-putt reading (screen-space
   pull through a camera basis frozen at pointer-down) shared with the

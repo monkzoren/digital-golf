@@ -29,8 +29,13 @@ export const TELE_COOLDOWN_TICKS = 24;
 export const JUMP_MIN_SPEED = 2.5;
 export const BUMPER_KICK_MAX_SPEED = 18;
 export const RAMP_MAX_SIN = 0.7; // steepest ramp: ~45°
+export const MOVER_MAX_SPEED = 16; // a windmill / pendulum shoves, it does not launch
+export const RUBBER_MAX_SPEED = 20; // the most a rubber wall hands back
+export const BUMPER_KICK_MIN_APPROACH = 1.5; // creep into a bumper and it just bounces you
+export const BUMPER_OUT_MAX = 14; // the fastest a bumper kick sends the ball out
 export const FAN_HOVER_Z = 2.2; // a blower floats the ball about this high
 export const STEP_CLIMB = 0.25; // a rolling ball climbs a ramp side this much lower than its centre
+export const RAMP_STICK = 0.2; // a rolling ball follows a ramp down unless the drop is bigger than this
 
 // Defaults for the zone `power` field (and cannon `lift`), by kind.
 export const ZONE_DEFAULT_POWER: Record<Zone['kind'], number> = {
@@ -237,7 +242,11 @@ function hitSeg(b: BallState, s: Seg, surfVx: number, surfVy: number): number {
   const vn = rvx * nx + rvy * ny;
   if (vn >= 0) return 0;
   const e = s.e ?? WALL_E;
-  const j = -(1 + e) * vn;
+  let out = -vn * e; // normal speed leaving the wall
+  // rubber: fires slow balls back harder, but never past RUBBER_MAX_SPEED —
+  // and a fast ball just gets a normal bounce (no perpetual ping-pong)
+  if (e > WALL_E && out > RUBBER_MAX_SPEED) out = Math.max(RUBBER_MAX_SPEED, -vn * WALL_E);
+  const j = -vn + out;
   b.vx += nx * j;
   b.vy += ny * j;
   // a touch of tangential scrub
@@ -272,24 +281,26 @@ function hitBumper(b: BallState, p: Bumper): boolean {
   b.x = p.x + nx * rr;
   b.y = p.y + ny * rr;
   const vn = b.vx * nx + b.vy * ny;
-  // A pinball bumper fires slow balls out hard but only bounces fast ones
-  // (with some loss), so a ball on ice cannot ping-pong forever.
+  // A pinball bumper fires balls that ARRIVE with some pace back out hard;
+  // fast ones only bounce (with some loss) and a ball creeping in just
+  // bounces elastically — so a ball trapped between a bumper and a wall
+  // runs out of energy instead of being kicked for ever.
   const fast = speedOf(b) > BUMPER_KICK_MAX_SPEED;
-  if (vn < 0) {
-    const e = p.kick > 0 ? (fast ? 0.7 : 1.0) : WALL_E;
-    const j = -(1 + e) * vn;
-    b.vx += nx * j;
-    b.vy += ny * j;
-  }
-  if (p.kick > 0) {
-    if (!fast) {
-      b.vx += nx * p.kick;
-      b.vy += ny * p.kick;
-    }
+  if (vn >= 0) return false;
+  const e = p.kick > 0 ? (fast ? 0.7 : 1.0) : WALL_E;
+  const j = -(1 + e) * vn;
+  b.vx += nx * j;
+  b.vy += ny * j;
+  if (p.kick > 0 && !fast && -vn > BUMPER_KICK_MIN_APPROACH) {
+    // fire it out — but to a ceiling, not "however fast it came plus kick":
+    // a ball caught between a bumper and a wall must lose energy overall
+    const want = Math.min(BUMPER_OUT_MAX, -vn + p.kick);
+    const extra = want - -vn * e;
+    if (extra > 0) { b.vx += nx * extra; b.vy += ny * extra; }
     capSpeed(b);
     return true;
   }
-  return vn < 0;
+  return p.kick > 0 && fast;
 }
 
 /** Is the ball's centre somewhere it can never legitimately be: off the
@@ -324,8 +335,15 @@ function hitMovers(b: BallState, g: HoleGeom, tt: number): number {
       const seg: Seg = { ax: pts[k * 2], ay: pts[k * 2 + 1], bx: pts[j * 2], by: pts[j * 2 + 1], h: m.h ?? 1e9 };
       if (e !== undefined) seg.e = e;
       moverVelocity(m, tt, b.x, b.y, tmpV);
+      const before = speedOf(b);
       const imp = hitSeg(b, seg, tmpV.x, tmpV.y);
       if (imp > wall) wall = imp;
+      // a mover shoves the ball along, it does not smash it across the map
+      const after = speedOf(b);
+      if (imp > 0 && after > MOVER_MAX_SPEED && after > before) {
+        const k = Math.max(before, MOVER_MAX_SPEED) / after;
+        b.vx *= k; b.vy *= k;
+      }
     }
     if (m.hub && m.motion && (m.motion.type === 'rotate' || m.motion.type === 'swing')) {
       hitBumper(b, { x: m.motion.cx, y: m.motion.cy, r: m.hub, kick: 0 });
@@ -463,13 +481,17 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
             break;
           }
           case 'conveyor': {
-            // the belt drags the ball toward its own speed
+            // the belt drags the ball's along-belt speed toward its own;
+            // across the belt it rolls freely, so a crossing ball drifts
+            // downstream and a shot upstream can still punch through
             const d = dirOf(zone);
             const s = zonePower(zone);
-            const k = Math.min(1, 10 * h);
-            b.vx += (d.x * s - b.vx) * k;
-            b.vy += (d.y * s - b.vy) * k;
-            fr = 0;
+            const along = b.vx * d.x + b.vy * d.y;
+            const k = Math.min(1, 3 * h);
+            const dv = (s - along) * k;
+            b.vx += d.x * dv;
+            b.vy += d.y * dv;
+            fr = FRICTION * 0.6;
             carried = zone;
             break;
           }
@@ -564,6 +586,9 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
     b.x += b.vx * h;
     b.y += b.vy * h;
     const groundNow = groundZ(g, b.x, b.y);
+    // rolling DOWN a ramp the felt falls away a hair each substep: stay on
+    // it rather than skipping down in micro-hops (a real step still drops)
+    if (onGround && b.vz <= 0 && b.z > groundNow && b.z - groundNow < RAMP_STICK) { b.z = groundNow; b.vz = 0; }
     if (b.z > groundNow + 0.001 || b.vz > 0) {
       b.z += b.vz * h;
       if (b.z <= groundNow) {

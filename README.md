@@ -36,9 +36,14 @@ TypeScript three.js game with a built-in course editor.
   power (soft / normal / turbo). The host can change them in the lobby.
   Late joiners drop straight onto the tee. Refreshing mid-round keeps your
   seat for 25 s.
-- **Three built-in courses** (Sunny Park, a 9-hole tutorial gauntlet; Neon
-  Orbit, 9 holes of teleporters, spinners and lava; Toy Box, one hole per
-  gadget) and **unlimited player-made ones.**
+- **Nine built-in courses, 81 holes.** Sunny Park (the tutorial), Neon
+  Orbit and Toy Box (one hole per gadget) show the pieces off; the launch
+  library — Bank Shot Alley, Clockwork, Ramp Ridge, Machine Works, Frost &
+  Flame and the championship Grand Tour — is built around **hidden
+  holes-in-one**: every hole has an ace line, verified with the real
+  physics, that is never the obvious one (a carom, a timed gap, a launch,
+  a gadget chain) and is narrow enough to be a feat. Plus **unlimited
+  player-made courses.**
 - **Course editor.** Draw floors, walls, movers, surfaces and hazards on a
   grid, tweak every parameter in a properties panel, undo/redo, duplicate,
   import/export JSON, **test-play on the real 3D stage with the exact
@@ -95,6 +100,25 @@ client/  (Vite + TS, three.js)           spacetimedb/  (TypeScript module)
   listed for all).
 - **Identity:** anonymous SpacetimeDB identities kept in `localStorage`
   (`dg_token`). There are no accounts yet — see *Next steps*.
+
+## Designing holes
+
+`spacetimedb/scripts/course-check.ts` plays every built-in hole with the
+shared physics: it sweeps angle × power (× shot timing when things move)
+for hole-in-one lines and measures how wide the window is, then plays the
+hole greedily to make sure it finishes near par and never soft-locks.
+
+```bash
+cd spacetimedb && npm run check-courses            # every course
+npm run check-courses -- "Bank"                     # one course
+VERBOSE=1 npm run check-courses -- "Grand"          # print the ace lines
+```
+
+A library hole passes when an ace exists, spans at least a few fine-grid
+cells (humanly hittable), covers under ~4.5% of random shots (hidden), and
+the greedy player finishes within par + 1. Ramps are wedges: enter them
+from the low edge — a ramp met side-on or from its top is a step the ball
+bounces off.
 
 ## Run it locally
 

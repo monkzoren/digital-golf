@@ -8,9 +8,10 @@
 import { schema, table, t, SenderError, ScheduleAt, type ReducerCtx } from 'spacetimedb/server';
 import { Identity } from 'spacetimedb';
 import { COURSES, type Hole } from './shared/courses';
+import { LIBRARY } from './shared/library';
 import { LIMITS, cleanCourseName, parseHole, serializeHole } from './shared/mapformat';
 import {
-  type BallState, type StepEvents, TICK_HZ, collideBalls, geomOf, newEvents, restingOn,
+  type BallState, type StepEvents, TICK_HZ, collideBalls, geomOf, groundZ, newEvents, restingOn,
   shotVelocity, stepBall,
 } from './shared/physics';
 
@@ -197,6 +198,19 @@ const Session = table(
   }
 );
 
+// Safety net: how long each ball has been rolling since it last rested. A
+// ball still going after ROLL_LIMIT_SECS (pinballing between bumpers, say)
+// is stopped where it is, so nobody is ever locked out of their next shot.
+// Private, so the client bindings need not know about it.
+const RollClock = table(
+  { name: 'roll_clock' },
+  {
+    identity: t.identity().primaryKey(),
+    ticks: t.u32(),
+  }
+);
+const ROLL_LIMIT_SECS = 15;
+
 const TickTimer = table(
   { name: 'tick_timer' },
   {
@@ -213,6 +227,7 @@ const spacetimedb = schema({
   course: Course,
   hole: HoleTable,
   session: Session,
+  rollClock: RollClock,
   tickTimer: TickTimer,
 });
 export default spacetimedb;
@@ -281,7 +296,7 @@ const totalPar = (holes: Hole[]) => holes.reduce((s, h) => s + h.par, 0);
 
 /** Seed / re-sync the built-in courses from code. Idempotent by name. */
 function seedBuiltins(ctx: Ctx) {
-  for (const c of COURSES) {
+  for (const c of [...COURSES, ...LIBRARY]) {
     let row: CourseRow | undefined;
     for (const r of ctx.db.course.iter()) if (r.builtin && r.name === c.name) { row = r; break; }
     if (row) {
@@ -911,7 +926,22 @@ function tickPlay(ctx: Ctx, lobby: LobbyRow, players: PlayerRow[]) {
         ev.water ? EV_WATER : EV_RESET
       );
     } else {
-      const resting = restingOn(geom, b);
+      let resting = restingOn(geom, b);
+      if (!resting) {
+        const clock = ctx.db.rollClock.identity.find(p.identity);
+        const rolled = (clock?.ticks ?? 0) + 1;
+        const grounded = b.z <= groundZ(geom, b.x, b.y) + 0.001;
+        if (rolled > ROLL_LIMIT_SECS * TICK_HZ && grounded) {
+          // still going after all this time: call it stopped
+          row.vx = 0; row.vy = 0; row.vz = 0; row.z = groundZ(geom, b.x, b.y);
+          resting = true;
+        } else if (clock) ctx.db.rollClock.identity.update({ ...clock, ticks: rolled });
+        else ctx.db.rollClock.insert({ identity: p.identity, ticks: rolled });
+      }
+      if (resting) {
+        const clock = ctx.db.rollClock.identity.find(p.identity);
+        if (clock) ctx.db.rollClock.identity.delete(p.identity);
+      }
       row.resting = resting;
       if (resting) row.struck = false;
       if (ev.tele) row = withEvent(row, EV_TELE);

@@ -308,30 +308,30 @@ export function holeBounds(hole: Hole) {
 // ---------------------------------------------------------------------------
 // Courses
 // ---------------------------------------------------------------------------
-const sand = (x: number, y: number, w: number, h: number): Zone => ({ kind: 'sand', x, y, w, h });
-const ice = (x: number, y: number, w: number, h: number): Zone => ({ kind: 'ice', x, y, w, h });
-const water = (x: number, y: number, w: number, h: number): Zone => ({ kind: 'water', x, y, w, h });
-const slope = (x: number, y: number, w: number, h: number, angle: number, power = 3.5): Zone =>
+export const sand = (x: number, y: number, w: number, h: number): Zone => ({ kind: 'sand', x, y, w, h });
+export const ice = (x: number, y: number, w: number, h: number): Zone => ({ kind: 'ice', x, y, w, h });
+export const water = (x: number, y: number, w: number, h: number): Zone => ({ kind: 'water', x, y, w, h });
+export const slope = (x: number, y: number, w: number, h: number, angle: number, power = 3.5): Zone =>
   ({ kind: 'slope', x, y, w, h, angle, power });
-const boost = (x: number, y: number, w: number, h: number, angle: number, power = 40): Zone =>
+export const boost = (x: number, y: number, w: number, h: number, angle: number, power = 40): Zone =>
   ({ kind: 'boost', x, y, w, h, angle, power });
-const jump = (x: number, y: number, w: number, h: number, power = 11): Zone =>
+export const jump = (x: number, y: number, w: number, h: number, power = 11): Zone =>
   ({ kind: 'jump', x, y, w, h, power });
-const tele = (x: number, y: number, w: number, h: number, tx: number, ty: number): Zone =>
+export const tele = (x: number, y: number, w: number, h: number, tx: number, ty: number): Zone =>
   ({ kind: 'tele', x, y, w, h, tx, ty });
-const bumper = (x: number, y: number, r = 1.1, kick = 9): Bumper => ({ x, y, r, kick });
-const post = (x: number, y: number, r = 0.8): Bumper => ({ x, y, r, kick: 0 });
-const slider = (x: number, y: number, w: number, h: number, dx: number, dy: number, period: number, phase = 0): Block =>
+export const bumper = (x: number, y: number, r = 1.1, kick = 9): Bumper => ({ x, y, r, kick });
+export const post = (x: number, y: number, r = 0.8): Bumper => ({ x, y, r, kick: 0 });
+export const slider = (x: number, y: number, w: number, h: number, dx: number, dy: number, period: number, phase = 0): Block =>
   ({ pts: rectPts(R(x, y, w, h)), motion: { type: 'slide', dx, dy, period, phase } });
 // the toy box
-const conveyor = (x: number, y: number, w: number, h: number, angle: number, power = 6): Zone =>
+export const conveyor = (x: number, y: number, w: number, h: number, angle: number, power = 6): Zone =>
   ({ kind: 'conveyor', x, y, w, h, angle, power });
-const spinner = (x: number, y: number, w: number, h: number, power = 3): Zone => ({ kind: 'spinner', x, y, w, h, power });
-const fan = (x: number, y: number, w: number, h: number, angle: number, power = 30): Zone =>
+export const spinner = (x: number, y: number, w: number, h: number, power = 3): Zone => ({ kind: 'spinner', x, y, w, h, power });
+export const fan = (x: number, y: number, w: number, h: number, angle: number, power = 30): Zone =>
   ({ kind: 'fan', x, y, w, h, angle, power });
-const trampoline = (x: number, y: number, w: number, h: number, power = 12): Zone => ({ kind: 'trampoline', x, y, w, h, power });
-const magnet = (x: number, y: number, w: number, h: number, power = 25): Zone => ({ kind: 'magnet', x, y, w, h, power });
-const cannon = (x: number, y: number, w: number, h: number, angle: number, power = 24, lift = 10): Zone =>
+export const trampoline = (x: number, y: number, w: number, h: number, power = 12): Zone => ({ kind: 'trampoline', x, y, w, h, power });
+export const magnet = (x: number, y: number, w: number, h: number, power = 25): Zone => ({ kind: 'magnet', x, y, w, h, power });
+export const cannon = (x: number, y: number, w: number, h: number, angle: number, power = 24, lift = 10): Zone =>
   ({ kind: 'cannon', x, y, w, h, angle, power, lift });
 /** A pendulum arm hanging from (cx, cy), swinging ±amp degrees every `period` s. */
 export function pendulum(cx: number, cy: number, len: number, width: number, amp: number, period: number, phase = 0): Block {
@@ -453,7 +453,8 @@ export const PARK: Course = {
         ...windmill(17, 5, 3.6, 2.2, 2, 0.7),
         slider(48, 15, 6, 1.4, 0, 0, 1),
       ],
-      zones: [jump(23, 2, 3, 6, 11), water(28, 0, 6, 10), sand(47, 20, 8, 3), slope(46, 10, 10, 10, 90, 2.5)],
+      // the ramp climbs away from the corridor and drops the ball toward the cup
+      zones: [jump(23, 2, 3, 6, 11), water(28, 0, 6, 10), sand(47, 20, 8, 3), slope(46, 10, 10, 8, 270, 4)],
       bumpers: [bumper(40, 3), bumper(40, 7)],
     },
   ],
@@ -481,7 +482,9 @@ export const NEON: Course = {
       cup: { x: 36, y: 12 },
       floor: [R(0, 0, 40, 24)],
       blocks: [...windmill(20, 12, 7, 1.2, 3, 0.9)],
-      zones: [ice(0, 0, 40, 24)],
+      // ice either side, green under the blades — on full ice the windmill
+      // never let the ball settle
+      zones: [ice(0, 0, 11, 24), ice(29, 0, 11, 24)],
     },
     {
       name: 'Bounce House',
@@ -490,7 +493,9 @@ export const NEON: Course = {
       tee: { x: 4, y: 4 },
       cup: { x: 32, y: 22 },
       floor: [R(0, 0, 36, 26)],
-      zones: [ice(8, 0, 28, 26)],
+      // green strips along the walls: on wall-to-wall ice a bumper kick,
+      // a wall bounce and another kick could go round for ever
+      zones: [ice(8, 4, 28, 18)],
       bumpers: [bumper(14, 8), bumper(22, 14), bumper(14, 20), bumper(28, 6), bumper(30, 15)],
     },
     {
@@ -527,7 +532,8 @@ export const NEON: Course = {
         { pts: polyNgon(22, 12, 2.4, 4) },
         { pts: polyNgon(30, 6, 2.4, 4) }, { pts: polyNgon(30, 18, 2.4, 4) },
       ],
-      zones: [slope(34, 0, 10, 24, 270, 2.5)],
+      // a gentle uphill finish, entered from its low edge
+      zones: [slope(34, 0, 10, 24, 180, 2.5)],
     },
     {
       name: 'Hill Climb',
