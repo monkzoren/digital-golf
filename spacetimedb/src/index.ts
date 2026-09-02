@@ -12,7 +12,7 @@ import { LIBRARY } from './shared/library';
 import { LIMITS, cleanCourseName, parseHole, serializeHole } from './shared/mapformat';
 import {
   type BallState, type StepEvents, TICK_HZ, collideBalls, geomOf, groundZ, newEvents, restingOn,
-  shotVelocity, stepBall,
+  shotFrom, shotVelocity, stepBall,
 } from './shared/physics';
 
 const TICK_MICROS = BigInt(Math.round(1_000_000 / TICK_HZ));
@@ -752,9 +752,15 @@ export const play_again = spacetimedb.reducer(ctx => {
   }
 });
 
+// Lag compensation: the client says which hole tick it released on (the
+// moment it SAW), and the shot is applied then — the ball is fast-forwarded
+// through the ticks that passed while the shot was in flight to the server,
+// against the movers as they were. Bounded, so nobody rewinds far.
+const REWIND_MAX_TICKS = 12;
+
 export const shoot = spacetimedb.reducer(
-  { angle: t.f32(), power: t.f32() },
-  (ctx, { angle, power }) => {
+  { angle: t.f32(), power: t.f32(), atTick: t.u32() },
+  (ctx, { angle, power, atTick }) => {
     const p = getPlayer(ctx);
     const lobby = ctx.db.lobby.id.find(p.lobbyId);
     if (!lobby || lobby.status !== L_RUNNING || lobby.phase !== PH_PLAY) return;
@@ -762,11 +768,29 @@ export const shoot = spacetimedb.reducer(
     if (p.strokes >= lobby.maxStrokes) return;
     if (!Number.isFinite(angle) || !Number.isFinite(power)) throw new SenderError('Bad shot');
     const pw = clamp(power, 0.02, 1);
-    const v = shotVelocity(angle, pw, lobby.powerMul / 100);
+    const hole = currentHole(ctx, lobby);
+    const geom = hole ? geomOf(hole) : null;
+    const v = geom ? shotFrom(geom, p.x, p.y, angle, pw, lobby.powerMul / 100) : { ...shotVelocity(angle, pw, lobby.powerMul / 100), vz: 0 };
+    // a lofted (cannon) shot leaves the felt at once
+    const b: BallState = { x: p.x, y: p.y, z: v.vz > 0 ? p.z + 0.01 : p.z, vx: v.vx, vy: v.vy, vz: v.vz, teleTicks: 0 };
+    // catch the ball up from the tick the player released on to now, stopping
+    // short of any step that would hole / drown / warp it — the next real
+    // tick will take that step for real, with all its bookkeeping
+    const from = clamp(atTick, Math.max(0, lobby.holeTick - REWIND_MAX_TICKS), lobby.holeTick);
+    if (geom && from < lobby.holeTick) {
+      for (let tick = from + 1; tick <= lobby.holeTick; tick++) {
+        const trial: BallState = { ...b };
+        const ev = newEvents();
+        stepBall(trial, geom, tick / TICK_HZ, ev);
+        if (ev.holed || ev.water || ev.oob || ev.tele) break;
+        Object.assign(b, trial);
+      }
+    }
     ctx.db.player.identity.update(
       withEvent(
         {
-          ...p, vx: v.vx, vy: v.vy, vz: 0, resting: false, struck: true,
+          ...p, x: b.x, y: b.y, z: b.z, vx: b.vx, vy: b.vy, vz: b.vz, teleTicks: b.teleTicks,
+          resting: false, struck: true,
           strokes: p.strokes + 1, safeX: p.x, safeY: p.y, shotSeq: p.shotSeq + 1,
         },
         EV_SHOT, pw

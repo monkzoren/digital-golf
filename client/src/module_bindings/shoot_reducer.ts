@@ -13,4 +13,5 @@ import {
 export default {
   angle: __t.f32(),
   power: __t.f32(),
+  atTick: __t.u32(),
 };

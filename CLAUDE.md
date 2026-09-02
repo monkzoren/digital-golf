@@ -20,7 +20,12 @@ README.md for architecture and run instructions. Key facts:
   designed around hidden holes-in-one); `spacetimedb/scripts/course-check.ts`
   (`npm run check-courses` in spacetimedb/) verifies every built-in hole
   with the real physics: ace exists, is narrow (< 4.5% of shots) and
-  hittable, greedy play finishes within par + 1, no shot rolls for ever.
+  hittable, greedy play finishes within par + 1, a ±3° "decent player"
+  averages about par, the ball travels ≥ 55/75/95 units for par 3/4/5, no
+  shot rolls for ever. MAX_SHOT is 30 (≈ 87 units of roll on green): a hole
+  should take several shots. Cannons LOAD a ball that rolls in; the next
+  shot uses `shotFrom` (lofted). The `shoot` reducer takes `atTick` and
+  rewinds ≤ 12 ticks (lag compensation).
   Run it after touching physics or courses. The module's private
   `roll_clock` table stops any ball still rolling after 15 s (pinball
   loops) — a safety net, not a design tool.

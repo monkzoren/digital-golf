@@ -19,7 +19,7 @@ export const FRICTION_ICE = 1.4;
 export const AIR_DRAG = 0.12; // per second, airborne only
 export const REST_SPEED = 0.42;
 export const MIN_SHOT = 3;
-export const MAX_SHOT = 36;
+export const MAX_SHOT = 30;
 export const MAX_SPEED = 46;
 export const CUP_R = 0.78; // capture radius (ball centre)
 export const CUP_PULL_R = 2.1; // the cup gently pulls slow balls in
@@ -44,7 +44,7 @@ export const rampRolls = (z: Zone) => zonePower(z) > FRICTION * RAMP_FRICTION_MU
 export const ZONE_DEFAULT_POWER: Record<Zone['kind'], number> = {
   sand: 0, ice: 0, water: 0, tele: 0,
   slope: 3.5, boost: 40, jump: 11,
-  conveyor: 6, spinner: 3, fan: 30, trampoline: 12, magnet: 25, cannon: 24,
+  conveyor: 6, spinner: 3, fan: 30, trampoline: 12, magnet: 25, cannon: 34,
 };
 export const CANNON_DEFAULT_LIFT = 10;
 export const zonePower = (z: Zone) => z.power ?? ZONE_DEFAULT_POWER[z.kind];
@@ -158,6 +158,23 @@ export function shotVelocity(angle: number, power: number, mul = 1) {
   const p = Math.max(0, Math.min(1, power));
   const speed = Math.min(MAX_SPEED, (MIN_SHOT + (MAX_SHOT - MIN_SHOT) * p) * mul);
   return { vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed };
+}
+
+/** The cannon zone a resting ball is loaded in, if any. */
+export function cannonAt(g: HoleGeom, x: number, y: number): Zone | null {
+  for (const z of g.zones) if (z.kind === 'cannon' && pointInRect(x, y, z)) return z;
+  return null;
+}
+
+/** A shot from where the ball sits: a putt on the felt, or — loaded in a
+ *  cannon — a lofted launch at the cannon's muzzle speed. The player aims
+ *  and powers both the same way. */
+export function shotFrom(g: HoleGeom, x: number, y: number, angle: number, power: number, mul = 1): { vx: number; vy: number; vz: number } {
+  const c = cannonAt(g, x, y);
+  if (!c) return { ...shotVelocity(angle, power, mul), vz: 0 };
+  const p = Math.max(0, Math.min(1, power));
+  const speed = Math.min(MAX_SPEED, (MIN_SHOT + (zonePower(c) - MIN_SHOT) * p) * mul);
+  return { vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, vz: c.lift ?? CANNON_DEFAULT_LIFT };
 }
 
 export const speedOf = (b: { vx: number; vy: number }) => Math.hypot(b.vx, b.vy);
@@ -359,7 +376,7 @@ function hitMovers(b: BallState, g: HoleGeom, tt: number): number {
 function surfacePush(zone: Zone | null, b: BallState): { x: number; y: number } | null {
   if (!zone) return null;
   switch (zone.kind) {
-    case 'conveyor': case 'fan': case 'cannon': return dirOf(zone);
+    case 'conveyor': case 'fan': return dirOf(zone);
     case 'slope': return rampRolls(zone) ? dirOf(zone) : null;
     case 'magnet': {
       const c = zoneCentre(zone);
@@ -452,19 +469,18 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
               ev.tele = true;
             }
             break;
-          case 'cannon':
-            // roll in, get fired: fixed direction, speed and loft
-            if (b.teleTicks === 0) {
-              const d = dirOf(zone);
-              const s = zonePower(zone);
-              b.vx = d.x * s; b.vy = d.y * s;
-              b.vz = zone.lift ?? CANNON_DEFAULT_LIFT;
-              b.z = ground + 0.01;
-              b.teleTicks = TELE_COOLDOWN_TICKS;
-              ev.jump = true;
-              carried = zone;
+          case 'cannon': {
+            // roll in and the cannon loads you: the ball stops in the
+            // barrel and the NEXT shot (shotFrom) is a lofted launch
+            const c = zoneCentre(zone);
+            if (Math.hypot(b.x - c.x, b.y - c.y) > 0.05 || speedOf(b) > 0) {
+              b.x = c.x; b.y = c.y; b.z = groundZ(g, c.x, c.y);
+              b.vx = 0; b.vy = 0; b.vz = 0;
+              ev.boost = true;
+              return;
             }
             break;
+          }
           case 'jump': {
             const s = speedOf(b);
             if (s > JUMP_MIN_SPEED) {

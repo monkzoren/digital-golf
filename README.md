@@ -14,7 +14,9 @@ TypeScript three.js game with a built-in course editor.
 
 - **Everyone shoots at once.** Up to 32 players per room, no turns. Press,
   pull back and release to putt (or hold ←/→ to aim, Shift for fine, and
-  hold Space for power). The arrow shows direction and power only — no
+  hold Space for power). The ball goes the instant you release: the client
+  predicts the shot and the server applies it at the tick you released on,
+  so timing a windmill never depends on your ping. The arrow shows direction and power only — no
   bounce preview, reading the walls is the skill. Balls collide with each
   other — bump a rival off the line, or get bumped. A ball a moving block
   squeezes into a wall is reset, never left stuck.
@@ -25,8 +27,9 @@ TypeScript three.js game with a built-in course editor.
   doors. The cup pulls slow balls in and skips fast ones.
 - **The toy box.** Conveyor belts, spinners (turntables that fling the
   ball), blower fans that float it across water, trampolines that bounce a
-  falling ball back up, magnets that pull (or, negative, push), cannons that
-  fire the ball in a fixed arc, pendulums, blinking laser gates, rubber
+  falling ball back up, magnets that pull (or, negative, push), cannons
+  that load the ball that rolls in and let you aim and fire it in an arc,
+  pendulums, blinking laser gates, rubber
   walls that return the ball harder than it arrived, and per-hole gravity
   (moon holes). Every piece has its own hole on the built-in *Toy Box*
   course — duplicate it in the editor to see how each one is set up.
@@ -39,8 +42,9 @@ TypeScript three.js game with a built-in course editor.
 - **Nine built-in courses, 81 holes.** Sunny Park (the tutorial), Neon
   Orbit and Toy Box (one hole per gadget) show the pieces off; the launch
   library — Bank Shot Alley, Clockwork, Ramp Ridge, Machine Works, Frost &
-  Flame and the championship Grand Tour — is built around **hidden
-  holes-in-one**: every hole has an ace line, verified with the real
+  Flame and the championship Grand Tour — is long (two to five stages of
+  hazards, 60–150 units of travel, par 3–5) and built around **hidden
+  holes-in-one**: most holes have an ace line, verified with the real
   physics, that is never the obvious one (a carom, a timed gap, a launch,
   a gadget chain) and is narrow enough to be a feat. Plus **unlimited
   player-made courses.**
@@ -115,9 +119,11 @@ VERBOSE=1 npm run check-courses -- "Grand"          # print the ace lines
 ```
 
 A library hole passes when an ace exists, spans at least a few fine-grid
-cells (humanly hittable), covers under ~4.5% of random shots (hidden), and
-the greedy player finishes within par + 1. Ramps are wedges: enter them
-from the low edge — a ramp met side-on or from its top is a step the ball
+cells (humanly hittable), covers under ~4.5% of random shots (hidden), a
+"decent player" (the greedy line with ±3° / ±6% wobble) averages about
+par, the ball travels far enough for the par (55 / 75 / 95 units for par
+3 / 4 / 5) and nothing rolls for ever. Ramps are wedges: enter them from
+the low edge — a ramp met side-on or from its top is a step the ball
 bounces off.
 
 ## Run it locally

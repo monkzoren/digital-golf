@@ -644,11 +644,11 @@ export const TOYBOX: Course = {
     {
       name: 'Cannon',
       par: 2,
-      tip: 'Roll into the cannon; it fires you clean over the water.',
+      tip: 'Roll into the cannon to load it, then aim and fire: the shot flies.',
       tee: { x: 4, y: 5 },
       cup: { x: 46, y: 5 },
       floor: [R(0, 0, 50, 10)],
-      zones: [cannon(14, 2, 4, 6, 0, 30, 9), water(20, 0, 12, 10)],
+      zones: [cannon(14, 2, 4, 6, 0, 34, 9), water(20, 0, 12, 10)],
     },
     {
       name: 'Swing and Zap',
