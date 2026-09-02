@@ -3025,17 +3025,12 @@ const SPINNER_H = 0.07; // the turntable stands this proud of the felt
 const BELT_H = 0.06; // belt slab thickness
 const ROLLER_R = 0.11;
 
-/** A spinner: a felt turntable in a steel collar, sunk in a dark pit, with a
- *  chromed hub. The disc (and hub) turn; the collar and pit stay put. */
+/** A spinner: a felt turntable in a steel collar set straight into the felt,
+ *  with a chromed hub. The disc (and hub) turn; the collar stays put. */
 function spinnerMesh(z: Zone, cx: number, cz: number, topMat: THREE.Material): THREE.Group {
   const r = Math.min(z.w, z.h) / 2;
   const root = new THREE.Group();
   root.position.set(cx, FLOOR_Y, cz);
-  const pit = new THREE.Mesh(new THREE.PlaneGeometry(z.w, z.h), SPINNER_PIT_MAT);
-  pit.rotation.x = -Math.PI / 2;
-  pit.position.y = 0.011;
-  pit.receiveShadow = true;
-  root.add(pit);
   // the collar: a flat steel ring around the disc with a gap it turns in
   const collar = new THREE.Mesh(new THREE.RingGeometry(r + 0.05, r + 0.22, 64), SPINNER_RIM_MAT);
   collar.rotation.x = -Math.PI / 2;
@@ -3153,11 +3148,10 @@ const BED_MAT = std({ color: 0xffffff, roughness: 1, side: THREE.BackSide });
 const BELT_SIDE_MAT = metal({ color: 0x353a45, roughness: 0.55, metalness: 0.6 });
 const RAIL_MAT = gloss({ color: 0xffc21a, roughness: 0.4 });
 const ROLLER_MAT = metal({ color: 0xb8bcc4, roughness: 0.3, flatShading: true });
-const SPINNER_PIT_MAT = std({ color: 0x151a17, roughness: 0.65, metalness: 0.25 });
 const SPINNER_RIM_MAT = metal({ color: 0x9aa4b8, roughness: 0.42 });
 const HUB_MAT = metal({ color: 0xc9cfd8, roughness: 0.34 });
 const STOCK_MATS: THREE.Material[] = [FELT_MAT, WALL_MAT, WALL_LOW_MAT, WALL_SIDE_MAT, RUBBER_MAT, LASER_ON_MAT, LASER_OFF_MAT, CANNON_MAT, CANNON_RIM_MAT, FAN_BLADE_MAT, BED_MAT,
-  BELT_SIDE_MAT, RAIL_MAT, ROLLER_MAT, SPINNER_PIT_MAT, SPINNER_RIM_MAT, HUB_MAT];
+  BELT_SIDE_MAT, RAIL_MAT, ROLLER_MAT, SPINNER_RIM_MAT, HUB_MAT];
 
 // Water is a real pond: the felt is carved away over the zone, a pebble bed
 // sits a little way down, and a translucent, rippling surface lies over it.
