@@ -17,7 +17,7 @@ export interface GraphicsSettings {
   particles: boolean;
   /** Motion trail spheres behind the ball. */
   trail: boolean;
-  /** Crowd stands, hoardings, umpire chair, court surface noise. */
+  /** Crowd stands, hoardings, floodlights, court surface noise. */
   detail: boolean;
   /** ACES tone mapping + the canvas color wash. */
   grade: boolean;

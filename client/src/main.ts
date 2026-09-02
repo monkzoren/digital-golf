@@ -20,7 +20,8 @@ import { KB_TURN_RATE, KB_TURN_RATE_FINE, dragAim, smoothAngle } from './aim';
 import { CHARACTERS, type Character } from './characters';
 import { type GraphicsSettings, type PresetName, applyPreset, getGraphics, onGraphicsChange, presetOf, setGraphics } from './graphics';
 import { isMuted, setMuted, sfx, unlockAudio } from './audio';
-import { openEditor, closeEditor, editorIsOpen } from './editor';
+import { openEditor, closeEditor, editorIsOpen, editorTesting, editorTestAimable, editorCancelTestAim } from './editor';
+import { bindFreeLook } from './freelook';
 import { drawHole, fitCamera, themeFor } from './render';
 
 declare const __BUILD_ID__: string;
@@ -895,7 +896,7 @@ function canShoot(): boolean {
 canvas.addEventListener('pointerdown', e => {
   unlockAudio();
   if (editorIsOpen() || !canShoot()) return;
-  if (e.button !== 0) return;
+  if (e.button !== 0 || drag.active) return;
   canvas.setPointerCapture(e.pointerId);
   // press anywhere, then pull: the aim starts from wherever it was pointing
   drag = { active: true, angle: kbAim.angle, shown: kbAim.angle, power: 0, x0: e.clientX, y0: e.clientY, basis: cameraGroundBasis() };
@@ -930,6 +931,15 @@ function fire(angle: number, power: number) {
 }
 canvas.addEventListener('pointercancel', () => { drag.active = false; });
 canvas.addEventListener('contextmenu', e => e.preventDefault());
+// Looking around: right/middle drag, a primary drag that is not a putt, two
+// fingers; wheel or pinch to zoom. Also serves the editor's test play.
+bindFreeLook(canvas, {
+  enabled: () => editorIsOpen() ? editorTesting() : overlayTarget === null,
+  leftIsAim: () => editorIsOpen() ? editorTestAimable() : canShoot(),
+  cancelAim: () => { drag.active = false; editorCancelTestAim(); },
+});
+/** C swaps the follow camera for the whole-hole view (cleared each hole). */
+let camOverview = false;
 function updateDrag(e: PointerEvent) {
   const r = dragAim(e.clientX - drag.x0, e.clientY - drag.y0, drag.basis, canvasCssSize().h, drag.angle);
   drag.angle = r.angle;
@@ -955,6 +965,7 @@ window.addEventListener('keydown', e => {
   if (e.key === 'Enter') { const ci = $('chat-input'); ci.classList.add('open'); ci.focus(); unreadChat = 0; e.preventDefault(); return; }
   if (e.key === 'Tab') { e.preventDefault(); const open = $('scores-modal').classList.contains('hidden'); modal('scores-modal', open); if (open) renderScorecard('scores-table'); return; }
   if (e.key >= '1' && e.key <= '6') { rd().sendEmote({ index: Number(e.key) - 1 }); return; }
+  if (e.key === 'c' || e.key === 'C') { camOverview = !camOverview; return; }
   if (e.key === 'Shift') held.fine = true;
   if (!canShoot()) return;
   // held keys turn the aim at a steady rate (integrated in the frame loop)
@@ -1009,6 +1020,7 @@ function frame(now: number) {
   if (lobby.holeId.toString() !== gameHoleKey) {
     gameHoleKey = lobby.holeId.toString();
     gameHoleObj = currentHole(lobby);
+    camOverview = false;
     tLocal = lobby.holeTick / TICK_HZ;
   }
   if (!gameHoleObj) { gameHoleObj = currentHole(lobby); if (!gameHoleObj) subscribeCourse(lobby.courseId); }
@@ -1075,7 +1087,7 @@ function frame(now: number) {
       seat: q.seat,
     });
   }
-  const cam: GolfScene['cam'] = lobby.phase === PH_INTRO ? 'overview' : lobby.phase === PH_RESULTS ? 'cup' : lobby.phase === PH_FINAL ? 'overview' : p.holed ? 'cup' : 'play';
+  const cam: GolfScene['cam'] = lobby.phase === PH_INTRO ? 'overview' : lobby.phase === PH_RESULTS ? 'cup' : lobby.phase === PH_FINAL ? 'overview' : p.holed ? 'cup' : camOverview ? 'overview' : 'play';
   drawScene({
     hole, holeKey: hole ? gameHoleKey : '', t: tLocal, players: scenePlayers,
     aim: aiming && hole ? { angle: aimAngle, power: aimPower, lockCam: drag.active } : null,
@@ -1118,7 +1130,7 @@ function renderHud(lobby: Lobby, p: Player, players: Player[], hole: Hole | null
   const boardHtml = html + (more > 0 ? `<div class="r"><span class="nm" style="color:var(--dim)">+${more} MORE · TAB</span></div>` : '');
   if (board.innerHTML !== boardHtml) board.innerHTML = boardHtml;
   $('help').textContent = p.holed ? 'IN THE HOLE — WAITING FOR THE OTHERS' : lobby.phase === PH_PLAY
-    ? (p.resting && !predicted ? (p.strokes >= lobby.maxStrokes ? 'OUT OF STROKES' : 'PRESS AND PULL BACK · RELEASE TO PUTT · HOLD ←/→ TO AIM (SHIFT = FINE) · HOLD SPACE · TAB SCORECARD · ENTER CHAT · ESC MENU') : 'ROLLING…')
+    ? (p.resting && !predicted ? (p.strokes >= lobby.maxStrokes ? 'OUT OF STROKES' : 'PRESS AND PULL BACK · RELEASE TO PUTT · HOLD ←/→ TO AIM (SHIFT = FINE) · HOLD SPACE · RIGHT-DRAG LOOK · WHEEL ZOOM · C OVERVIEW · TAB SCORECARD · ENTER CHAT · ESC MENU') : 'ROLLING… · DRAG TO LOOK AROUND')
     : '';
   // name tags + emotes above the other balls
   const seen = new Set<string>();
