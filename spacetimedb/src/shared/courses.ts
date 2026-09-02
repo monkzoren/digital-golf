@@ -14,14 +14,21 @@ export interface Rect {
   h: number;
 }
 
-export type ZoneKind = 'sand' | 'ice' | 'water' | 'slope' | 'boost' | 'jump' | 'tele';
+export type ZoneKind =
+  | 'sand' | 'ice' | 'water' | 'slope' | 'boost' | 'jump' | 'tele'
+  | 'conveyor' | 'spinner' | 'fan' | 'trampoline' | 'magnet' | 'cannon';
 
 export interface Zone extends Rect {
   kind: ZoneKind;
-  /** slope / boost: direction in degrees (0 = +x, 90 = +y i.e. down). */
+  /** slope / boost / conveyor / fan / cannon: direction in degrees (0 = +x, 90 = +y i.e. down). */
   angle?: number;
-  /** slope: acceleration (u/s²) · boost: acceleration (u/s²) · jump: vz. */
+  /** slope: downhill acceleration (u/s², also sets how steep the ramp is) ·
+   *  boost: acceleration · jump: launch vz · conveyor: belt speed ·
+   *  spinner: rad/s (negative = the other way) · fan: blow acceleration ·
+   *  trampoline: bounce vz · magnet: pull (negative = push) · cannon: muzzle speed. */
   power?: number;
+  /** cannon: launch height (vz). */
+  lift?: number;
   /** tele: where the ball comes out. */
   tx?: number;
   ty?: number;
@@ -37,7 +44,9 @@ export interface Bumper {
 
 export type Motion =
   | { type: 'rotate'; cx: number; cy: number; speed: number } // rad/s, about (cx,cy)
-  | { type: 'slide'; dx: number; dy: number; period: number; phase?: number }; // seconds
+  | { type: 'slide'; dx: number; dy: number; period: number; phase?: number } // seconds
+  | { type: 'swing'; cx: number; cy: number; amp: number; period: number; phase?: number } // pendulum: ±amp degrees about (cx,cy)
+  | { type: 'blink'; period: number; duty: number; phase?: number }; // laser gate: solid for `duty` of each period
 
 /** A solid polygon. Static when it has no motion. `h` = wall height
  *  (default: unjumpable); the ball clears a low wall when its z exceeds h. */
@@ -45,10 +54,15 @@ export interface Block {
   pts: number[]; // flat x0,y0,x1,y1,… — convex or concave, any orientation
   h?: number;
   motion?: Motion;
-  /** for rotating blocks: a hub disc drawn/collided at (cx, cy) */
+  /** for rotating / swinging blocks: a hub disc drawn/collided at (cx, cy) */
   hub?: number;
+  /** wall bounciness multiplier (1 = a normal wall, 2 = rubber that fires the ball back harder) */
+  bounce?: number;
   /** editor metadata: how the polygon was generated (so it can be re-generated) */
-  gen?: { kind: 'windmill'; len: number; width: number; blades: number } | { kind: 'rect'; w: number; h: number; rot: number };
+  gen?:
+    | { kind: 'windmill'; len: number; width: number; blades: number }
+    | { kind: 'rect'; w: number; h: number; rot: number }
+    | { kind: 'bar'; len: number; width: number }; // a pendulum arm hanging (+y) from its pivot
 }
 
 export interface Hole {
@@ -66,6 +80,8 @@ export interface Hole {
   tip?: string;
   /** Visual theme (see client THEMES); defaults to the course's. */
   theme?: string;
+  /** Gravity multiplier (0.3 moon … 2 heavy); jumps, ramps and fans all feel it. */
+  gravity?: number;
 }
 
 export interface Course {
@@ -85,6 +101,8 @@ export interface Seg {
   by: number;
   /** wall height — the ball ignores this wall while its z is above it */
   h: number;
+  /** restitution override (rubber walls); default WALL_E */
+  e?: number;
 }
 
 const WALL_TALL = 1e9;
@@ -207,23 +225,46 @@ export function floorWalls(floor: Rect[]): Seg[] {
   return out;
 }
 
-export function polySegs(pts: number[], h = WALL_TALL): Seg[] {
+export function polySegs(pts: number[], h = WALL_TALL, e?: number): Seg[] {
   const out: Seg[] = [];
   const n = pts.length / 2;
   for (let i = 0; i < n; i++) {
     const j = (i + 1) % n;
-    out.push({ ax: pts[i * 2], ay: pts[i * 2 + 1], bx: pts[j * 2], by: pts[j * 2 + 1], h });
+    const s: Seg = { ax: pts[i * 2], ay: pts[i * 2 + 1], bx: pts[j * 2], by: pts[j * 2 + 1], h };
+    if (e !== undefined) s.e = e;
+    out.push(s);
   }
   return out;
+}
+
+/** A pendulum arm: a bar of `len` × `width` hanging down (+y) from (cx, cy). */
+export function barPts(cx: number, cy: number, len: number, width: number): number[] {
+  const hw = width / 2;
+  return [cx - hw, cy - hw * 0.5, cx + hw, cy - hw * 0.5, cx + hw, cy + len, cx - hw, cy + len];
+}
+
+/** Rotation (radians) of a rotate / swing block at time t; 0 for the rest. */
+export function motionAngle(m: Motion, t: number): number {
+  if (m.type === 'rotate') return m.speed * t;
+  if (m.type === 'swing') return ((m.amp * Math.PI) / 180) * Math.sin(((t / m.period) + (m.phase ?? 0)) * Math.PI * 2);
+  return 0;
+}
+
+/** Is a blinking (laser gate) block solid right now? Everything else: always. */
+export function moverActive(b: Block, t: number): boolean {
+  const m = b.motion;
+  if (!m || m.type !== 'blink') return true;
+  const f = ((t / m.period) + (m.phase ?? 0)) % 1;
+  return (f < 0 ? f + 1 : f) < m.duty;
 }
 
 /** A moving block's polygon at time t (seconds since the hole started). */
 export function blockPtsAt(b: Block, t: number): number[] {
   const m = b.motion;
-  if (!m) return b.pts;
+  if (!m || m.type === 'blink') return b.pts;
   const out = new Array<number>(b.pts.length);
-  if (m.type === 'rotate') {
-    const a = m.speed * t;
+  if (m.type === 'rotate' || m.type === 'swing') {
+    const a = motionAngle(m, t);
     const c = Math.cos(a), s = Math.sin(a);
     for (let i = 0; i < b.pts.length; i += 2) {
       const x = b.pts[i] - m.cx, y = b.pts[i + 1] - m.cy;
@@ -238,6 +279,21 @@ export function blockPtsAt(b: Block, t: number): number[] {
     }
   }
   return out;
+}
+
+/** Length of a slope zone measured along its downhill direction. */
+export function rampExtent(z: Zone): number {
+  const a = ((z.angle ?? 0) * Math.PI) / 180;
+  return Math.abs(z.w * Math.cos(a)) + Math.abs(z.h * Math.sin(a));
+}
+
+/** Where (x, y) sits along a slope's downhill run: 0 at the top edge, 1 at
+ *  the bottom edge (clamped). Height is proportional to 1 − this. */
+export function rampFrac(z: Zone, x: number, y: number): number {
+  const a = ((z.angle ?? 0) * Math.PI) / 180;
+  const ext = rampExtent(z) || 1;
+  const s = ((x - (z.x + z.w / 2)) * Math.cos(a) + (y - (z.y + z.h / 2)) * Math.sin(a)) / ext + 0.5;
+  return s < 0 ? 0 : s > 1 ? 1 : s;
 }
 
 export function holeBounds(hole: Hole) {
@@ -267,6 +323,31 @@ const bumper = (x: number, y: number, r = 1.1, kick = 9): Bumper => ({ x, y, r, 
 const post = (x: number, y: number, r = 0.8): Bumper => ({ x, y, r, kick: 0 });
 const slider = (x: number, y: number, w: number, h: number, dx: number, dy: number, period: number, phase = 0): Block =>
   ({ pts: rectPts(R(x, y, w, h)), motion: { type: 'slide', dx, dy, period, phase } });
+// the toy box
+const conveyor = (x: number, y: number, w: number, h: number, angle: number, power = 6): Zone =>
+  ({ kind: 'conveyor', x, y, w, h, angle, power });
+const spinner = (x: number, y: number, w: number, h: number, power = 3): Zone => ({ kind: 'spinner', x, y, w, h, power });
+const fan = (x: number, y: number, w: number, h: number, angle: number, power = 30): Zone =>
+  ({ kind: 'fan', x, y, w, h, angle, power });
+const trampoline = (x: number, y: number, w: number, h: number, power = 12): Zone => ({ kind: 'trampoline', x, y, w, h, power });
+const magnet = (x: number, y: number, w: number, h: number, power = 25): Zone => ({ kind: 'magnet', x, y, w, h, power });
+const cannon = (x: number, y: number, w: number, h: number, angle: number, power = 24, lift = 10): Zone =>
+  ({ kind: 'cannon', x, y, w, h, angle, power, lift });
+/** A pendulum arm hanging from (cx, cy), swinging ±amp degrees every `period` s. */
+export function pendulum(cx: number, cy: number, len: number, width: number, amp: number, period: number, phase = 0): Block {
+  return {
+    pts: barPts(cx, cy, len, width), motion: { type: 'swing', cx, cy, amp, period, phase },
+    hub: Math.max(0.4, width * 0.8), gen: { kind: 'bar', len, width },
+  };
+}
+/** A laser gate: a wall that is only there `duty` of every `period` seconds. */
+export function laser(x: number, y: number, w: number, h: number, period = 2.5, duty = 0.5, phase = 0): Block {
+  return { pts: rectPts(R(x, y, w, h)), motion: { type: 'blink', period, duty, phase }, gen: { kind: 'rect', w, h, rot: 0 } };
+}
+/** A rubber wall block: bounces the ball back harder than it arrived. */
+export function rubber(x: number, y: number, w: number, h: number, bounce = 2): Block {
+  return { pts: rectPts(R(x, y, w, h)), bounce, gen: { kind: 'rect', w, h, rot: 0 } };
+}
 
 export const PARK: Course = {
   id: 0,
@@ -490,7 +571,102 @@ export const NEON: Course = {
   ],
 };
 
-export const COURSES: Course[] = [PARK, NEON];
+/** Every toy in the box, one per hole — a tour for players and a crib
+ *  sheet for map makers (duplicate it in the editor and pull it apart). */
+export const TOYBOX: Course = {
+  id: 2,
+  name: 'Toy Box',
+  theme: 'park',
+  holes: [
+    {
+      name: 'Up and Over',
+      par: 2,
+      tip: 'A real ramp: roll up it with pace and drop off the top.',
+      tee: { x: 4, y: 5 },
+      cup: { x: 32, y: 5 },
+      floor: [R(0, 0, 36, 10)],
+      zones: [slope(12, 0, 8, 10, 180, 6)],
+    },
+    {
+      name: 'Belts',
+      par: 3,
+      tip: 'Conveyor belts carry the ball sideways. Aim upstream.',
+      tee: { x: 4, y: 7 },
+      cup: { x: 36, y: 7 },
+      floor: [R(0, 0, 40, 14)],
+      zones: [conveyor(10, 0, 6, 14, 90, 7), conveyor(22, 0, 6, 14, 270, 7)],
+      bumpers: [post(19, 3), post(19, 11)],
+    },
+    {
+      name: 'Turntable',
+      par: 3,
+      tip: 'The spinner flings whatever rolls onto it. Use it or skirt it.',
+      tee: { x: 4, y: 26 },
+      cup: { x: 26, y: 4 },
+      floor: [R(0, 0, 30, 30)],
+      zones: [spinner(9, 9, 12, 12, 2.5)],
+      bumpers: [post(24, 12), post(12, 24)],
+    },
+    {
+      name: 'Blower',
+      par: 2,
+      tip: 'The fan floats the ball over the water — if you roll in with speed.',
+      tee: { x: 4, y: 6 },
+      cup: { x: 36, y: 6 },
+      floor: [R(0, 0, 40, 12)],
+      zones: [fan(9, 0, 6, 12, 0, 30), water(17, 0, 9, 12)],
+    },
+    {
+      name: 'Boing',
+      par: 3,
+      tip: 'Off the ramp, onto the trampoline, over the wall.',
+      tee: { x: 4, y: 5 },
+      cup: { x: 40, y: 5 },
+      floor: [R(0, 0, 44, 10)],
+      zones: [slope(10, 0, 6, 10, 180, 9), trampoline(18, 0, 5, 10, 14)],
+      blocks: [{ ...polyRect(27, 0, 1, 10), h: 1.2 }],
+    },
+    {
+      name: 'Force Field',
+      par: 4,
+      tip: 'The cup sits in a repulsor. Come in hard, or hunt for the calm spot.',
+      tee: { x: 4, y: 10 },
+      cup: { x: 30, y: 10 },
+      floor: [R(0, 0, 36, 20)],
+      zones: [magnet(25, 5, 10, 10, -28), magnet(10, 12, 8, 8, 22)],
+    },
+    {
+      name: 'Cannon',
+      par: 2,
+      tip: 'Roll into the cannon; it fires you clean over the water.',
+      tee: { x: 4, y: 5 },
+      cup: { x: 46, y: 5 },
+      floor: [R(0, 0, 50, 10)],
+      zones: [cannon(14, 2, 4, 6, 0, 30, 9), water(20, 0, 12, 10)],
+    },
+    {
+      name: 'Swing and Zap',
+      par: 3,
+      tip: 'A pendulum sweeps the lane, then a laser gate blinks. Watch the rhythm.',
+      tee: { x: 4, y: 6 },
+      cup: { x: 41, y: 6 },
+      floor: [R(0, 0, 44, 12)],
+      blocks: [pendulum(22, 0, 9, 1.2, 60, 3), laser(32, 0, 1, 12, 2.5, 0.5), rubber(37, 4, 1, 4, 2)],
+    },
+    {
+      name: 'Moon',
+      par: 2,
+      tip: 'Low gravity: the jump pad sends you halfway to orbit.',
+      tee: { x: 4, y: 5 },
+      cup: { x: 36, y: 5 },
+      floor: [R(0, 0, 40, 10)],
+      zones: [jump(8, 0, 4, 10, 11), water(14, 0, 12, 10)],
+      gravity: 0.4,
+    },
+  ],
+};
+
+export const COURSES: Course[] = [PARK, NEON, TOYBOX];
 
 export function courseOf(id: number): Course {
   return COURSES[id] ?? COURSES[0];

@@ -22,7 +22,9 @@ export const LIMITS = {
 };
 
 export const THEME_NAMES = ['park', 'neon'];
-const ZONE_KINDS: ZoneKind[] = ['sand', 'ice', 'water', 'slope', 'boost', 'jump', 'tele'];
+const ZONE_KINDS: ZoneKind[] = ['sand', 'ice', 'water', 'slope', 'boost', 'jump', 'tele', 'conveyor', 'spinner', 'fan', 'trampoline', 'magnet', 'cannon'];
+/** zones whose `power` may be negative (it flips their direction) */
+const SIGNED_POWER: ZoneKind[] = ['spinner', 'magnet'];
 
 const num = (v: unknown) => typeof v === 'number' && Number.isFinite(v);
 const clampN = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
@@ -62,6 +64,20 @@ function cleanMotion(v: any): Motion | undefined {
     if (num(v.phase)) m.phase = r2(v.phase);
     return m;
   }
+  if (v.type === 'swing') {
+    if (!num(v.cx) || !num(v.cy) || !num(v.amp) || !num(v.period)) throw new Error('swing: bad params');
+    const m: Motion = {
+      type: 'swing', cx: r2(v.cx), cy: r2(v.cy), amp: r2(clampN(v.amp, 5, 180)), period: r2(clampN(v.period, 0.5, 30)),
+    };
+    if (num(v.phase)) m.phase = r2(v.phase);
+    return m;
+  }
+  if (v.type === 'blink') {
+    if (!num(v.period) || !num(v.duty)) throw new Error('blink: bad params');
+    const m: Motion = { type: 'blink', period: r2(clampN(v.period, 0.5, 30)), duty: r2(clampN(v.duty, 0.1, 0.9)) };
+    if (num(v.phase)) m.phase = r2(v.phase);
+    return m;
+  }
   throw new Error('unknown motion');
 }
 
@@ -89,6 +105,11 @@ export function cleanHole(raw: any): Hole {
     const tip = String(raw.tip).trim().slice(0, LIMITS.tipLen);
     if (tip) hole.tip = tip;
   }
+  if (raw.gravity != null) {
+    if (!num(raw.gravity)) throw new Error('bad gravity');
+    const gr = r2(clampN(raw.gravity, 0.3, 2));
+    if (gr !== 1) hole.gravity = gr;
+  }
   if (raw.blocks != null) {
     if (!Array.isArray(raw.blocks)) throw new Error('blocks must be a list');
     if (raw.blocks.length > LIMITS.blocks) throw new Error(`too many blocks (max ${LIMITS.blocks})`);
@@ -98,11 +119,18 @@ export function cleanHole(raw: any): Hole {
       const m = cleanMotion(b.motion);
       if (m) out.motion = m;
       if (b.hub != null) { if (!num(b.hub)) throw new Error(`block ${i + 1}: bad hub`); out.hub = r2(clampN(b.hub, 0.2, 5)); }
+      if (b.bounce != null) {
+        if (!num(b.bounce)) throw new Error(`block ${i + 1}: bad bounce`);
+        const bo = r2(clampN(b.bounce, 0.2, 2.5));
+        if (bo !== 1) out.bounce = bo;
+      }
       if (b.gen && typeof b.gen === 'object') {
         if (b.gen.kind === 'windmill' && num(b.gen.len) && num(b.gen.width) && num(b.gen.blades)) {
           out.gen = { kind: 'windmill', len: r2(clampN(b.gen.len, 0.5, 60)), width: r2(clampN(b.gen.width, 0.2, 10)), blades: clampN(Math.round(b.gen.blades), 2, 6) };
         } else if (b.gen.kind === 'rect' && num(b.gen.w) && num(b.gen.h) && num(b.gen.rot)) {
           out.gen = { kind: 'rect', w: r2(clampN(b.gen.w, 0.2, 400)), h: r2(clampN(b.gen.h, 0.2, 400)), rot: r2(b.gen.rot) };
+        } else if (b.gen.kind === 'bar' && num(b.gen.len) && num(b.gen.width)) {
+          out.gen = { kind: 'bar', len: r2(clampN(b.gen.len, 0.5, 60)), width: r2(clampN(b.gen.width, 0.2, 10)) };
         }
       }
       return out;
@@ -115,7 +143,11 @@ export function cleanHole(raw: any): Hole {
       if (!ZONE_KINDS.includes(z?.kind)) throw new Error(`zone ${i + 1}: unknown kind`);
       const out: Zone = { kind: z.kind, ...cleanRect(z, `zone ${i + 1}`) };
       if (z.angle != null) { if (!num(z.angle)) throw new Error(`zone ${i + 1}: bad angle`); out.angle = r2(((z.angle % 360) + 360) % 360); }
-      if (z.power != null) { if (!num(z.power)) throw new Error(`zone ${i + 1}: bad power`); out.power = r2(clampN(z.power, 0, 80)); }
+      if (z.power != null) {
+        if (!num(z.power)) throw new Error(`zone ${i + 1}: bad power`);
+        out.power = r2(clampN(z.power, SIGNED_POWER.includes(out.kind) ? -80 : 0, 80));
+      }
+      if (z.lift != null) { if (!num(z.lift)) throw new Error(`zone ${i + 1}: bad lift`); out.lift = r2(clampN(z.lift, 0, 30)); }
       if (out.kind === 'tele') {
         if (!num(z.tx) || !num(z.ty)) throw new Error(`zone ${i + 1}: teleporter has no exit`);
         out.tx = r2(z.tx); out.ty = r2(z.ty);

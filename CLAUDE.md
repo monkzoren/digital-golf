@@ -9,7 +9,13 @@ README.md for architecture and run instructions. Key facts:
   and the client (`@shared/*` alias in the client): `courses.ts` (types,
   geometry helpers, built-in courses), `physics.ts` (the simulation),
   `mapformat.ts` (hole JSON validation/limits). Keep them pure — no
-  SpacetimeDB, DOM, timers or randomness.
+  SpacetimeDB, DOM, timers or randomness. The ball's `z` is ABSOLUTE height:
+  slope zones are real wedges (`groundZ`/`rampRise`), so "on the ground"
+  means `z <= groundZ(x, y)`; use `restingOn(geom, ball)` not `isResting`.
+  Every zone kind (the toy box: conveyor, spinner, fan, trampoline, magnet,
+  cannon), block motion (rotate/slide/swing/blink) and block `bounce` must
+  be handled in physics.ts, mapformat.ts, render.ts (2D), render3d.ts (3D)
+  and editor.ts (tool + props); `TOYBOX` in courses.ts has one hole per piece.
 - `client/src/main.ts` owns connection, screens (tennis-style overlays +
   wipe), room, game loop, HUD. `aim.ts` is the drag-to-putt reading (screen-space
   pull through a camera basis frozen at pointer-down) shared with the

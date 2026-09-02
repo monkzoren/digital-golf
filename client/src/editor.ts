@@ -4,10 +4,13 @@
 // here is local until Save.
 import {
   type Block, type Bumper, type Hole, type Rect, type Zone, type ZoneKind,
-  holeBounds, pointInFloor, pointInPoly, pointInRect, rectPts, windmillPts,
+  barPts, holeBounds, pointInFloor, pointInPoly, pointInRect, rectPts, windmillPts,
 } from '@shared/courses';
 import { cleanHole, LIMITS, THEME_NAMES } from '@shared/mapformat';
-import { type BallState, DT, geomOf, invalidateGeom, isResting, newEvents, shotVelocity, stepBall } from '@shared/physics';
+import {
+  type BallState, CANNON_DEFAULT_LIFT, DT, ZONE_DEFAULT_POWER, geomOf, groundZ, invalidateGeom, newEvents, rampRise,
+  restingOn, shotVelocity, stepBall,
+} from '@shared/physics';
 import { type Camera, drawHole, fitCamera, s2w, THEMES, w2s } from './render';
 import { type AimBasis, type GolfScene, addShake, burstAt, cameraGroundBasis, canvasCssSize, drawScene, resetScene } from './render3d';
 import { dragAim, smoothAngle } from './aim';
@@ -29,7 +32,7 @@ export interface EditorOpts {
 }
 
 type Tool =
-  | 'select' | 'pan' | 'floor' | 'block' | 'lowblock' | 'windmill' | 'slider'
+  | 'select' | 'pan' | 'floor' | 'block' | 'lowblock' | 'windmill' | 'slider' | 'pendulum' | 'laser' | 'rubber'
   | 'bumper' | 'post' | 'tee' | 'cup' | ZoneKind;
 
 type Sel =
@@ -46,15 +49,24 @@ const TOOL_DEFS: { id: Tool; label: string; color: string; group: string; hint: 
   { id: 'lowblock', label: 'Low wall (jumpable)', color: '#e0c391', group: 'Obstacles', hint: 'Drag a low wall a jumping ball clears' },
   { id: 'windmill', label: 'Windmill', color: '#c9a36b', group: 'Obstacles', hint: 'Click to place a spinning windmill' },
   { id: 'slider', label: 'Sliding block', color: '#c9a36b', group: 'Obstacles', hint: 'Drag a block that slides back and forth' },
+  { id: 'pendulum', label: 'Pendulum', color: '#c9a36b', group: 'Obstacles', hint: 'Click to hang a swinging arm from that point' },
+  { id: 'laser', label: 'Laser gate', color: '#ff2d55', group: 'Obstacles', hint: 'Drag a wall that blinks on and off' },
+  { id: 'rubber', label: 'Rubber wall', color: '#ff7ad9', group: 'Obstacles', hint: 'Drag a wall that fires the ball back harder' },
   { id: 'bumper', label: 'Bumper', color: '#ff4b4b', group: 'Obstacles', hint: 'Click to place a pinball bumper' },
   { id: 'post', label: 'Post', color: '#8d99b5', group: 'Obstacles', hint: 'Click to place a round post' },
   { id: 'sand', label: 'Sand', color: '#e9d18c', group: 'Surfaces', hint: 'Drag a sand trap (slow)' },
   { id: 'ice', label: 'Ice', color: '#cfeeff', group: 'Surfaces', hint: 'Drag an ice patch (slippery)' },
   { id: 'water', label: 'Water', color: '#2f8fd8', group: 'Surfaces', hint: 'Drag a water hazard (+1 stroke, ball resets)' },
-  { id: 'slope', label: 'Slope', color: '#6b6b6b', group: 'Surfaces', hint: 'Drag a slope; set its direction in the panel' },
+  { id: 'slope', label: 'Ramp (slope)', color: '#6b6b6b', group: 'Surfaces', hint: 'Drag a ramp; arrows point downhill, strength sets how steep' },
   { id: 'boost', label: 'Boost pad', color: '#ff8a3d', group: 'Surfaces', hint: 'Drag a booster; set its direction in the panel' },
   { id: 'jump', label: 'Jump pad', color: '#ffd60a', group: 'Surfaces', hint: 'Drag a jump pad (needs speed to trigger)' },
   { id: 'tele', label: 'Teleporter', color: '#c77dff', group: 'Surfaces', hint: 'Drag a gate, then move its exit ring' },
+  { id: 'conveyor', label: 'Conveyor belt', color: '#2a2a33', group: 'Toy box', hint: 'Drag a belt that carries the ball along' },
+  { id: 'spinner', label: 'Spinner', color: '#7c5cff', group: 'Toy box', hint: 'Drag a turntable that flings the ball' },
+  { id: 'fan', label: 'Blower fan', color: '#5bd1ff', group: 'Toy box', hint: 'Drag a fan that floats the ball across' },
+  { id: 'trampoline', label: 'Trampoline', color: '#3d7bff', group: 'Toy box', hint: 'Drag a pad that bounces a falling ball back up' },
+  { id: 'magnet', label: 'Magnet', color: '#ff5fb8', group: 'Toy box', hint: 'Drag a field that pulls (or pushes) the ball' },
+  { id: 'cannon', label: 'Cannon', color: '#3a3f4a', group: 'Toy box', hint: 'Drag a cannon; roll in and it fires the ball' },
 ];
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -340,6 +352,15 @@ function onDown(e: PointerEvent) {
       sel = { kind: 'block', i: h.blocks.length - 1 }; tool = 'select'; buildTools(); renderProps();
       return;
     }
+    case 'pendulum': {
+      pushUndo();
+      h.blocks ??= [];
+      if (h.blocks.length >= LIMITS.blocks) { toast('Too many blocks', true); return; }
+      const gen = { kind: 'bar' as const, len: 6, width: 1.2 };
+      h.blocks.push({ pts: barPts(sx, sy, gen.len, gen.width), motion: { type: 'swing', cx: sx, cy: sy, amp: 60, period: 3 }, hub: 0.9, gen });
+      sel = { kind: 'block', i: h.blocks.length - 1 }; tool = 'select'; buildTools(); renderProps();
+      return;
+    }
     default:
       drag = { mode: 'create', x0: sx, y0: sy, x1: sx, y1: sy };
   }
@@ -388,21 +409,24 @@ function onUp(e: PointerEvent) {
     case 'floor':
       if (h.floor.length >= LIMITS.floorRects) { toast('Too many floor pieces', true); return; }
       h.floor.push({ x, y, w, h: hh }); sel = { kind: 'floor', i: h.floor.length - 1 }; break;
-    case 'block': case 'lowblock': case 'slider': {
+    case 'block': case 'lowblock': case 'slider': case 'laser': case 'rubber': {
       h.blocks ??= [];
       if (h.blocks.length >= LIMITS.blocks) { toast('Too many blocks', true); return; }
       const b: Block = { pts: rectPts({ x, y, w, h: hh }), gen: { kind: 'rect', w, h: hh, rot: 0 } };
       if (tool === 'lowblock') b.h = 0.5;
       if (tool === 'slider') b.motion = { type: 'slide', dx: 0, dy: 4, period: 3 };
+      if (tool === 'laser') b.motion = { type: 'blink', period: 2.5, duty: 0.5 };
+      if (tool === 'rubber') b.bounce = 2;
       h.blocks.push(b); sel = { kind: 'block', i: h.blocks.length - 1 }; break;
     }
     default: {
       h.zones ??= [];
       if (h.zones.length >= LIMITS.zones) { toast('Too many zones', true); return; }
       const z: Zone = { kind: tool as ZoneKind, x, y, w, h: hh };
-      if (z.kind === 'slope') { z.angle = 90; z.power = 3.5; }
-      if (z.kind === 'boost') { z.angle = 0; z.power = 40; }
-      if (z.kind === 'jump') z.power = 11;
+      const p = ZONE_DEFAULT_POWER[z.kind];
+      if (p) z.power = p;
+      if (z.kind === 'slope' || z.kind === 'boost' || z.kind === 'conveyor' || z.kind === 'fan' || z.kind === 'cannon') z.angle = 0;
+      if (z.kind === 'cannon') z.lift = CANNON_DEFAULT_LIFT;
       if (z.kind === 'tele') { z.tx = x + w + 3; z.ty = y + hh / 2; }
       h.zones.push(z); sel = { kind: 'zone', i: h.zones.length - 1 };
     }
@@ -435,7 +459,7 @@ function pick(w: { x: number; y: number }): Sel {
   const bl = h.blocks ?? [];
   for (let i = bl.length - 1; i >= 0; i--) {
     const b = bl[i];
-    if (b.motion?.type === 'rotate') { const g = b.gen; const len = g && g.kind === 'windmill' ? g.len : 4; if (Math.hypot(b.motion.cx - w.x, b.motion.cy - w.y) < len) return { kind: 'block', i }; }
+    if (b.motion?.type === 'rotate' || b.motion?.type === 'swing') { const g = b.gen; const len = g && (g.kind === 'windmill' || g.kind === 'bar') ? g.len : 4; if (Math.hypot(b.motion.cx - w.x, b.motion.cy - w.y) < len) return { kind: 'block', i }; }
     if (pointInPoly(w.x, w.y, b.pts)) return { kind: 'block', i };
     if (b.motion?.type === 'slide') { const c = centroid(b.pts); if (Math.hypot(c.x - w.x, c.y - w.y) < 2) return { kind: 'block', i }; }
   }
@@ -459,7 +483,7 @@ function moved(orig: Hole, s: Sel, dx: number, dy: number): Hole {
     case 'block': {
       const b = h.blocks![s.i];
       for (let i = 0; i < b.pts.length; i += 2) { b.pts[i] += dx; b.pts[i + 1] += dy; }
-      if (b.motion?.type === 'rotate') { b.motion.cx += dx; b.motion.cy += dy; }
+      if (b.motion?.type === 'rotate' || b.motion?.type === 'swing') { b.motion.cx += dx; b.motion.cy += dy; }
       break;
     }
   }
@@ -540,6 +564,7 @@ function renderProps() {
       ${field('Par', numIn('p-par', h.par, 1, 1, LIMITS.par))}
       ${field('Tip (intro card)', `<input type="text" id="p-tip" value="${esc(h.tip ?? '')}" maxlength="${LIMITS.tipLen}" />`)}
       ${field('Theme', `<select id="p-theme">${THEME_NAMES.map(t => `<option value="${t}"${(h.theme ?? 'park') === t ? ' selected' : ''}>${t.toUpperCase()}</option>`).join('')}</select>`)}
+      ${field('Gravity (1 = earth · 0.4 = moon · 2 = heavy)', numIn('p-gravity', h.gravity ?? 1, 0.1, 0.3, 2))}
       <div class="row wrap" style="margin-top:8px">
         <button class="btn small" id="p-dup">Duplicate hole</button>
         <button class="btn small" id="p-left" ${cur === 0 ? 'disabled' : ''}>◀ Move</button>
@@ -554,6 +579,7 @@ function renderProps() {
     ($('p-tip') as HTMLInputElement).onchange = e => { pushUndo(); h.tip = (e.target as HTMLInputElement).value.slice(0, LIMITS.tipLen); };
     ($('p-theme') as HTMLSelectElement).onchange = e => { pushUndo(); h.theme = (e.target as HTMLSelectElement).value; };
     bind('p-par', v => { h.par = Math.max(1, Math.min(LIMITS.par, Math.round(v))); });
+    bind('p-gravity', v => { const gr = Math.max(0.3, Math.min(2, v)); if (gr === 1) delete h.gravity; else h.gravity = gr; });
     $('p-dup').onclick = () => { if (holes.length >= LIMITS.holesPerCourse) return; holes.splice(cur + 1, 0, clone(h)); cur++; dirty = true; renderHoleTabs(); renderProps(); };
     $('p-left').onclick = () => { [holes[cur - 1], holes[cur]] = [holes[cur], holes[cur - 1]]; cur--; dirty = true; renderHoleTabs(); renderProps(); };
     $('p-right').onclick = () => { [holes[cur + 1], holes[cur]] = [holes[cur], holes[cur + 1]]; cur++; dirty = true; renderHoleTabs(); renderProps(); };
@@ -574,15 +600,38 @@ function renderProps() {
     const z = s.kind === 'zone' ? (r as Zone) : null;
     html = `<h3>${z ? z.kind.toUpperCase() : 'FLOOR'}</h3>
       <div class="grid2">${field('X', numIn('p-x', r.x))}${field('Y', numIn('p-y', r.y))}${field('W', numIn('p-w', r.w, 0.5, 0.5))}${field('H', numIn('p-h', r.h, 0.5, 0.5))}</div>`;
-    if (z && (z.kind === 'slope' || z.kind === 'boost')) html += field('Direction (° · 0 = right, 90 = down)', `<input type="range" id="p-angle" min="0" max="359" step="1" value="${z.angle ?? 0}" /><div class="tiny" id="p-angle-v">${z.angle ?? 0}°</div>`) + field(z.kind === 'slope' ? 'Strength (u/s²)' : 'Boost (u/s²)', numIn('p-power', z.power ?? (z.kind === 'slope' ? 3.5 : 40), 0.5, 0, 80));
-    if (z && z.kind === 'jump') html += field('Launch (vz)', numIn('p-power', z.power ?? 11, 0.5, 2, 30));
-    if (z && z.kind === 'tele') html += `<div class="grid2">${field('Exit X', numIn('p-tx', z.tx ?? 0))}${field('Exit Y', numIn('p-ty', z.ty ?? 0))}</div><div class="tiny">Drag the dashed ring to move the exit.</div>`;
+    if (z) {
+      const directional = ['slope', 'boost', 'conveyor', 'fan', 'cannon'].includes(z.kind);
+      const dirLabel = z.kind === 'slope' ? 'Downhill direction (° · 0 = right, 90 = down)' : z.kind === 'cannon' ? 'Fires toward (° · 0 = right, 90 = down)' : 'Direction (° · 0 = right, 90 = down)';
+      if (directional) html += field(dirLabel, `<input type="range" id="p-angle" min="0" max="359" step="1" value="${z.angle ?? 0}" /><div class="tiny" id="p-angle-v">${z.angle ?? 0}°</div>`);
+      const power = z.power ?? ZONE_DEFAULT_POWER[z.kind];
+      const powerField: Partial<Record<ZoneKind, [string, number, number, number]>> = {
+        slope: ['Steepness (u/s² downhill)', 0.5, 0.5, 30],
+        boost: ['Boost (u/s²)', 0.5, 0, 80],
+        jump: ['Launch (vz)', 0.5, 2, 30],
+        conveyor: ['Belt speed (u/s)', 0.5, 0.5, 30],
+        spinner: ['Spin (rad/s · negative = the other way)', 0.5, -8, 8],
+        fan: ['Blow (u/s²)', 1, 5, 80],
+        trampoline: ['Bounce (vz)', 0.5, 3, 30],
+        magnet: ['Pull (u/s² · negative = push away)', 1, -80, 80],
+        cannon: ['Muzzle speed (u/s)', 1, 5, 46],
+      };
+      const pf = powerField[z.kind];
+      if (pf) html += field(pf[0], numIn('p-power', power, pf[1], pf[2], pf[3]));
+      if (z.kind === 'slope') html += `<div class="tiny">Ramp rises ${rampRise(z).toFixed(2)} u from its bottom edge to its top edge. The ball climbs it, drops off the top and bounces off the back and sides.</div>`;
+      if (z.kind === 'cannon') html += field('Loft (launch vz)', numIn('p-lift', z.lift ?? CANNON_DEFAULT_LIFT, 0.5, 0, 30));
+      if (z.kind === 'spinner') html += '<div class="tiny">The disc fills the smaller side of the rectangle.</div>';
+      if (z.kind === 'fan') html += '<div class="tiny">Works on the ground and in the air: floats the ball ~2 u up and shoves it along.</div>';
+      if (z.kind === 'trampoline') html += '<div class="tiny">Only a FALLING ball bounces — pair it with a ramp, jump pad or cannon.</div>';
+      if (z.kind === 'tele') html += `<div class="grid2">${field('Exit X', numIn('p-tx', z.tx ?? 0))}${field('Exit Y', numIn('p-ty', z.ty ?? 0))}</div><div class="tiny">Drag the dashed ring to move the exit.</div>`;
+    }
     el.innerHTML = html + delBtn;
     bind('p-x', v => { r.x = v; }); bind('p-y', v => { r.y = v; }); bind('p-w', v => { r.w = Math.max(0.5, v); }); bind('p-h', v => { r.h = Math.max(0.5, v); });
     if (z) {
       const ang = $('p-angle') as HTMLInputElement | null;
       if (ang) ang.oninput = () => { z.angle = Number(ang.value); $('p-angle-v').textContent = `${z.angle}°`; dirty = true; };
       bind('p-power', v => { z.power = v; });
+      bind('p-lift', v => { z.lift = v; });
       bind('p-tx', v => { z.tx = v; }); bind('p-ty', v => { z.ty = v; });
     }
     $('p-delete').onclick = deleteSel;
@@ -605,12 +654,21 @@ function renderProps() {
     const b = h.blocks![s.i];
     const c = centroid(b.pts);
     const gen = b.gen;
-    html = `<h3>${b.motion?.type === 'rotate' ? 'WINDMILL' : b.motion?.type === 'slide' ? 'SLIDING BLOCK' : b.h !== undefined ? 'LOW WALL' : 'WALL BLOCK'}</h3>`;
-    html += `<div class="grid2">${field('Centre X', numIn('p-cx', round2(c.x)))}${field('Centre Y', numIn('p-cy', round2(c.y)))}</div>`;
+    const mt = b.motion?.type;
+    const title = mt === 'rotate' ? 'WINDMILL' : mt === 'slide' ? 'SLIDING BLOCK' : mt === 'swing' ? 'PENDULUM' : mt === 'blink' ? 'LASER GATE'
+      : b.bounce && b.bounce > 1 ? 'RUBBER WALL' : b.h !== undefined ? 'LOW WALL' : 'WALL BLOCK';
+    html = `<h3>${title}</h3>`;
+    const pivot = b.motion && (b.motion.type === 'rotate' || b.motion.type === 'swing') ? b.motion : null;
+    if (pivot) html += `<div class="grid2">${field('Pivot X', numIn('p-cx', round2(pivot.cx)))}${field('Pivot Y', numIn('p-cy', round2(pivot.cy)))}</div>`;
+    else html += `<div class="grid2">${field('Centre X', numIn('p-cx', round2(c.x)))}${field('Centre Y', numIn('p-cy', round2(c.y)))}</div>`;
     if (gen?.kind === 'rect') html += `<div class="grid2">${field('Width', numIn('p-w', gen.w, 0.5, 0.2))}${field('Height', numIn('p-h', gen.h, 0.5, 0.2))}</div>${field('Rotation °', numIn('p-rot', gen.rot, 5))}`;
     if (gen?.kind === 'windmill') html += `<div class="grid2">${field('Blade length', numIn('p-len', gen.len, 0.5, 0.5, 60))}${field('Blade width', numIn('p-wid', gen.width, 0.1, 0.2, 10))}</div>${field('Blades', numIn('p-blades', gen.blades, 1, 2, 6))}`;
+    if (gen?.kind === 'bar') html += `<div class="grid2">${field('Arm length', numIn('p-len', gen.len, 0.5, 0.5, 60))}${field('Arm width', numIn('p-wid', gen.width, 0.1, 0.2, 10))}</div>`;
     if (b.motion?.type === 'rotate') html += field('Spin (rad/s, − reverses)', numIn('p-speed', b.motion.speed, 0.1, -6, 6));
+    if (b.motion?.type === 'swing') html += `<div class="grid2">${field('Swing ± °', numIn('p-amp', b.motion.amp, 5, 5, 180))}${field('Period (s)', numIn('p-period', b.motion.period, 0.5, 0.5, 30))}</div>${field('Phase (0–1)', numIn('p-phase', b.motion.phase ?? 0, 0.25, 0, 1))}<div class="tiny">The arm hangs down (+y) from its pivot and swings side to side.</div>`;
     if (b.motion?.type === 'slide') html += `<div class="grid2">${field('Travel X', numIn('p-dx', b.motion.dx, 0.5, -60, 60))}${field('Travel Y', numIn('p-dy', b.motion.dy, 0.5, -60, 60))}</div><div class="grid2">${field('Period (s)', numIn('p-period', b.motion.period, 0.5, 0.5, 30))}${field('Phase (0–1)', numIn('p-phase', b.motion.phase ?? 0, 0.25, 0, 1))}</div>`;
+    if (b.motion?.type === 'blink') html += `<div class="grid2">${field('Period (s)', numIn('p-period', b.motion.period, 0.5, 0.5, 30))}${field('On for (0–1 of period)', numIn('p-duty', b.motion.duty, 0.1, 0.1, 0.9))}</div>${field('Phase (0–1)', numIn('p-phase', b.motion.phase ?? 0, 0.25, 0, 1))}<div class="tiny">Solid while lit. A ball caught inside when it lights up is reset.</div>`;
+    html += field('Bounce (1 = wall · 2 = rubber · 0.5 = dead)', numIn('p-bounce', b.bounce ?? 1, 0.25, 0.2, 2.5));
     html += field('Height (blank = solid, ≤ 1 = jumpable)', numIn('p-hgt', b.h ?? 0, 0.5, 0, 50));
     el.innerHTML = html + delBtn;
     const regen = () => {
@@ -620,14 +678,22 @@ function renderProps() {
       } else if (gen?.kind === 'windmill' && b.motion?.type === 'rotate') {
         b.pts = windmillPts(b.motion.cx, b.motion.cy, gen.len, gen.width, gen.blades);
         b.hub = Math.max(0.5, gen.width * 0.9);
+      } else if (gen?.kind === 'bar' && b.motion?.type === 'swing') {
+        b.pts = barPts(b.motion.cx, b.motion.cy, gen.len, gen.width);
+        b.hub = Math.max(0.4, gen.width * 0.8);
       }
     };
-    bind('p-cx', v => { holes[cur] = moved(h, s, v - c.x, 0); });
-    bind('p-cy', v => { holes[cur] = moved(h, s, 0, v - c.y); });
+    const ox = pivot ? pivot.cx : c.x, oy = pivot ? pivot.cy : c.y;
+    bind('p-cx', v => { holes[cur] = moved(h, s, v - ox, 0); });
+    bind('p-cy', v => { holes[cur] = moved(h, s, 0, v - oy); });
     if (gen?.kind === 'rect') { bind('p-w', v => { gen.w = v; regen(); }); bind('p-h', v => { gen.h = v; regen(); }); bind('p-rot', v => { gen.rot = v; regen(); }); }
     if (gen?.kind === 'windmill') { bind('p-len', v => { gen.len = v; regen(); }); bind('p-wid', v => { gen.width = v; regen(); }); bind('p-blades', v => { gen.blades = Math.round(v); regen(); }); }
+    if (gen?.kind === 'bar') { bind('p-len', v => { gen.len = v; regen(); }); bind('p-wid', v => { gen.width = v; regen(); }); }
     if (b.motion?.type === 'rotate') bind('p-speed', v => { (b.motion as any).speed = v; });
+    if (b.motion?.type === 'swing') { bind('p-amp', v => { (b.motion as any).amp = v; }); bind('p-period', v => { (b.motion as any).period = Math.max(0.5, v); }); bind('p-phase', v => { (b.motion as any).phase = v; }); }
     if (b.motion?.type === 'slide') { bind('p-dx', v => { (b.motion as any).dx = v; }); bind('p-dy', v => { (b.motion as any).dy = v; }); bind('p-period', v => { (b.motion as any).period = Math.max(0.5, v); }); bind('p-phase', v => { (b.motion as any).phase = v; }); }
+    if (b.motion?.type === 'blink') { bind('p-period', v => { (b.motion as any).period = Math.max(0.5, v); }); bind('p-duty', v => { (b.motion as any).duty = Math.max(0.1, Math.min(0.9, v)); }); bind('p-phase', v => { (b.motion as any).phase = v; }); }
+    bind('p-bounce', v => { if (v === 1) delete b.bounce; else b.bounce = Math.max(0.2, Math.min(2.5, v)); });
     bind('p-hgt', v => { if (v <= 0) delete b.h; else b.h = v; });
     $('p-delete').onclick = deleteSel;
   }
@@ -726,8 +792,9 @@ function stopTest() {
   renderProps();
 }
 function placeTestBall(x: number, y: number) {
-  testBall = { x, y, z: 0, vx: 0, vy: 0, vz: 0, teleTicks: 0 };
+  testBall = { x, y, z: groundZ(geomOf(hole()), x, y), vx: 0, vy: 0, vz: 0, teleTicks: 0 };
 }
+const testResting = () => restingOn(geomOf(hole()), testBall);
 function resetTestBall() {
   const h = hole();
   placeTestBall(h.tee.x, h.tee.y);
@@ -740,7 +807,7 @@ function toggleTestCam() {
   $('ed-test-cam').textContent = testCam === 'play' ? 'Camera' : 'Camera: overview';
 }
 function testDown(e: PointerEvent) {
-  if (!open || !testing || e.button !== 0 || !isResting(testBall)) return;
+  if (!open || !testing || e.button !== 0 || !testResting()) return;
   gameCanvas().setPointerCapture(e.pointerId);
   testAim = { active: true, angle: testAim.angle, shown: testAim.angle, power: 0, x0: e.clientX, y0: e.clientY, basis: cameraGroundBasis() };
 }
@@ -754,7 +821,7 @@ function testUp(e: PointerEvent) {
   if (!testAim.active) return;
   testMove(e);
   testAim.active = false;
-  if (testAim.power < 0.04 || !isResting(testBall)) return;
+  if (testAim.power < 0.04 || !testResting()) return;
   const v = shotVelocity(testAim.shown, testAim.power);
   testSafe = { x: testBall.x, y: testBall.y };
   testBall.vx = v.vx; testBall.vy = v.vy; testStruck = true;
@@ -795,7 +862,7 @@ function testStep(dt: number) {
       placeTestBall(testSafe.x, testSafe.y);
       testStruck = false;
     }
-    if (isResting(testBall)) testStruck = false;
+    if (testResting()) testStruck = false;
   }
 }
 /** Draw the test on the 3D stage (the editor's own canvas is hidden). */
@@ -803,7 +870,7 @@ function drawTest(dt: number) {
   const h = hole();
   testStep(dt);
   if (testAim.active) testAim.shown = smoothAngle(testAim.shown, testAim.angle, dt);
-  const resting = isResting(testBall);
+  const resting = testResting();
   const speed = Math.hypot(testBall.vx, testBall.vy);
   if (testAim.active) testFacing = testAim.shown;
   else if (speed > 1.5) testFacing = Math.atan2(testBall.vy, testBall.vx);
@@ -895,7 +962,7 @@ function drawSelection(g: CanvasRenderingContext2D, h: Hole) {
     case 'teleExit': { const z = h.zones![sel.i]; ring(z.tx!, z.ty!, 1.0); break; }
     case 'block': {
       const b = h.blocks![sel.i];
-      if (b.motion?.type === 'rotate') ring(b.motion.cx, b.motion.cy, (b.gen?.kind === 'windmill' ? b.gen.len : 4) + 0.3);
+      if (b.motion?.type === 'rotate' || b.motion?.type === 'swing') ring(b.motion.cx, b.motion.cy, (b.gen?.kind === 'windmill' || b.gen?.kind === 'bar' ? b.gen.len : 4) + 0.3);
       break;
     }
   }

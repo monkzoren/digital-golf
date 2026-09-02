@@ -3,7 +3,8 @@
 // pure: no SpacetimeDB, no DOM, no randomness.
 import {
   type Block, type Bumper, type Hole, type Seg, type Zone,
-  blockPtsAt, floorWalls, pointInFloor, pointInPoly, pointInRect, polySegs,
+  blockPtsAt, floorWalls, moverActive, pointInFloor, pointInPoly, pointInRect, polySegs,
+  rampExtent, rampFrac,
 } from './courses';
 
 export const TICK_HZ = 30;
@@ -27,15 +28,28 @@ export const CAPTURE_SPEED = 12.5; // faster than this and the ball skips the cu
 export const TELE_COOLDOWN_TICKS = 24;
 export const JUMP_MIN_SPEED = 2.5;
 export const BUMPER_KICK_MAX_SPEED = 18;
+export const RAMP_MAX_SIN = 0.7; // steepest ramp: ~45°
+export const FAN_HOVER_Z = 2.2; // a blower floats the ball about this high
+export const STEP_CLIMB = 0.25; // a rolling ball climbs a ramp side this much lower than its centre
+
+// Defaults for the zone `power` field (and cannon `lift`), by kind.
+export const ZONE_DEFAULT_POWER: Record<Zone['kind'], number> = {
+  sand: 0, ice: 0, water: 0, tele: 0,
+  slope: 3.5, boost: 40, jump: 11,
+  conveyor: 6, spinner: 3, fan: 30, trampoline: 12, magnet: 25, cannon: 24,
+};
+export const CANNON_DEFAULT_LIFT = 10;
+export const zonePower = (z: Zone) => z.power ?? ZONE_DEFAULT_POWER[z.kind];
 
 export interface BallState {
   x: number;
   y: number;
+  /** height above the felt — absolute, so a ball on a ramp carries the ramp's height */
   z: number;
   vx: number;
   vy: number;
   vz: number;
-  /** ticks until the ball may use a teleporter again */
+  /** ticks until the ball may use a teleporter / cannon again */
   teleTicks: number;
 }
 
@@ -43,18 +57,20 @@ export interface StepEvents {
   wall: number; // strongest wall impact this tick (normal speed), 0 = none
   bumper: boolean;
   water: boolean;
-  jump: boolean;
+  jump: boolean; // jump pad, trampoline, cannon
   tele: boolean;
-  boost: boolean;
+  boost: boolean; // boost pad, conveyor, fan
   holed: boolean;
   land: boolean;
-  oob: boolean; // fell off the world — caller resets the ball
+  oob: boolean; // fell off the world / stuck in a wall — caller resets the ball
 }
 
 export const newEvents = (): StepEvents => ({
   wall: 0, bumper: false, water: false, jump: false, tele: false, boost: false,
   holed: false, land: false, oob: false,
 });
+
+interface RampFace { seg: Seg; zone: Zone }
 
 export interface HoleGeom {
   hole: Hole;
@@ -64,6 +80,11 @@ export interface HoleGeom {
   movers: Block[];
   bumpers: Bumper[];
   zones: Zone[];
+  /** slope zones — each is a wedge the ball rolls up and down */
+  ramps: Zone[];
+  /** the wedges' outer faces: a ball on the flat bounces off them like a low wall */
+  rampFaces: RampFace[];
+  gravity: number;
 }
 
 // Geometry is derived once per Hole object and remembered for as long as
@@ -84,11 +105,44 @@ export function geomOf(hole: Hole): HoleGeom {
   const solids: Block[] = [];
   for (const b of hole.blocks ?? []) {
     if (b.motion) movers.push(b);
-    else { solids.push(b); staticSegs.push(...polySegs(b.pts, b.h)); }
+    else { solids.push(b); staticSegs.push(...polySegs(b.pts, b.h, wallE(b))); }
   }
-  g = { hole, staticSegs, solids, movers, bumpers: hole.bumpers ?? [], zones: hole.zones ?? [] };
+  const zones = hole.zones ?? [];
+  const ramps = zones.filter(z => z.kind === 'slope');
+  const rampFaces: RampFace[] = [];
+  for (const z of ramps) {
+    const c = [z.x, z.y, z.x + z.w, z.y, z.x + z.w, z.y + z.h, z.x, z.y + z.h];
+    for (let i = 0; i < 4; i++) {
+      const j = (i + 1) % 4;
+      rampFaces.push({ seg: { ax: c[i * 2], ay: c[i * 2 + 1], bx: c[j * 2], by: c[j * 2 + 1], h: 1e9 }, zone: z });
+    }
+  }
+  g = {
+    hole, staticSegs, solids, movers, bumpers: hole.bumpers ?? [], zones, ramps, rampFaces,
+    gravity: GRAVITY * (hole.gravity ?? 1),
+  };
   geomCache.set(hole, g);
   return g;
+}
+
+/** Restitution of a block's walls: rubber walls bounce harder than they are hit. */
+export function wallE(b: Block): number | undefined {
+  return b.bounce !== undefined && b.bounce !== 1 ? Math.min(1.6, WALL_E * b.bounce) : undefined;
+}
+
+/** How much a slope zone rises from its bottom edge to its top edge: the
+ *  acceleration it applies is g·sin θ, so the wedge is drawn to match. */
+export function rampRise(z: Zone): number {
+  const sin = Math.min(RAMP_MAX_SIN, Math.max(0, zonePower(z) / GRAVITY));
+  return rampExtent(z) * Math.tan(Math.asin(sin));
+}
+
+/** Height of the felt under (x, y): 0 on the flat, up the wedge on a slope. */
+export function groundZ(g: HoleGeom, x: number, y: number): number {
+  for (const z of g.ramps) {
+    if (pointInRect(x, y, z)) return rampRise(z) * (1 - rampFrac(z, x, y));
+  }
+  return 0;
 }
 
 /** `mul` is the room's shot-power option (1 = normal, 1.3 = turbo). */
@@ -100,13 +154,20 @@ export function shotVelocity(angle: number, power: number, mul = 1) {
 
 export const speedOf = (b: { vx: number; vy: number }) => Math.hypot(b.vx, b.vy);
 
-export function isResting(b: BallState): boolean {
-  return b.z <= 0.001 && b.vz === 0 && b.vx === 0 && b.vy === 0;
+/** At rest on the felt (`ground` = the felt height under the ball). */
+export function isResting(b: BallState, ground = 0): boolean {
+  return b.z <= ground + 0.001 && b.vz === 0 && b.vx === 0 && b.vy === 0;
+}
+
+/** isResting against the real felt height at the ball's position. */
+export function restingOn(g: HoleGeom, b: BallState): boolean {
+  return isResting(b, groundZ(g, b.x, b.y));
 }
 
 // Priority when zones overlap: the first kind listed wins.
 const ZONE_PRIORITY: Record<Zone['kind'], number> = {
-  water: 0, tele: 1, jump: 2, boost: 3, slope: 4, sand: 5, ice: 6,
+  water: 0, tele: 1, cannon: 2, jump: 3, trampoline: 4, boost: 5, conveyor: 6, spinner: 7,
+  magnet: 8, fan: 9, slope: 10, sand: 11, ice: 12,
 };
 
 function zoneAt(g: HoleGeom, x: number, y: number): Zone | null {
@@ -118,21 +179,37 @@ function zoneAt(g: HoleGeom, x: number, y: number): Zone | null {
   return best;
 }
 
+const zoneCentre = (z: Zone) => ({ x: z.x + z.w / 2, y: z.y + z.h / 2 });
+const dirOf = (z: Zone) => { const a = ((z.angle ?? 0) * Math.PI) / 180; return { x: Math.cos(a), y: Math.sin(a) }; };
+
 /** Velocity of a point on a moving block (for pushing the ball). */
 function moverVelocity(b: Block, t: number, px: number, py: number, out: { x: number; y: number }) {
   const m = b.motion!;
-  if (m.type === 'rotate') {
-    out.x = -(py - m.cy) * m.speed;
-    out.y = (px - m.cx) * m.speed;
-  } else {
+  if (m.type === 'rotate' || m.type === 'swing') {
+    let w: number;
+    if (m.type === 'rotate') w = m.speed;
+    else {
+      const ph = ((t / m.period) + (m.phase ?? 0)) * Math.PI * 2;
+      w = ((m.amp * Math.PI) / 180) * Math.cos(ph) * ((Math.PI * 2) / m.period);
+    }
+    out.x = -(py - m.cy) * w;
+    out.y = (px - m.cx) * w;
+  } else if (m.type === 'slide') {
     const w = (Math.PI * 2) / m.period;
     const k = Math.cos(((t / m.period) + (m.phase ?? 0)) * Math.PI * 2) * w;
     out.x = m.dx * k;
     out.y = m.dy * k;
+  } else {
+    out.x = 0; out.y = 0;
   }
 }
 
 const tmpV = { x: 0, y: 0 };
+
+function capSpeed(b: BallState) {
+  const sp = speedOf(b);
+  if (sp > MAX_SPEED) { b.vx *= MAX_SPEED / sp; b.vy *= MAX_SPEED / sp; }
+}
 
 /** Resolve the ball against one wall segment. Returns impact normal speed (0 = no hit). */
 function hitSeg(b: BallState, s: Seg, surfVx: number, surfVy: number): number {
@@ -159,13 +236,30 @@ function hitSeg(b: BallState, s: Seg, surfVx: number, surfVy: number): number {
   const rvx = b.vx - surfVx, rvy = b.vy - surfVy;
   const vn = rvx * nx + rvy * ny;
   if (vn >= 0) return 0;
-  const j = -(1 + WALL_E) * vn;
+  const e = s.e ?? WALL_E;
+  const j = -(1 + e) * vn;
   b.vx += nx * j;
   b.vy += ny * j;
   // a touch of tangential scrub
   b.vx *= 0.985;
   b.vy *= 0.985;
+  if (e > WALL_E) capSpeed(b);
   return -vn;
+}
+
+/** A wedge's outer face: solid to a ball on the flat beside it that sits
+ *  lower than the face at that point (a real ball climbs a small step). */
+function hitRampFace(b: BallState, f: RampFace): number {
+  if (pointInRect(b.x, b.y, f.zone)) return 0; // on the ramp itself
+  const s = f.seg;
+  const dx = s.bx - s.ax, dy = s.by - s.ay;
+  const len2 = dx * dx + dy * dy;
+  let t = len2 > 0 ? ((b.x - s.ax) * dx + (b.y - s.ay) * dy) / len2 : 0;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  const cx = s.ax + dx * t, cy = s.ay + dy * t;
+  const faceH = rampRise(f.zone) * (1 - rampFrac(f.zone, cx, cy));
+  if (b.z + STEP_CLIMB >= faceH) return 0;
+  return hitSeg(b, s, 0, 0);
 }
 
 function hitBumper(b: BallState, p: Bumper): boolean {
@@ -192,8 +286,7 @@ function hitBumper(b: BallState, p: Bumper): boolean {
       b.vx += nx * p.kick;
       b.vy += ny * p.kick;
     }
-    const sp = speedOf(b);
-    if (sp > MAX_SPEED) { b.vx *= MAX_SPEED / sp; b.vy *= MAX_SPEED / sp; }
+    capSpeed(b);
     return true;
   }
   return vn < 0;
@@ -210,6 +303,7 @@ export function insideSolid(g: HoleGeom, x: number, y: number, z: number, t: num
   }
   for (const m of g.movers) {
     if (m.h !== undefined && z > m.h) continue;
+    if (!moverActive(m, t)) continue;
     if (pointInPoly(x, y, blockPtsAt(m, t))) return true;
   }
   return false;
@@ -221,48 +315,106 @@ function hitMovers(b: BallState, g: HoleGeom, tt: number): number {
   let wall = 0;
   for (const m of g.movers) {
     if (m.h !== undefined && b.z > m.h) continue;
+    if (!moverActive(m, tt)) continue;
     const pts = blockPtsAt(m, tt);
     const cnt = pts.length / 2;
+    const e = wallE(m);
     for (let k = 0; k < cnt; k++) {
       const j = (k + 1) % cnt;
       const seg: Seg = { ax: pts[k * 2], ay: pts[k * 2 + 1], bx: pts[j * 2], by: pts[j * 2 + 1], h: m.h ?? 1e9 };
+      if (e !== undefined) seg.e = e;
       moverVelocity(m, tt, b.x, b.y, tmpV);
       const imp = hitSeg(b, seg, tmpV.x, tmpV.y);
       if (imp > wall) wall = imp;
     }
-    if (m.hub && m.motion && m.motion.type === 'rotate') {
+    if (m.hub && m.motion && (m.motion.type === 'rotate' || m.motion.type === 'swing')) {
       hitBumper(b, { x: m.motion.cx, y: m.motion.cy, r: m.hub, kick: 0 });
     }
   }
   return wall;
 }
 
+/** Which way a surface under a resting ball would carry it (null: none). */
+function surfacePush(zone: Zone | null, b: BallState): { x: number; y: number } | null {
+  if (!zone) return null;
+  switch (zone.kind) {
+    case 'conveyor': case 'fan': case 'cannon': return dirOf(zone);
+    case 'magnet': {
+      const c = zoneCentre(zone);
+      const dx = c.x - b.x, dy = c.y - b.y, d = Math.hypot(dx, dy);
+      if (d < 0.8) return null;
+      const s = zonePower(zone) < 0 ? -1 : 1;
+      return { x: (dx / d) * s, y: (dy / d) * s };
+    }
+    case 'spinner': {
+      const c = zoneCentre(zone);
+      const dx = b.x - c.x, dy = b.y - c.y, d = Math.hypot(dx, dy);
+      const w = zonePower(zone);
+      // too close to the middle to be flung faster than it would settle
+      if (d < 0.3 || d > Math.min(zone.w, zone.h) / 2 || d * Math.abs(w) < 2.5) return null;
+      const s = w < 0 ? -1 : 1;
+      return { x: (-dy / d) * s, y: (dx / d) * s };
+    }
+    default: return null;
+  }
+}
+
+/** Would a nudge that way run the ball straight into a wall? (A belt that
+ *  pins the ball against a wall must not keep it "rolling" for ever.) */
+function pushBlocked(g: HoleGeom, b: BallState, dx: number, dy: number): boolean {
+  const px = b.x + dx * 0.12, py = b.y + dy * 0.12;
+  const near = (s: Seg) => {
+    if (b.z > s.h) return false;
+    const ex = s.bx - s.ax, ey = s.by - s.ay;
+    const len2 = ex * ex + ey * ey;
+    let t = len2 > 0 ? ((px - s.ax) * ex + (py - s.ay) * ey) / len2 : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const cx = s.ax + ex * t, cy = s.ay + ey * t;
+    return Math.hypot(px - cx, py - cy) < BALL_R - 0.01;
+  };
+  for (const s of g.staticSegs) if (near(s)) return true;
+  for (const p of g.bumpers) if (Math.hypot(px - p.x, py - p.y) < p.r + BALL_R - 0.01) return true;
+  return false;
+}
+
 /** Advance the ball one tick (with substeps). `t` = seconds since the hole
  *  started (drives moving blocks). Writes what happened into `ev`. */
 export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, collide = true): void {
-  if (isResting(b)) {
+  const G = g.gravity;
+  const g0 = groundZ(g, b.x, b.y);
+  if (isResting(b, g0)) {
     if (b.teleTicks > 0) b.teleTicks--;
-    if (!collide || !g.movers.length) return;
+    if (b.z < g0) b.z = g0; // placed under a ramp (tee on a slope): sit on it
+    if (!collide) return;
     // A moving block shoves a ball that is sitting in its path — and if it
     // has already swept over the ball's centre, the ball is stuck: reset.
-    const imp = hitMovers(b, g, t + DT);
-    if (imp > ev.wall) ev.wall = imp;
-    if (isResting(b)) {
-      if (insideSolid(g, b.x, b.y, b.z, t + DT)) ev.oob = true;
-      return;
+    if (g.movers.length) {
+      const imp = hitMovers(b, g, t + DT);
+      if (imp > ev.wall) ev.wall = imp;
+    }
+    if (isResting(b, g0)) {
+      if (g.movers.length && insideSolid(g, b.x, b.y, b.z, t + DT)) { ev.oob = true; return; }
+      // a belt, fan, magnet, spinner or cannon under the ball wakes it up —
+      // unless it would only grind the ball into a wall
+      const push = surfacePush(zoneAt(g, b.x, b.y), b);
+      if (!push || pushBlocked(g, b, push.x, push.y)) return;
+      b.vx = push.x * 0.01; b.vy = push.y * 0.01;
     }
   }
   const sp = Math.hypot(b.vx, b.vy, b.vz);
   const n = Math.max(1, Math.min(14, Math.ceil((sp * DT) / (BALL_R * 0.45))));
   const h = DT / n;
   const cup = g.hole.cup;
+  const x0 = b.x, y0 = b.y;
   let stuck = false;
+  let carried: Zone | null = null; // a surface that drove the ball this tick
   for (let i = 0; i < n; i++) {
     const tt = t + (i + 1) * h;
-    const onGround = b.z <= 0.001 && b.vz <= 0;
+    const ground = groundZ(g, b.x, b.y);
+    const onGround = b.z <= ground + 0.001 && b.vz <= 0;
+    const zone = zoneAt(g, b.x, b.y);
     if (onGround) {
-      b.z = 0; b.vz = 0;
-      const zone = zoneAt(g, b.x, b.y);
+      b.z = ground; b.vz = 0;
       let fr = FRICTION;
       if (zone) {
         switch (zone.kind) {
@@ -273,33 +425,89 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
           case 'tele':
             if (b.teleTicks === 0) {
               b.x = zone.tx!; b.y = zone.ty!;
+              b.z = groundZ(g, b.x, b.y);
               b.teleTicks = TELE_COOLDOWN_TICKS;
               ev.tele = true;
+            }
+            break;
+          case 'cannon':
+            // roll in, get fired: fixed direction, speed and loft
+            if (b.teleTicks === 0) {
+              const d = dirOf(zone);
+              const s = zonePower(zone);
+              b.vx = d.x * s; b.vy = d.y * s;
+              b.vz = zone.lift ?? CANNON_DEFAULT_LIFT;
+              b.z = ground + 0.01;
+              b.teleTicks = TELE_COOLDOWN_TICKS;
+              ev.jump = true;
+              carried = zone;
             }
             break;
           case 'jump': {
             const s = speedOf(b);
             if (s > JUMP_MIN_SPEED) {
-              b.vz = zone.power ?? 11;
-              b.z = 0.01;
+              b.vz = zonePower(zone);
+              b.z = ground + 0.01;
               ev.jump = true;
             }
             break;
           }
           case 'boost': {
-            const a = ((zone.angle ?? 0) * Math.PI) / 180;
-            b.vx += Math.cos(a) * (zone.power ?? 40) * h;
-            b.vy += Math.sin(a) * (zone.power ?? 40) * h;
-            const s = speedOf(b);
-            if (s > MAX_SPEED) { b.vx *= MAX_SPEED / s; b.vy *= MAX_SPEED / s; }
+            const d = dirOf(zone);
+            const p = zonePower(zone);
+            b.vx += d.x * p * h;
+            b.vy += d.y * p * h;
+            capSpeed(b);
             fr = FRICTION * 0.4;
             ev.boost = true;
             break;
           }
+          case 'conveyor': {
+            // the belt drags the ball toward its own speed
+            const d = dirOf(zone);
+            const s = zonePower(zone);
+            const k = Math.min(1, 10 * h);
+            b.vx += (d.x * s - b.vx) * k;
+            b.vy += (d.y * s - b.vy) * k;
+            fr = 0;
+            carried = zone;
+            break;
+          }
+          case 'spinner': {
+            // a turntable: inside its disc the felt itself is moving
+            const c = zoneCentre(zone);
+            const dx = b.x - c.x, dy = b.y - c.y;
+            const r = Math.min(zone.w, zone.h) / 2;
+            if (dx * dx + dy * dy < r * r) {
+              const w = zonePower(zone);
+              const k = Math.min(1, 6 * h);
+              b.vx += (-dy * w - b.vx) * k;
+              b.vy += (dx * w - b.vy) * k;
+              fr = FRICTION * 0.5;
+              carried = zone;
+            }
+            break;
+          }
+          case 'magnet': {
+            // pulls toward (or, negative, shoves away from) its centre;
+            // lets go once the ball is in close and slow, so it can settle
+            const c = zoneCentre(zone);
+            const dx = c.x - b.x, dy = c.y - b.y;
+            const d = Math.hypot(dx, dy);
+            const p = zonePower(zone);
+            if (d > 0.05 && (p < 0 || d > 0.8 || speedOf(b) > 1)) {
+              b.vx += (dx / d) * p * h;
+              b.vy += (dy / d) * p * h;
+              capSpeed(b);
+              carried = zone;
+            }
+            break;
+          }
           case 'slope': {
-            const a = ((zone.angle ?? 0) * Math.PI) / 180;
-            b.vx += Math.cos(a) * (zone.power ?? 3.5) * h;
-            b.vy += Math.sin(a) * (zone.power ?? 3.5) * h;
+            const d = dirOf(zone);
+            const p = zonePower(zone);
+            b.vx += d.x * p * h;
+            b.vy += d.y * p * h;
             break;
           }
           case 'sand': fr = FRICTION_SAND; break;
@@ -307,7 +515,7 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
         }
       }
       // rolling friction — a constant deceleration, never past zero
-      if (b.z <= 0.001) {
+      if (b.z <= ground + 0.001) {
         const s = speedOf(b);
         if (s > 0) {
           const ns = Math.max(0, s - fr * h);
@@ -315,17 +523,32 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
         }
       }
     } else {
-      b.vz -= GRAVITY * h;
+      b.vz -= G * h;
       const k = 1 - AIR_DRAG * h;
       b.vx *= k; b.vy *= k;
     }
-    // cup pull + capture (ground level only)
-    if (b.z < 0.3) {
+    // a blower works on the ground and in the air: it shoves the ball along
+    // and floats it a couple of units up, so it sails off the far side
+    if (zone && zone.kind === 'fan') {
+      const d = dirOf(zone);
+      const p = zonePower(zone);
+      b.vx += d.x * p * h;
+      b.vy += d.y * p * h;
+      capSpeed(b);
+      if (b.z < ground + FAN_HOVER_Z) {
+        b.vz += (G + p * 0.35) * h;
+        if (b.z <= ground + 0.001) b.z = ground + 0.01;
+      }
+      ev.boost = true;
+      carried = zone;
+    }
+    // cup pull + capture (felt level only)
+    if (b.z - ground < 0.3) {
       const cx = cup.x - b.x, cy = cup.y - b.y;
       const d = Math.hypot(cx, cy);
       const s = speedOf(b);
       if (d < CUP_R && s < CAPTURE_SPEED) {
-        b.x = cup.x; b.y = cup.y; b.z = 0;
+        b.x = cup.x; b.y = cup.y; b.z = groundZ(g, cup.x, cup.y);
         b.vx = 0; b.vy = 0; b.vz = 0;
         ev.holed = true;
         return;
@@ -340,17 +563,30 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
     const px = b.x, py = b.y;
     b.x += b.vx * h;
     b.y += b.vy * h;
-    if (b.z > 0 || b.vz > 0) {
+    const groundNow = groundZ(g, b.x, b.y);
+    if (b.z > groundNow + 0.001 || b.vz > 0) {
       b.z += b.vz * h;
-      if (b.z <= 0) {
-        b.z = 0;
-        if (b.vz < -3) { b.vz = -b.vz * 0.42; ev.land = true; }
+      if (b.z <= groundNow) {
+        b.z = groundNow;
+        const landing = zoneAt(g, b.x, b.y);
+        if (landing && landing.kind === 'trampoline' && b.vz < -1) {
+          // boing: back up at least the pad's launch speed
+          b.vz = Math.max(zonePower(landing), -b.vz * 0.9);
+          b.z = groundNow + 0.01;
+          ev.jump = true;
+        } else if (b.vz < -3) { b.vz = -b.vz * 0.42; ev.land = true; }
         else b.vz = 0;
       }
+    } else if (b.z < groundNow) {
+      b.z = groundNow; // rolling up a ramp: stay on the felt
     }
     if (!collide) continue;
     for (const s of g.staticSegs) {
       const imp = hitSeg(b, s, 0, 0);
+      if (imp > ev.wall) ev.wall = imp;
+    }
+    for (const f of g.rampFaces) {
+      const imp = hitRampFace(b, f);
       if (imp > ev.wall) ev.wall = imp;
     }
     if (g.movers.length) {
@@ -369,8 +605,15 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
     }
   }
   if (b.teleTicks > 0) b.teleTicks--;
-  if (b.z <= 0.001 && b.vz === 0 && speedOf(b) < REST_SPEED) {
-    b.vx = 0; b.vy = 0; b.z = 0;
+  const gz = groundZ(g, b.x, b.y);
+  const grounded = b.z <= gz + 0.001 && b.vz === 0;
+  if (grounded && speedOf(b) < REST_SPEED) {
+    b.vx = 0; b.vy = 0; b.z = gz;
+  }
+  // pinned: a belt / fan / magnet driving the ball into a wall moves it
+  // nowhere — let it come to rest there rather than "roll" (or hover) for ever
+  if (carried && (grounded || carried.kind === 'fan') && Math.hypot(b.x - x0, b.y - y0) < 0.012) {
+    b.vx = 0; b.vy = 0; b.vz = 0; b.z = gz;
   }
   if (stuck || !pointInFloor(b.x, b.y, g.hole)) ev.oob = true;
 }

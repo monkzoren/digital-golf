@@ -19,18 +19,26 @@ TypeScript three.js game with a built-in course editor.
   other — bump a rival off the line, or get bumped. A ball a moving block
   squeezes into a wall is reset, never left stuck.
 - **Real hazards.** Bouncy walls, pinball bumpers, posts, sand, ice, water
-  (+1 stroke and back you go), slopes, boost pads, jump pads that launch the
+  (+1 stroke and back you go), real ramps (a wedge you roll up, drop off the
+  top of and bounce off the back of), boost pads, jump pads that launch the
   ball over low walls and water, teleporters, spinning windmills and sliding
   doors. The cup pulls slow balls in and skips fast ones.
+- **The toy box.** Conveyor belts, spinners (turntables that fling the
+  ball), blower fans that float it across water, trampolines that bounce a
+  falling ball back up, magnets that pull (or, negative, push), cannons that
+  fire the ball in a fixed arc, pendulums, blinking laser gates, rubber
+  walls that return the ball harder than it arrived, and per-hole gravity
+  (moon holes). Every piece has its own hole on the built-in *Toy Box*
+  course — duplicate it in the editor to see how each one is set up.
 - **Rounds, not holes.** A room plays a whole course: intro card, timed hole,
   scorecard, next hole, podium. Round options: max strokes, time per hole,
   ball collisions on/off, water penalty (+1 stroke or a free reset), shot
   power (soft / normal / turbo). The host can change them in the lobby.
   Late joiners drop straight onto the tee. Refreshing mid-round keeps your
   seat for 25 s.
-- **Two built-in courses** (Sunny Park, a 9-hole tutorial gauntlet; Neon
-  Orbit, 9 holes of teleporters, spinners and lava) and **unlimited
-  player-made ones.**
+- **Three built-in courses** (Sunny Park, a 9-hole tutorial gauntlet; Neon
+  Orbit, 9 holes of teleporters, spinners and lava; Toy Box, one hole per
+  gadget) and **unlimited player-made ones.**
 - **Course editor.** Draw floors, walls, movers, surfaces and hazards on a
   grid, tweak every parameter in a properties panel, undo/redo, duplicate,
   import/export JSON, **test-play on the real 3D stage with the exact

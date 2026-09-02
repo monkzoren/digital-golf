@@ -10,7 +10,7 @@ import { Identity } from 'spacetimedb';
 import { COURSES, type Hole } from './shared/courses';
 import { LIMITS, cleanCourseName, parseHole, serializeHole } from './shared/mapformat';
 import {
-  type BallState, type StepEvents, TICK_HZ, collideBalls, geomOf, isResting, newEvents,
+  type BallState, type StepEvents, TICK_HZ, collideBalls, geomOf, newEvents, restingOn,
   shotVelocity, stepBall,
 } from './shared/physics';
 
@@ -911,7 +911,7 @@ function tickPlay(ctx: Ctx, lobby: LobbyRow, players: PlayerRow[]) {
         ev.water ? EV_WATER : EV_RESET
       );
     } else {
-      const resting = isResting(b);
+      const resting = restingOn(geom, b);
       row.resting = resting;
       if (resting) row.struck = false;
       if (ev.tele) row = withEvent(row, EV_TELE);

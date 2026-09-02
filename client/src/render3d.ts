@@ -2,8 +2,8 @@ import * as THREE from 'three';
 import { CHARACTERS, type Character, type HairStyle } from './characters';
 import { getGraphics, onGraphicsChange, type GraphicsSettings } from './graphics';
 import type { Hole, Zone, Block } from '@shared/courses';
-import { blockPtsAt, holeBounds } from '@shared/courses';
-import { BALL_R, CUP_R, geomOf } from '@shared/physics';
+import { holeBounds, motionAngle, moverActive, rampFrac } from '@shared/courses';
+import { BALL_R, CUP_R, geomOf, groundZ, rampRise, zonePower } from '@shared/physics';
 
 // ---------------------------------------------------------------------------
 // Real-3D Virtua Tennis-style renderer (Three.js / WebGL), inherited from
@@ -2411,11 +2411,16 @@ let aimArrow: THREE.Mesh;
 let aimHead: THREE.Mesh;
 let holeGroup: THREE.Group;
 let builtHoleKey = '';
-interface MoverProp { block: Block; group: THREE.Group; pivotX: number; pivotY: number }
+let builtGeom: ReturnType<typeof geomOf> | null = null;
+interface MoverProp { block: Block; group: THREE.Group; pivotX: number; pivotY: number; mesh?: THREE.Mesh }
 let movers: MoverProp[] = [];
 let waterMats: THREE.MeshLambertMaterial[] = [];
 let boostMats: THREE.MeshLambertMaterial[] = [];
 let teleMats: THREE.MeshBasicMaterial[] = [];
+// the toy box: things that spin, whirr and pulse every frame
+let spinners: { group: THREE.Group; speed: number }[] = [];
+let fanBlades: THREE.Group[] = [];
+let magnetMats: THREE.MeshBasicMaterial[] = [];
 let flagMesh: THREE.Mesh | null = null;
 const camPos = new THREE.Vector3();
 const camLook = new THREE.Vector3();
@@ -2555,12 +2560,97 @@ function makeZoneTexture(z: Zone): THREE.CanvasTexture {
       g.strokeStyle = '#e9c8ff'; g.lineWidth = 4; g.strokeRect(4, 4, W - 8, H - 8);
       for (let r = 6; r < Math.min(W, H) / 2; r += 12) { g.beginPath(); g.arc(W / 2, H / 2, r, 0, Math.PI * 2); g.strokeStyle = 'rgba(255,255,255,0.35)'; g.lineWidth = 2; g.stroke(); }
       break;
+    case 'conveyor':
+      g.fillStyle = '#2a2a33'; g.fillRect(0, 0, W, H);
+      g.fillStyle = 'rgba(255,255,255,0.06)';
+      for (let x = 0; x < W; x += 12) g.fillRect(x, 0, 6, H);
+      arrows('#ffd60a', 1.5);
+      break;
+    case 'spinner': {
+      g.fillStyle = 'rgba(0,0,0,0)'; g.clearRect(0, 0, W, H);
+      const r = Math.min(W, H) / 2;
+      g.beginPath(); g.arc(W / 2, H / 2, r, 0, Math.PI * 2); g.fillStyle = '#7c5cff'; g.fill();
+      g.strokeStyle = 'rgba(255,255,255,0.6)'; g.lineWidth = 3;
+      for (let i = 0; i < 6; i++) { const t = (i / 6) * Math.PI * 2; g.beginPath(); g.moveTo(W / 2, H / 2); g.lineTo(W / 2 + Math.cos(t) * r * 0.92, H / 2 + Math.sin(t) * r * 0.92); g.stroke(); }
+      g.beginPath(); g.arc(W / 2, H / 2, r * 0.18, 0, Math.PI * 2); g.fillStyle = '#fff'; g.fill();
+      break;
+    }
+    case 'fan':
+      g.fillStyle = '#2f6f8a'; g.fillRect(0, 0, W, H);
+      g.fillStyle = 'rgba(0,0,0,0.25)';
+      for (let y = 0; y < H; y += 10) g.fillRect(0, y, W, 4); // grille
+      arrows('#9fe6ff', 2);
+      break;
+    case 'trampoline': {
+      g.fillStyle = '#3d7bff'; g.fillRect(0, 0, W, H);
+      g.strokeStyle = 'rgba(255,255,255,0.7)'; g.lineWidth = 3;
+      for (let k = 0.25; k <= 1; k += 0.25) { g.beginPath(); g.ellipse(W / 2, H / 2, (W / 2) * k, (H / 2) * k, 0, 0, Math.PI * 2); g.stroke(); }
+      break;
+    }
+    case 'magnet': {
+      const repel = zonePower(z) < 0;
+      g.fillStyle = '#1a1424'; g.fillRect(0, 0, W, H);
+      g.strokeStyle = repel ? '#ff8a3d' : '#ff5fb8'; g.lineWidth = 3;
+      const rmax = Math.min(W, H) / 2;
+      for (let k = 0.2; k <= 1; k += 0.2) { g.beginPath(); g.arc(W / 2, H / 2, rmax * k, 0, Math.PI * 2); g.stroke(); }
+      g.beginPath(); g.arc(W / 2, H / 2, 6, 0, Math.PI * 2); g.fillStyle = repel ? '#ff8a3d' : '#ff5fb8'; g.fill();
+      break;
+    }
+    case 'cannon':
+      g.fillStyle = '#3a3f4a'; g.fillRect(0, 0, W, H);
+      g.strokeStyle = '#ffd60a'; g.lineWidth = 3; g.strokeRect(3, 3, W - 6, H - 6);
+      g.fillStyle = 'rgba(0,0,0,0.3)';
+      for (let x = 0; x < W; x += 16) for (let y = 0; y < H; y += 16) g.fillRect(x + 6, y + 6, 4, 4);
+      break;
   }
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 4;
-  if (z.kind === 'water' || z.kind === 'boost') { tex.wrapS = tex.wrapT = THREE.RepeatWrapping; }
+  if (z.kind === 'water' || z.kind === 'boost' || z.kind === 'conveyor' || z.kind === 'fan') { tex.wrapS = tex.wrapT = THREE.RepeatWrapping; }
   return tex;
+}
+
+/** A slope zone as a real wedge: a tilted felt top over wooden faces. */
+function rampMesh(z: Zone, ox: number, oy: number, topMat: THREE.Material): THREE.Group {
+  const rise = rampRise(z);
+  const c = [[z.x, z.y], [z.x + z.w, z.y], [z.x + z.w, z.y + z.h], [z.x, z.y + z.h]];
+  const top = c.map(([x, y]) => new THREE.Vector3(x - ox, FLOOR_Y + rise * (1 - rampFrac(z, x, y)), y - oy));
+  const base = c.map(([x, y]) => new THREE.Vector3(x - ox, FLOOR_Y - 0.02, y - oy));
+  const group = new THREE.Group();
+  // top: two triangles wound to face up, uv across the rect
+  {
+    const pos: number[] = [], uv: number[] = [];
+    const tri = (i: number, j: number, k: number) => {
+      for (const idx of [i, j, k]) { pos.push(top[idx].x, top[idx].y, top[idx].z); uv.push(idx === 1 || idx === 2 ? 1 : 0, idx === 2 || idx === 3 ? 0 : 1); }
+    };
+    tri(0, 2, 1); tri(0, 3, 2);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    geo.computeVertexNormals();
+    const m = new THREE.Mesh(geo, topMat);
+    m.receiveShadow = true;
+    m.castShadow = true;
+    group.add(m);
+  }
+  // sides: a quad per edge from the felt up to the top edge
+  {
+    const pos: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      const j = (i + 1) % 4;
+      const a = base[i], b = base[j], cT = top[j], dT = top[i];
+      pos.push(a.x, a.y, a.z, cT.x, cT.y, cT.z, b.x, b.y, b.z);
+      pos.push(a.x, a.y, a.z, dT.x, dT.y, dT.z, cT.x, cT.y, cT.z);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.computeVertexNormals();
+    const m = new THREE.Mesh(geo, WALL_SIDE_MAT);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    group.add(m);
+  }
+  return group;
 }
 
 function shapeFromPts(pts: number[], ox: number, oy: number): THREE.Shape {
@@ -2586,6 +2676,14 @@ function extrudedBlock(pts: number[], ox: number, oy: number, height: number, ma
 const FELT_MAT = new THREE.MeshLambertMaterial({ color: 0xffffff });
 const WALL_MAT = new THREE.MeshLambertMaterial({ color: 0xc9a36b });
 const WALL_LOW_MAT = new THREE.MeshLambertMaterial({ color: 0xe0c391 });
+const WALL_SIDE_MAT = new THREE.MeshLambertMaterial({ color: 0x9c7a4a, side: THREE.DoubleSide });
+const RUBBER_MAT = new THREE.MeshLambertMaterial({ color: 0xff7ad9, emissive: 0x3a0d2c });
+const LASER_ON_MAT = new THREE.MeshBasicMaterial({ color: 0xff2d55, transparent: true, opacity: 0.85 });
+const LASER_OFF_MAT = new THREE.MeshBasicMaterial({ color: 0xff2d55, transparent: true, opacity: 0.12 });
+const CANNON_MAT = new THREE.MeshLambertMaterial({ color: 0x2b2f3a });
+const CANNON_RIM_MAT = new THREE.MeshLambertMaterial({ color: 0xffd60a });
+const FAN_BLADE_MAT = new THREE.MeshLambertMaterial({ color: 0xe8f6ff });
+const STOCK_MATS: THREE.Material[] = [FELT_MAT, WALL_MAT, WALL_LOW_MAT, WALL_SIDE_MAT, RUBBER_MAT, LASER_ON_MAT, LASER_OFF_MAT, CANNON_MAT, CANNON_RIM_MAT, FAN_BLADE_MAT];
 const BUMPER_MAT = new THREE.MeshLambertMaterial({ color: 0xe03030, emissive: 0x400000 });
 const POST_MAT = new THREE.MeshLambertMaterial({ color: 0x8d99b5 });
 const CUP_MAT = new THREE.MeshBasicMaterial({ color: 0x06100a });
@@ -2598,14 +2696,18 @@ function disposeHole() {
     mesh.geometry?.dispose();
     const mat = mesh.material as THREE.Material & { map?: THREE.Texture | null };
     if (mat && mat.map && mat !== FELT_MAT) mat.map.dispose();
-    if (mat && ![FELT_MAT, WALL_MAT, WALL_LOW_MAT, BUMPER_MAT, POST_MAT, CUP_MAT, FLAG_MAT].includes(mat as any)) mat.dispose?.();
+    if (mat && ![...STOCK_MATS, BUMPER_MAT, POST_MAT, CUP_MAT, FLAG_MAT].includes(mat as any)) mat.dispose?.();
   });
   holeGroup.clear();
   movers = [];
   waterMats = [];
   boostMats = [];
   teleMats = [];
+  spinners = [];
+  fanBlades = [];
+  magnetMats = [];
   flagMesh = null;
+  builtGeom = null;
 }
 
 /** Build the hole's meshes. Called when scene.holeKey changes. */
@@ -2628,8 +2730,9 @@ function setHole(hole: Hole) {
   }
   // boundary walls
   const geom = geomOf(hole);
+  builtGeom = geom;
   for (const seg of geom.staticSegs) {
-    if (seg.h < 5) continue; // block edges are built as solids below
+    if (seg.h < 5 || seg.e !== undefined) continue; // block edges are built as solids below
     const dx = seg.bx - seg.ax, dy = seg.by - seg.ay;
     const len = Math.hypot(dx, dy);
     if (len < 0.01) continue;
@@ -2644,7 +2747,8 @@ function setHole(hole: Hole) {
   for (const bl of hole.blocks ?? []) {
     const low = bl.h !== undefined && bl.h < 5;
     const height = low ? Math.max(0.2, bl.h!) : WALL_H;
-    const mat = low ? WALL_LOW_MAT : WALL_MAT;
+    const rubber = bl.bounce !== undefined && bl.bounce > 1;
+    const mat = rubber ? RUBBER_MAT : low ? WALL_LOW_MAT : WALL_MAT;
     if (!bl.motion) {
       const m = extrudedBlock(bl.pts, holeCX, holeCY, height, mat);
       m.position.y = FLOOR_Y;
@@ -2652,33 +2756,97 @@ function setHole(hole: Hole) {
       continue;
     }
     let px: number, py: number;
-    if (bl.motion.type === 'rotate') { px = bl.motion.cx; py = bl.motion.cy; }
+    if (bl.motion.type === 'rotate' || bl.motion.type === 'swing') { px = bl.motion.cx; py = bl.motion.cy; }
     else { let sx = 0, sy = 0; const n = bl.pts.length / 2; for (let i = 0; i < bl.pts.length; i += 2) { sx += bl.pts[i]; sy += bl.pts[i + 1]; } px = sx / n; py = sy / n; }
     const group = new THREE.Group();
     group.position.set(px - holeCX, FLOOR_Y, py - holeCY);
-    group.add(extrudedBlock(bl.pts, px, py, height, mat));
-    if (bl.hub && bl.motion.type === 'rotate') {
+    const laser = bl.motion.type === 'blink';
+    const body = extrudedBlock(bl.pts, px, py, laser ? height * 1.3 : height, laser ? LASER_ON_MAT : mat);
+    if (laser) { body.castShadow = false; body.receiveShadow = false; }
+    group.add(body);
+    if (bl.hub && (bl.motion.type === 'rotate' || bl.motion.type === 'swing')) {
       const hub = new THREE.Mesh(new THREE.CylinderGeometry(bl.hub, bl.hub, height + 0.3, 16), WALL_MAT);
       hub.position.y = (height + 0.3) / 2;
       hub.castShadow = true;
       group.add(hub);
     }
     holeGroup.add(group);
-    movers.push({ block: bl, group, pivotX: px, pivotY: py });
+    movers.push({ block: bl, group, pivotX: px, pivotY: py, mesh: laser ? body : undefined });
   }
   // zones
   (hole.zones ?? []).forEach((z, i) => {
     const tex = makeZoneTexture(z);
-    const mat = z.kind === 'tele'
+    const cx = z.x + z.w / 2 - holeCX, cz = z.y + z.h / 2 - holeCY;
+    const flat = z.kind === 'tele' || z.kind === 'magnet' || z.kind === 'spinner';
+    const mat = flat
       ? new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0.85 })
       : new THREE.MeshLambertMaterial({ map: tex });
+    if (z.kind === 'slope') {
+      holeGroup.add(rampMesh(z, holeCX, holeCY, mat));
+      return;
+    }
+    if (z.kind === 'spinner') {
+      // the disc itself turns; a dark ring marks the pit it sits in
+      const r = Math.min(z.w, z.h) / 2;
+      const pit = new THREE.Mesh(new THREE.PlaneGeometry(z.w, z.h), new THREE.MeshLambertMaterial({ color: 0x1d2a20 }));
+      pit.rotation.x = -Math.PI / 2;
+      pit.position.set(cx, FLOOR_Y + 0.011, cz);
+      holeGroup.add(pit);
+      const group = new THREE.Group();
+      group.position.set(cx, FLOOR_Y + 0.02 + i * 0.001, cz);
+      const disc = new THREE.Mesh(new THREE.CircleGeometry(r, 40), mat);
+      disc.rotation.x = -Math.PI / 2;
+      disc.receiveShadow = true;
+      group.add(disc);
+      holeGroup.add(group);
+      spinners.push({ group, speed: zonePower(z) });
+      return;
+    }
     const m = new THREE.Mesh(new THREE.PlaneGeometry(z.w, z.h), mat);
     m.rotation.x = -Math.PI / 2;
-    m.position.set(z.x + z.w / 2 - holeCX, FLOOR_Y + 0.012 + i * 0.001, z.y + z.h / 2 - holeCY);
+    m.position.set(cx, FLOOR_Y + 0.012 + i * 0.001, cz);
     m.receiveShadow = true;
     holeGroup.add(m);
     if (z.kind === 'water') waterMats.push(mat as THREE.MeshLambertMaterial);
-    if (z.kind === 'boost') boostMats.push(mat as THREE.MeshLambertMaterial);
+    if (z.kind === 'boost' || z.kind === 'conveyor' || z.kind === 'fan') boostMats.push(mat as THREE.MeshLambertMaterial);
+    if (z.kind === 'magnet') magnetMats.push(mat as THREE.MeshBasicMaterial);
+    if (z.kind === 'fan') {
+      // a propeller whirring in a hub at the centre
+      const group = new THREE.Group();
+      group.position.set(cx, FLOOR_Y + 0.35, cz);
+      const r = Math.min(z.w, z.h) * 0.32;
+      for (let k = 0; k < 3; k++) {
+        const blade = new THREE.Mesh(new THREE.BoxGeometry(r, 0.08, 0.34), FAN_BLADE_MAT);
+        blade.position.set(Math.cos((k / 3) * Math.PI * 2) * r * 0.5, 0, Math.sin((k / 3) * Math.PI * 2) * r * 0.5);
+        blade.rotation.y = -(k / 3) * Math.PI * 2;
+        blade.rotation.x = 0.5;
+        group.add(blade);
+      }
+      const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 0.5, 12), CANNON_MAT);
+      group.add(hub);
+      holeGroup.add(group);
+      fanBlades.push(group);
+    }
+    if (z.kind === 'cannon') {
+      // a barrel on a base, pointing the way it fires and cocked up for the loft
+      const a = ((z.angle ?? 0) * Math.PI) / 180;
+      const len = Math.max(1.2, Math.min(z.w, z.h) * 0.9);
+      const dir = new THREE.Vector3(Math.cos(a), 0.55, Math.sin(a)).normalize();
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.42, len, 16), CANNON_MAT);
+      barrel.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+      barrel.position.set(cx + dir.x * len * 0.25, FLOOR_Y + 0.55 + dir.y * len * 0.25, cz + dir.z * len * 0.25);
+      barrel.castShadow = true;
+      holeGroup.add(barrel);
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(0.36, 0.06, 8, 20), CANNON_RIM_MAT);
+      rim.quaternion.copy(barrel.quaternion);
+      rim.rotateX(Math.PI / 2);
+      rim.position.set(cx + dir.x * len * 0.75, FLOOR_Y + 0.55 + dir.y * len * 0.75, cz + dir.z * len * 0.75);
+      holeGroup.add(rim);
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.7, 0.5, 16), CANNON_MAT);
+      base.position.set(cx, FLOOR_Y + 0.25, cz);
+      base.castShadow = true;
+      holeGroup.add(base);
+    }
     if (z.kind === 'tele') {
       teleMats.push(mat as THREE.MeshBasicMaterial);
       if (z.tx !== undefined && z.ty !== undefined) {
@@ -2766,12 +2934,17 @@ export function drawScene(scene: GolfScene) {
   const t = scene.t;
   for (const m of movers) {
     const mo = m.block.motion!;
-    if (mo.type === 'rotate') m.group.rotation.y = -mo.speed * t;
-    else {
+    if (mo.type === 'rotate' || mo.type === 'swing') m.group.rotation.y = -motionAngle(mo, t);
+    else if (mo.type === 'slide') {
       const k = Math.sin(((t / mo.period) + (mo.phase ?? 0)) * Math.PI * 2);
       m.group.position.set(m.pivotX - holeCX + mo.dx * k, FLOOR_Y, m.pivotY - holeCY + mo.dy * k);
+    } else if (mo.type === 'blink' && m.mesh) {
+      m.mesh.material = moverActive(m.block, t) ? LASER_ON_MAT : LASER_OFF_MAT;
     }
   }
+  for (const s of spinners) s.group.rotation.y = -s.speed * t;
+  for (const f of fanBlades) f.rotation.y = -(now / 45) % (Math.PI * 2);
+  for (const mm of magnetMats) mm.opacity = 0.65 + 0.3 * Math.sin(now / 180);
   for (const w of waterMats) if (w.map) { w.map.offset.x = (now / 9000) % 1; w.map.offset.y = Math.sin(now / 1400) * 0.02; }
   for (const bm of boostMats) if (bm.map) bm.map.offset.x = -((now / 600) % 1) * 0.15;
   for (const tm of teleMats) tm.opacity = 0.7 + 0.25 * Math.sin(now / 250);
@@ -2804,8 +2977,10 @@ export function drawScene(scene: GolfScene) {
     prop.mat.opacity = p.ghost ? 0.45 : 1;
     prop.mat.needsUpdate = false;
     prop.blob.visible = true;
-    prop.blob.position.set(pos.x, FLOOR_Y + 0.03, pos.z);
-    const sc = Math.max(0.5, 1 - p.z / 12);
+    // the shadow lies on the felt under the ball — up a ramp when it is on one
+    const ground = builtGeom ? groundZ(builtGeom, p.x, p.y) : 0;
+    prop.blob.position.set(pos.x, FLOOR_Y + ground + 0.03, pos.z);
+    const sc = Math.max(0.5, 1 - Math.max(0, p.z - ground) / 12);
     prop.blob.scale.set(sc, sc, sc);
     (prop.blob.material as THREE.MeshBasicMaterial).opacity = p.ghost ? 0.12 : 0.3 * sc;
   }

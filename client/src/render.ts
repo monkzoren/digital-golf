@@ -2,8 +2,8 @@
 // surfaces, animated obstacles, balls with height, particles. Shared by the
 // game and the editor.
 import type { Hole, Zone, Block } from '@shared/courses';
-import { blockPtsAt, holeBounds } from '@shared/courses';
-import { BALL_R, CUP_R, geomOf, MAX_SHOT, MIN_SHOT } from '@shared/physics';
+import { blockPtsAt, holeBounds, moverActive, rampFrac } from '@shared/courses';
+import { BALL_R, CUP_R, geomOf, MAX_SHOT, MIN_SHOT, rampRise, zonePower } from '@shared/physics';
 
 export interface Camera { x: number; y: number; scale: number }
 
@@ -13,8 +13,16 @@ export interface Theme {
   wallTop: string; wallSide: string; wallLow: string;
   sand: string; ice: string; water: string; waterDeep: string; slope: string;
   boost: string; jump: string; tele: string; bumper: string; post: string;
+  conveyor: string; spinner: string; fan: string; tramp: string; magnet: string; repel: string; cannon: string;
+  rubber: string; laser: string;
   cup: string; flag: string;
 }
+
+// the toy-box colours are the same in every theme so a piece is always recognisable
+const TOYS = {
+  conveyor: '#2a2a33', spinner: '#7c5cff', fan: '#5bd1ff', tramp: '#3d7bff', magnet: '#ff5fb8', repel: '#ff8a3d',
+  cannon: '#3a3f4a', rubber: '#ff7ad9', laser: '#ff2d55',
+};
 
 export const THEMES: Record<string, Theme> = {
   park: {
@@ -23,6 +31,7 @@ export const THEMES: Record<string, Theme> = {
     wallTop: '#c9a36b', wallSide: '#7d5a30', wallLow: '#e0c391',
     sand: '#e9d18c', ice: '#cfeeff', water: '#2f8fd8', waterDeep: '#1f5f9c', slope: 'rgba(0,0,0,0.12)',
     boost: '#ff8a3d', jump: '#ffd60a', tele: '#c77dff', bumper: '#ff4b4b', post: '#8d99b5',
+    ...TOYS,
     cup: '#0b1a10', flag: '#ff4b4b',
   },
   neon: {
@@ -31,6 +40,7 @@ export const THEMES: Record<string, Theme> = {
     wallTop: '#4be3ff', wallSide: '#1a6f86', wallLow: '#9bf0ff',
     sand: '#8a6fd8', ice: '#dff6ff', water: '#ff3d77', waterDeep: '#a01c48', slope: 'rgba(255,255,255,0.08)',
     boost: '#ff8a3d', jump: '#ffe94b', tele: '#ff5fb8', bumper: '#ff3d3d', post: '#7c8fbf',
+    ...TOYS,
     cup: '#05051a', flag: '#4be3ff',
   },
 };
@@ -219,7 +229,8 @@ export function drawHole(g: CanvasRenderingContext2D, hole: Hole, cam: Camera, W
   }
   for (const bl of hole.blocks ?? []) {
     if (bl.motion) continue;
-    if (bl.h !== undefined && bl.h < 5) extruded(g, bl.pts, cam, W, H, th.wallLow, th.wallSide, Math.min(0.3, bl.h * 0.4));
+    if (bl.h !== undefined && bl.h < 5) extruded(g, bl.pts, cam, W, H, bl.bounce && bl.bounce > 1 ? th.rubber : th.wallLow, th.wallSide, Math.min(0.3, bl.h * 0.4));
+    else if (bl.bounce && bl.bounce > 1) extruded(g, bl.pts, cam, W, H, th.rubber, th.wallSide, 0.45); // rubber: recoloured over the plain wall
     if (o.editor && o.selected === bl) highlightPoly(g, bl.pts, cam, W, H);
   }
   // the rounded caps hide the seams between wall strips
@@ -238,8 +249,25 @@ export function drawHole(g: CanvasRenderingContext2D, hole: Hole, cam: Camera, W
   for (const bl of geom.movers) {
     const pts = blockPtsAt(bl, o.t);
     const low = bl.h !== undefined && bl.h < 5;
-    extruded(g, pts, cam, W, H, low ? th.wallLow : th.wallTop, th.wallSide, low ? 0.25 : 0.55);
-    if (bl.hub && bl.motion?.type === 'rotate') {
+    if (bl.motion?.type === 'blink') {
+      // laser gate: a glowing beam while solid, a faint outline while open
+      const on = moverActive(bl, o.t);
+      g.globalAlpha = on ? 0.9 : 0.22;
+      poly(g, pts, cam, W, H);
+      g.fillStyle = th.laser;
+      g.fill();
+      g.globalAlpha = 1;
+      g.strokeStyle = on ? '#fff' : th.laser;
+      g.lineWidth = Math.max(1, 0.08 * s);
+      g.setLineDash(on ? [] : [4, 4]);
+      g.stroke();
+      g.setLineDash([]);
+      if (o.editor && o.selected === bl) highlightPoly(g, pts, cam, W, H);
+      continue;
+    }
+    const top = bl.bounce && bl.bounce > 1 ? th.rubber : low ? th.wallLow : th.wallTop;
+    extruded(g, pts, cam, W, H, top, th.wallSide, low ? 0.25 : 0.55);
+    if (bl.hub && bl.motion && (bl.motion.type === 'rotate' || bl.motion.type === 'swing')) {
       const p = w2s(cam, W, H, bl.motion.cx, bl.motion.cy);
       g.beginPath();
       g.arc(p.x, p.y, bl.hub * s, 0, Math.PI * 2);
@@ -319,14 +347,149 @@ function drawZone(g: CanvasRenderingContext2D, z: Zone, cam: Camera, W: number, 
       break;
     }
     case 'slope': {
+      // a wedge: bright at the top edge, shaded down the run, with a hard
+      // shadow line along the top (the step the ball drops off)
       const a = ((z.angle ?? 0) * Math.PI) / 180;
       const cx = p.x + w / 2, cy = p.y + h / 2;
       const grad = g.createLinearGradient(cx - Math.cos(a) * w / 2, cy - Math.sin(a) * h / 2, cx + Math.cos(a) * w / 2, cy + Math.sin(a) * h / 2);
-      grad.addColorStop(0, 'rgba(255,255,255,0.12)');
-      grad.addColorStop(1, 'rgba(0,0,0,0.22)');
+      grad.addColorStop(0, 'rgba(255,255,255,0.22)');
+      grad.addColorStop(1, 'rgba(0,0,0,0.28)');
       g.fillStyle = grad;
       g.fillRect(p.x, p.y, w, h);
       drawArrows(g, z, cam, W, H, a, 'rgba(255,255,255,0.28)', 0, 3);
+      const rise = rampRise(z);
+      g.lineWidth = Math.max(2, Math.min(0.5, rise * 0.25) * s);
+      g.strokeStyle = 'rgba(0,0,0,0.45)';
+      g.beginPath();
+      const corners = [[z.x, z.y], [z.x + z.w, z.y], [z.x + z.w, z.y + z.h], [z.x, z.y + z.h]];
+      for (let i = 0; i < 4; i++) {
+        const c0 = corners[i], c1 = corners[(i + 1) % 4];
+        // an edge is the top edge when both its ends sit at the top of the run
+        if (rampFrac(z, c0[0], c0[1]) < 0.01 && rampFrac(z, c1[0], c1[1]) < 0.01) {
+          const q0 = w2s(cam, W, H, c0[0], c0[1]), q1 = w2s(cam, W, H, c1[0], c1[1]);
+          g.moveTo(q0.x, q0.y); g.lineTo(q1.x, q1.y);
+        }
+      }
+      g.stroke();
+      if (o.editor) {
+        g.fillStyle = '#fff';
+        g.font = `700 ${Math.max(9, s * 0.45)}px Chakra Petch, sans-serif`;
+        g.textAlign = 'center';
+        g.fillText(`RAMP ↑${rise.toFixed(1)}`, cx, cy + h / 2 - 0.3 * s);
+      }
+      break;
+    }
+    case 'conveyor': {
+      g.fillStyle = th.conveyor;
+      g.fillRect(p.x, p.y, w, h);
+      const a = ((z.angle ?? 0) * Math.PI) / 180;
+      const sp = zonePower(z);
+      drawArrows(g, z, cam, W, H, a, '#ffd60a', (o.t * Math.max(1, sp) * 0.5) % 1.5, 1.5);
+      break;
+    }
+    case 'spinner': {
+      const cx = p.x + w / 2, cy = p.y + h / 2;
+      const r = Math.min(w, h) / 2;
+      g.fillStyle = 'rgba(0,0,0,0.18)';
+      g.fillRect(p.x, p.y, w, h);
+      g.beginPath();
+      g.arc(cx, cy, r, 0, Math.PI * 2);
+      g.fillStyle = th.spinner;
+      g.fill();
+      const ang = zonePower(z) * o.t;
+      g.strokeStyle = 'rgba(255,255,255,0.55)';
+      g.lineWidth = Math.max(1.5, 0.12 * s);
+      g.beginPath();
+      for (let i = 0; i < 6; i++) {
+        const t = ang + (i / 6) * Math.PI * 2;
+        g.moveTo(cx, cy);
+        g.lineTo(cx + Math.cos(t) * r * 0.92, cy + Math.sin(t) * r * 0.92);
+      }
+      g.stroke();
+      g.beginPath();
+      g.arc(cx, cy, r * 0.18, 0, Math.PI * 2);
+      g.fillStyle = '#fff';
+      g.fill();
+      break;
+    }
+    case 'fan': {
+      g.fillStyle = 'rgba(91,209,255,0.28)';
+      g.fillRect(p.x, p.y, w, h);
+      const a = ((z.angle ?? 0) * Math.PI) / 180;
+      drawArrows(g, z, cam, W, H, a, th.fan, (o.t * 9) % 2, 2);
+      const cx = p.x + w / 2, cy = p.y + h / 2;
+      const r = Math.min(w, h) * 0.3;
+      g.strokeStyle = 'rgba(255,255,255,0.8)';
+      g.lineWidth = Math.max(2, 0.18 * s);
+      g.beginPath();
+      for (let i = 0; i < 3; i++) {
+        const t = o.t * 14 + (i / 3) * Math.PI * 2;
+        g.moveTo(cx, cy);
+        g.lineTo(cx + Math.cos(t) * r, cy + Math.sin(t) * r);
+      }
+      g.stroke();
+      break;
+    }
+    case 'trampoline': {
+      g.fillStyle = th.tramp;
+      g.fillRect(p.x, p.y, w, h);
+      const cx = p.x + w / 2, cy = p.y + h / 2;
+      const r = Math.min(w, h) / 2;
+      g.strokeStyle = 'rgba(255,255,255,0.7)';
+      g.lineWidth = Math.max(1.5, 0.1 * s);
+      for (let k = 0.25; k <= 1; k += 0.25) {
+        g.beginPath();
+        g.ellipse(cx, cy, (w / 2) * k, (h / 2) * k, 0, 0, Math.PI * 2);
+        g.stroke();
+      }
+      void r;
+      break;
+    }
+    case 'magnet': {
+      const repel = zonePower(z) < 0;
+      const col = repel ? th.repel : th.magnet;
+      g.fillStyle = 'rgba(0,0,0,0.22)';
+      g.fillRect(p.x, p.y, w, h);
+      const cx = p.x + w / 2, cy = p.y + h / 2;
+      const rmax = Math.min(w, h) / 2;
+      g.strokeStyle = col;
+      g.lineWidth = Math.max(1.5, 0.1 * s);
+      for (let i = 0; i < 4; i++) {
+        let k = ((o.t * 0.6 + i / 4) % 1);
+        if (!repel) k = 1 - k;
+        g.globalAlpha = 0.25 + 0.6 * (1 - k);
+        g.beginPath();
+        g.arc(cx, cy, rmax * k, 0, Math.PI * 2);
+        g.stroke();
+      }
+      g.globalAlpha = 1;
+      g.beginPath();
+      g.arc(cx, cy, Math.max(3, 0.35 * s), 0, Math.PI * 2);
+      g.fillStyle = col;
+      g.fill();
+      break;
+    }
+    case 'cannon': {
+      g.fillStyle = th.cannon;
+      g.fillRect(p.x, p.y, w, h);
+      const a = ((z.angle ?? 0) * Math.PI) / 180;
+      const cx = p.x + w / 2, cy = p.y + h / 2;
+      const len = Math.min(w, h) * 0.45;
+      g.strokeStyle = '#1a1d24';
+      g.lineWidth = Math.max(4, 0.7 * s);
+      g.lineCap = 'round';
+      g.beginPath();
+      g.moveTo(cx - Math.cos(a) * len * 0.5, cy - Math.sin(a) * len * 0.5);
+      g.lineTo(cx + Math.cos(a) * len, cy + Math.sin(a) * len);
+      g.stroke();
+      g.strokeStyle = '#9aa3b5';
+      g.lineWidth = Math.max(2, 0.4 * s);
+      g.stroke();
+      const flash = 0.5 + 0.5 * Math.sin(o.t * 6);
+      g.beginPath();
+      g.arc(cx + Math.cos(a) * len, cy + Math.sin(a) * len, Math.max(3, 0.45 * s), 0, Math.PI * 2);
+      g.fillStyle = `rgba(255,214,10,${0.3 + flash * 0.5})`;
+      g.fill();
       break;
     }
     case 'boost': {
