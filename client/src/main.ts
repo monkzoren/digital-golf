@@ -7,7 +7,7 @@ import type { Player, Lobby, Course, Hole as HoleRow, Chat } from './module_bind
 import type { Identity } from 'spacetimedb';
 import type { Hole } from '@shared/courses';
 import { parseHole } from '@shared/mapformat';
-import { type BallState, DT, TICK_HZ, geomOf, newEvents, shotVelocity, stepBall } from '@shared/physics';
+import { type BallState, DT, TICK_HZ, geomOf, newEvents, shotFrom, stepBall } from '@shared/physics';
 import {
   COLORS, DATABASE_NAME, EMOTES, EV, L_FINISHED, L_OPEN, L_RUNNING, MAX_PLAYERS, POWER_MULS,
   PH_FINAL, PH_INTRO, PH_PLAY, PH_RESULTS, SPACETIMEDB_URI,
@@ -907,17 +907,21 @@ canvas.addEventListener('pointerup', e => {
   updateDrag(e);
   drag.active = false;
   // what you saw is what you get: the eased angle is the one that flies
-  if (drag.power > 0.04 && canShoot()) { kbAim.angle = drag.shown; fire(drag.shown, drag.power); }
+  // the ball goes where your hand is at release, not where the eased arrow
+  // was a frame ago
+  if (drag.power > 0.04 && canShoot()) { kbAim.angle = drag.angle; fire(drag.angle, drag.power); }
 });
 /** Send the shot and start living it locally right now. */
 function fire(angle: number, power: number) {
   const p = me(); const lobby = myLobby();
   if (!p || !lobby) return;
-  rd().shoot({ angle, power });
+  // the hole tick we are looking at right now: the server applies the shot
+  // THEN (lag compensation), so the windmill you timed is the one you hit
+  rd().shoot({ angle, power, atTick: Math.max(0, Math.round(tLocal * TICK_HZ)) });
   const d = dispOf(p);
-  const v = shotVelocity(angle, power, lobby.powerMul / 100);
+  const v = gameHoleObj ? shotFrom(geomOf(gameHoleObj), d.x, d.y, angle, power, lobby.powerMul / 100) : { vx: 0, vy: 0, vz: 0 };
   predicted = {
-    ball: { x: d.x, y: d.y, z: d.z, vx: v.vx, vy: v.vy, vz: 0, teleTicks: 0 },
+    ball: { x: d.x, y: d.y, z: v.vz > 0 ? d.z + 0.01 : d.z, vx: v.vx, vy: v.vy, vz: v.vz, teleTicks: 0 },
     shotSeq: p.shotSeq + 1, power, startedAt: performance.now(), t: tLocal, acc: 0,
   };
   d.lastShotSeq = predicted.shotSeq; // the server's echo of this shot is not a second putt
@@ -1114,7 +1118,7 @@ function renderHud(lobby: Lobby, p: Player, players: Player[], hole: Hole | null
   const boardHtml = html + (more > 0 ? `<div class="r"><span class="nm" style="color:var(--dim)">+${more} MORE · TAB</span></div>` : '');
   if (board.innerHTML !== boardHtml) board.innerHTML = boardHtml;
   $('help').textContent = p.holed ? 'IN THE HOLE — WAITING FOR THE OTHERS' : lobby.phase === PH_PLAY
-    ? (p.resting ? (p.strokes >= lobby.maxStrokes ? 'OUT OF STROKES' : 'PRESS AND PULL BACK · RELEASE TO PUTT · HOLD ←/→ TO AIM (SHIFT = FINE) · HOLD SPACE · TAB SCORECARD · ENTER CHAT · ESC MENU') : 'ROLLING…')
+    ? (p.resting && !predicted ? (p.strokes >= lobby.maxStrokes ? 'OUT OF STROKES' : 'PRESS AND PULL BACK · RELEASE TO PUTT · HOLD ←/→ TO AIM (SHIFT = FINE) · HOLD SPACE · TAB SCORECARD · ENTER CHAT · ESC MENU') : 'ROLLING…')
     : '';
   // name tags + emotes above the other balls
   const seen = new Set<string>();

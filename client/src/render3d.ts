@@ -2537,6 +2537,7 @@ let teleMats: THREE.MeshBasicMaterial[] = [];
 let spinners: { group: THREE.Group; speed: number }[] = [];
 let fanBlades: THREE.Group[] = [];
 let magnetMats: THREE.MeshBasicMaterial[] = [];
+let cannons: { zone: Zone; group: THREE.Group; restAngle: number }[] = [];
 let flagMesh: THREE.Mesh | null = null;
 const camPos = new THREE.Vector3();
 const camLook = new THREE.Vector3();
@@ -3107,6 +3108,7 @@ function disposeHole() {
   spinners = [];
   fanBlades = [];
   magnetMats = [];
+  cannons = [];
   flagMesh = null;
   builtGeom = null;
 }
@@ -3278,24 +3280,30 @@ function setHole(hole: Hole) {
       fanBlades.push(group);
     }
     if (z.kind === 'cannon') {
-      // a barrel on a base, pointing the way it fires and cocked up for the loft
-      const a = ((z.angle ?? 0) * Math.PI) / 180;
+      // a barrel on a base, cocked up for the loft; it swings to follow the
+      // aim of whoever is loaded in it (see drawScene)
       const len = Math.max(1.2, Math.min(z.w, z.h) * 0.9);
-      const dir = new THREE.Vector3(Math.cos(a), 0.55, Math.sin(a)).normalize();
+      const group = new THREE.Group();
+      group.position.set(cx, FLOOR_Y + 0.55, cz);
+      const dir = new THREE.Vector3(1, 0.55, 0).normalize();
       const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.42, len, 16), CANNON_MAT);
       barrel.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
-      barrel.position.set(cx + dir.x * len * 0.25, FLOOR_Y + 0.55 + dir.y * len * 0.25, cz + dir.z * len * 0.25);
+      barrel.position.set(dir.x * len * 0.25, dir.y * len * 0.25, dir.z * len * 0.25);
       barrel.castShadow = true;
-      holeGroup.add(barrel);
+      group.add(barrel);
       const rim = new THREE.Mesh(new THREE.TorusGeometry(0.36, 0.06, 8, 20), CANNON_RIM_MAT);
       rim.quaternion.copy(barrel.quaternion);
       rim.rotateX(Math.PI / 2);
-      rim.position.set(cx + dir.x * len * 0.75, FLOOR_Y + 0.55 + dir.y * len * 0.75, cz + dir.z * len * 0.75);
-      holeGroup.add(rim);
+      rim.position.set(dir.x * len * 0.75, dir.y * len * 0.75, dir.z * len * 0.75);
+      group.add(rim);
+      const restAngle = ((z.angle ?? 0) * Math.PI) / 180;
+      group.rotation.y = -restAngle;
+      holeGroup.add(group);
       const base = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.7, 0.5, 16), CANNON_MAT);
       base.position.set(cx, FLOOR_Y + 0.25, cz);
       base.castShadow = true;
       holeGroup.add(base);
+      cannons.push({ zone: z, group, restAngle });
     }
     if (z.kind === 'tele') {
       teleMats.push(mat as THREE.MeshBasicMaterial);
@@ -3394,6 +3402,16 @@ export function drawScene(scene: GolfScene) {
     }
   }
   for (const s of spinners) s.group.rotation.y = -s.speed * t;
+  // a loaded cannon tracks the loaded player's aim; otherwise it rests
+  const meAim = scene.players.find(p => p.me);
+  for (const c of cannons) {
+    const loaded = !!meAim && scene.aim && meAim.x >= c.zone.x && meAim.x <= c.zone.x + c.zone.w && meAim.y >= c.zone.y && meAim.y <= c.zone.y + c.zone.h;
+    const want = loaded && scene.aim ? scene.aim.angle : c.restAngle;
+    let d = -want - c.group.rotation.y;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    c.group.rotation.y += d * (1 - Math.exp(-10 * dt));
+  }
   for (const f of fanBlades) f.rotation.y = -(now / 45) % (Math.PI * 2);
   for (const mm of magnetMats) mm.opacity = 0.65 + 0.3 * Math.sin(now / 180);
   for (const w of waterMats) if (w.normalMap) {
