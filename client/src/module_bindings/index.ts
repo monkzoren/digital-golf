@@ -40,6 +40,7 @@ import JoinLobbyReducer from "./join_lobby_reducer";
 import LeaveLobbyReducer from "./leave_lobby_reducer";
 import PlayAgainReducer from "./play_again_reducer";
 import PublishCourseReducer from "./publish_course_reducer";
+import ResetBallReducer from "./reset_ball_reducer";
 import SaveCourseReducer from "./save_course_reducer";
 import SeedBuiltinsReducer from "./seed_builtins_reducer";
 import SendChatReducer from "./send_chat_reducer";
@@ -50,6 +51,7 @@ import SetNameReducer from "./set_name_reducer";
 import SetSettingsReducer from "./set_settings_reducer";
 import ShootReducer from "./shoot_reducer";
 import StartGameReducer from "./start_game_reducer";
+import UndoShotReducer from "./undo_shot_reducer";
 
 // Import all procedure arg schemas
 
@@ -153,6 +155,7 @@ const reducersSchema = __reducers(
   __reducerSchema("leave_lobby", LeaveLobbyReducer),
   __reducerSchema("play_again", PlayAgainReducer),
   __reducerSchema("publish_course", PublishCourseReducer),
+  __reducerSchema("reset_ball", ResetBallReducer),
   __reducerSchema("save_course", SaveCourseReducer),
   __reducerSchema("seed_builtins", SeedBuiltinsReducer),
   __reducerSchema("send_chat", SendChatReducer),
@@ -163,6 +166,7 @@ const reducersSchema = __reducers(
   __reducerSchema("set_settings", SetSettingsReducer),
   __reducerSchema("shoot", ShootReducer),
   __reducerSchema("start_game", StartGameReducer),
+  __reducerSchema("undo_shot", UndoShotReducer),
 );
 
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */

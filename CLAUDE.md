@@ -29,8 +29,11 @@ README.md for architecture and run instructions. Key facts:
   with the real physics: ace exists, is narrow (< 4.5% of shots) and
   hittable, greedy play finishes within par + 1, a ±3° "decent player"
   averages about par, the ball travels ≥ 55/75/95 units for par 3/4/5, no
-  shot rolls for ever. MAX_SHOT is 30 (≈ 87 units of roll on green): a hole
-  should take several shots. Cannons LOAD a ball that rolls in; the next
+  shot rolls for ever. MAX_SHOT is 27 and FRICTION 4 with a low-speed
+  trickle (≈ 95 units of roll on green): a hole should take several shots.
+  Off the course is NOT an instant reset: the ball rolls on across the lawn
+  and is reset once it stops out there. `reset_ball` (R) / `undo_shot` (F)
+  put it back on the tee / where it was last struck from, strokes kept. Cannons LOAD a ball that rolls in; the next
   shot uses `shotFrom` (lofted). The `shoot` reducer takes `atTick` and
   rewinds ≤ 12 ticks (lag compensation).
   Run it after touching physics or courses. The module's private

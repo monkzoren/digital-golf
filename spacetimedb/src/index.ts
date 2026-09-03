@@ -799,6 +799,33 @@ export const shoot = spacetimedb.reducer(
   }
 );
 
+/** Put the ball somewhere still, keeping the stroke count. Costs nothing but
+ *  the strokes already spent — a retry, not a refund. `manual` (eventPower
+ *  1) lets the client word it differently from a water reset. */
+function placeBall(ctx: Ctx, p: PlayerRow, x: number, y: number) {
+  ctx.db.player.identity.update(
+    withEvent({ ...p, x, y, z: 0, vx: 0, vy: 0, vz: 0, teleTicks: 0, resting: true, struck: false, safeX: x, safeY: y }, EV_RESET, 1)
+  );
+}
+
+/** R: back to the tee. */
+export const reset_ball = spacetimedb.reducer(ctx => {
+  const p = getPlayer(ctx);
+  const lobby = ctx.db.lobby.id.find(p.lobbyId);
+  if (!lobby || lobby.status !== L_RUNNING || lobby.phase !== PH_PLAY || p.holed) return;
+  const hole = currentHole(ctx, lobby);
+  if (!hole) return;
+  placeBall(ctx, p, hole.tee.x, hole.tee.y);
+});
+
+/** F: back to where the last shot was played from. */
+export const undo_shot = spacetimedb.reducer(ctx => {
+  const p = getPlayer(ctx);
+  const lobby = ctx.db.lobby.id.find(p.lobbyId);
+  if (!lobby || lobby.status !== L_RUNNING || lobby.phase !== PH_PLAY || p.holed) return;
+  placeBall(ctx, p, p.safeX, p.safeY);
+});
+
 export const send_chat = spacetimedb.reducer({ text: t.string() }, (ctx, { text }) => {
   const msg = text.trim().slice(0, 140);
   if (!msg) return;

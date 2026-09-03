@@ -14,7 +14,9 @@ TypeScript three.js game with a built-in course editor.
 
 - **Everyone shoots at once.** Up to 32 players per room, no turns. Press,
   pull back and release to putt (or hold ←/→ to aim, Shift for fine, and
-  hold Space for power). The ball goes the instant you release: the client
+  hold Space for power; R puts the ball back on the tee, F back where the
+  last shot was played from — the strokes stay). The ball goes the instant
+  you release: the client
   predicts the shot and the server applies it at the tick you released on,
   so timing a windmill never depends on your ping. The arrow shows direction and power only — no
   bounce preview, reading the walls is the skill. Balls collide with each

@@ -814,7 +814,7 @@ function notePlayer(row: Player, old: Player) {
       case EV.LAND: sfx.land(); burstAt(row.x, row.y, 0, 0xc9c9c9, 8, 7); break;
       case EV.TELE: sfx.tele(); burstAt(row.x, row.y, 0, 0xc77dff, 24, 14); burstAt(old.x, old.y, 0, 0xc77dff, 14, 10); break;
       case EV.WATER: sfx.water(); burstAt(old.x, old.y, 0, 0x7fc8ff, 24, 14, -30); if (isMe(row.identity)) banner('SPLASH! +1 STROKE', 'lose'); break;
-      case EV.RESET: sfx.reset(); if (isMe(row.identity)) banner('BACK YOU GO'); break;
+      case EV.RESET: sfx.reset(); if (isMe(row.identity)) banner(row.eventPower > 0 ? 'BALL RESET' : 'BACK YOU GO'); break;
       case EV.BOOST: sfx.boost(); break;
       case EV.HOLED: {
         const hole = currentHole(lobby!);
@@ -959,12 +959,15 @@ window.addEventListener('keydown', e => {
   }
   if (inInput) return;
   if (e.key === 'g' || e.key === 'G') { modal('settings-modal', !$('settings-modal').classList.contains('hidden') ? false : true); return; }
-  if (e.key === 'f' || e.key === 'F') { toggleFullscreen(); return; }
+  if ((e.key === 'f' || e.key === 'F') && overlayTarget !== null) { toggleFullscreen(); return; }
   if (e.key === 'm' || e.key === 'M') { setMuted(!isMuted()); notify(isMuted() ? 'MUTED' : 'SOUND ON'); return; }
   if (overlayTarget !== null) return;
   if (e.key === 'Enter') { const ci = $('chat-input'); ci.classList.add('open'); ci.focus(); unreadChat = 0; e.preventDefault(); return; }
   if (e.key === 'Tab') { e.preventDefault(); const open = $('scores-modal').classList.contains('hidden'); modal('scores-modal', open); if (open) renderScorecard('scores-table'); return; }
   if (e.key >= '1' && e.key <= '6') { rd().sendEmote({ index: Number(e.key) - 1 }); return; }
+  // R: back to the tee · F: back to where the last shot was played from
+  if (e.key === 'r' || e.key === 'R') { predicted = null; rd().resetBall({}); return; }
+  if (e.key === 'f' || e.key === 'F') { predicted = null; rd().undoShot({}); return; }
   if (e.key === 'c' || e.key === 'C') { camOverview = !camOverview; return; }
   if (e.key === 'Shift') held.fine = true;
   if (!canShoot()) return;
@@ -1130,7 +1133,7 @@ function renderHud(lobby: Lobby, p: Player, players: Player[], hole: Hole | null
   const boardHtml = html + (more > 0 ? `<div class="r"><span class="nm" style="color:var(--dim)">+${more} MORE · TAB</span></div>` : '');
   if (board.innerHTML !== boardHtml) board.innerHTML = boardHtml;
   $('help').textContent = p.holed ? 'IN THE HOLE — WAITING FOR THE OTHERS' : lobby.phase === PH_PLAY
-    ? (p.resting && !predicted ? (p.strokes >= lobby.maxStrokes ? 'OUT OF STROKES' : 'PRESS AND PULL BACK · RELEASE TO PUTT · HOLD ←/→ TO AIM (SHIFT = FINE) · HOLD SPACE · RIGHT-DRAG LOOK · WHEEL ZOOM · C OVERVIEW · TAB SCORECARD · ENTER CHAT · ESC MENU') : 'ROLLING… · DRAG TO LOOK AROUND')
+    ? (p.resting && !predicted ? (p.strokes >= lobby.maxStrokes ? 'OUT OF STROKES' : 'PRESS AND PULL BACK · RELEASE TO PUTT · ←/→ AIM · R TEE · F REDO SHOT · RIGHT-DRAG LOOK · WHEEL ZOOM · C OVERVIEW · TAB SCORECARD · ENTER CHAT · ESC MENU') : 'ROLLING… · DRAG TO LOOK AROUND')
     : '';
   // name tags + emotes above the other balls
   const seen = new Set<string>();

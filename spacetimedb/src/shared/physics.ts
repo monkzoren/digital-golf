@@ -13,13 +13,15 @@ export const DT = 1 / TICK_HZ;
 export const BALL_R = 0.45;
 export const WALL_E = 0.78; // wall restitution
 export const GRAVITY = 32;
-export const FRICTION = 5.2; // green: rolling deceleration, u/s²
+export const FRICTION = 4.0; // green: rolling deceleration, u/s²
+export const TRICKLE_SPEED = 6; // below this the felt lets go a little: the ball trickles to a stop
+export const TRICKLE_MUL = 0.6; // …with this much of the deceleration
 export const FRICTION_SAND = 26;
 export const FRICTION_ICE = 1.4;
 export const AIR_DRAG = 0.12; // per second, airborne only
-export const REST_SPEED = 0.42;
+export const REST_SPEED = 0.3;
 export const MIN_SHOT = 3;
-export const MAX_SHOT = 30;
+export const MAX_SHOT = 27;
 export const MAX_SPEED = 46;
 export const CUP_R = 0.78; // capture radius (ball centre)
 export const CUP_PULL_R = 2.1; // the cup gently pulls slow balls in
@@ -353,7 +355,11 @@ function hitBumper(b: BallState, p: Bumper): boolean {
  *  floor, or inside a wall block / moving block at time `t`? A ball that
  *  gets there (squeezed by a mover) is stuck for good — the caller resets it. */
 export function insideSolid(g: HoleGeom, x: number, y: number, z: number, t: number): boolean {
-  if (!pointInFloor(x, y, g.hole)) return true;
+  return !pointInFloor(x, y, g.hole) || insideBlock(g, x, y, z, t);
+}
+
+/** Is the ball's centre inside a wall block / moving block at time `t`? */
+export function insideBlock(g: HoleGeom, x: number, y: number, z: number, t: number): boolean {
   for (const s of g.solids) {
     if (z >= (s.h ?? WALL_H) - ON_TOP) continue;
     if (pointInPoly(x, y, s.pts)) return true;
@@ -460,7 +466,10 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
       if (imp > ev.wall) ev.wall = imp;
     }
     if (isResting(b, g0)) {
-      if (g.movers.length && insideSolid(g, b.x, b.y, b.z, t + DT)) { ev.oob = true; return; }
+      // stopped off the course (it flew over a wall and came down on the
+      // lawn), or swept inside a mover: back to the last safe spot
+      if (!pointInFloor(b.x, b.y, g.hole)) { ev.oob = true; return; }
+      if (g.movers.length && insideBlock(g, b.x, b.y, b.z, t + DT)) { ev.oob = true; return; }
       // a belt, fan, magnet, spinner or cannon under the ball wakes it up —
       // unless it would only grind the ball into a wall
       const push = surfacePush(zoneAt(g, b.x, b.y), b);
@@ -586,11 +595,13 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
           case 'ice': fr = FRICTION_ICE; break;
         }
       }
-      // rolling friction — a constant deceleration, never past zero
+      // rolling friction — a constant deceleration that eases off as the
+      // ball slows (felt lets a slow ball trickle), never past zero
       if (b.z <= ground + 0.001) {
         const s = speedOf(b);
         if (s > 0) {
-          const ns = Math.max(0, s - fr * h);
+          const eased = fr === FRICTION && s < TRICKLE_SPEED ? fr * (TRICKLE_MUL + (1 - TRICKLE_MUL) * (s / TRICKLE_SPEED)) : fr;
+          const ns = Math.max(0, s - eased * h);
           b.vx *= ns / s; b.vy *= ns / s;
         }
       }
@@ -692,8 +703,8 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
     // for ever. Rather than let it through, hold it where it was so the
     // mover passes and the ball is free again; if where it was is already
     // inside something too, it is stuck and gets reset (ev.oob).
-    if (g.movers.length && insideSolid(g, b.x, b.y, b.z, tt)) {
-      if (insideSolid(g, px, py, b.z, tt)) stuck = true;
+    if (g.movers.length && insideBlock(g, b.x, b.y, b.z, tt)) {
+      if (insideBlock(g, px, py, b.z, tt)) stuck = true;
       else { b.x = px; b.y = py; b.vx *= 0.5; b.vy *= 0.5; }
     }
   }
@@ -709,7 +720,10 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
   if (carried && (grounded || carried.kind === 'fan') && Math.hypot(b.x - x0, b.y - y0) < 0.012) {
     b.vx = 0; b.vy = 0; b.vz = 0; b.z = gz;
   }
-  if (stuck || !pointInFloor(b.x, b.y, g.hole)) ev.oob = true;
+  // Off the course is not the end of the shot: a ball that clears a wall
+  // rolls on across the lawn and is only reset once it has come to rest
+  // out there. Squeezed into a wall by a mover: reset now.
+  if (stuck || (!pointInFloor(b.x, b.y, g.hole) && isResting(b, gz))) ev.oob = true;
 }
 
 /** Elastic ball-vs-ball. Returns true when the two touched. */

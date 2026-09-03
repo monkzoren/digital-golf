@@ -516,6 +516,7 @@ function onKey(e: KeyboardEvent) {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); save(); return; }
   if (testing) {
     if (e.key === 'r' || e.key === 'R') resetTestBall();
+    if (e.key === 'f' || e.key === 'F') { placeTestBall(testSafe.x, testSafe.y); testStruck = false; testAim.active = false; }
     if (e.key === 'c' || e.key === 'C') toggleTestCam();
     return;
   }
@@ -778,7 +779,7 @@ function startTest() {
   $('editor').classList.add('testing');
   document.body.classList.add('ed-testing');
   $('ed-test-bar').classList.remove('hidden');
-  toast('TEST · press and pull back to putt · C camera · R reset ball · Esc back to the editor');
+  toast('TEST · press and pull back to putt · C camera · R back to the tee · F redo the last shot · Esc back to the editor');
 }
 function stopTest() {
   if (!testing) return;

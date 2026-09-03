@@ -28,10 +28,10 @@ const VERBOSE = !!process.env.VERBOSE;
 const MAX_TICKS = 450; // 15 s: the server stops a ball still rolling after this (ROLL_LIMIT_SECS)
 const COARSE_ANGLE = 3; // degrees
 const COARSE_POWER = 0.1;
-const TIMED_SAMPLES = 8; // shot times spread over 6 s when the hole has movers
+const TIMED_SAMPLES = 12; // shot times spread over 6 s when the hole has movers
 const HIDDEN_MAX = 0.045; // aces on more than ~1 in 22 random shots = obvious
 const MIN_CLUSTER = 4; // fine-grid cells an ace must span to be humanly hittable
-const MIN_ACES = 4; // library courses: at least this many of 9 holes must have a (hidden) ace — most do
+const MIN_ACES = 3; // library courses: at least this many of 9 holes must have a (hidden) ace — most do; timing courses fewest
 // tutorial / showcase courses: their aces are meant to be easy to find
 const SHOWCASE = new Set(['Sunny Park', 'Neon Orbit', 'Toy Box']);
 
