@@ -14,6 +14,7 @@ export interface Theme {
   sand: string; ice: string; water: string; waterDeep: string; slope: string;
   boost: string; jump: string; tele: string; bumper: string; post: string;
   conveyor: string; spinner: string; fan: string; tramp: string; magnet: string; repel: string; cannon: string;
+  gravity: string;
   rubber: string; laser: string;
   cup: string; flag: string;
 }
@@ -21,7 +22,7 @@ export interface Theme {
 // the toy-box colours are the same in every theme so a piece is always recognisable
 const TOYS = {
   conveyor: '#2a2a33', spinner: '#7c5cff', fan: '#5bd1ff', tramp: '#3d7bff', magnet: '#ff5fb8', repel: '#ff8a3d',
-  cannon: '#3a3f4a', rubber: '#ff7ad9', laser: '#ff2d55',
+  cannon: '#3a3f4a', gravity: '#b39cff', rubber: '#ff7ad9', laser: '#ff2d55',
 };
 
 export const THEMES: Record<string, Theme> = {
@@ -42,6 +43,16 @@ export const THEMES: Record<string, Theme> = {
     boost: '#ff8a3d', jump: '#ffe94b', tele: '#ff5fb8', bumper: '#ff3d3d', post: '#7c8fbf',
     ...TOYS,
     cup: '#05051a', flag: '#4be3ff',
+  },
+  // deep space: a rainbow road floating in the void, neon rails, moon-dust sand
+  space: {
+    bg: '#040211', bgLine: 'rgba(150,130,255,0.07)',
+    felt: '#31257a', feltStripe: 'rgba(255,255,255,0.07)', feltEdge: '#1d1550',
+    wallTop: '#7ef0ff', wallSide: '#1d6a80', wallLow: '#ffd86b',
+    sand: '#b9b4c9', ice: '#dff6ff', water: '#1a0b3d', waterDeep: '#020108', slope: 'rgba(255,255,255,0.1)',
+    boost: '#ff8a3d', jump: '#ffe94b', tele: '#ff5fb8', bumper: '#ff3d3d', post: '#8f9ccf',
+    ...TOYS,
+    cup: '#000000', flag: '#ffd60a',
   },
 };
 
@@ -498,6 +509,28 @@ function drawZone(g: CanvasRenderingContext2D, z: Zone, cam: Camera, W: number, 
       g.fillRect(p.x, p.y, w, h);
       const a = ((z.angle ?? 0) * Math.PI) / 180;
       drawArrows(g, z, cam, W, H, a, th.boost, (o.t * 6) % 2, 2);
+      break;
+    }
+    case 'gravity': {
+      // a warped patch of space: dark, a faint grid bowing toward the pull,
+      // streaming chevrons the way the ball is dragged
+      g.fillStyle = 'rgba(20,10,60,0.55)';
+      g.fillRect(p.x, p.y, w, h);
+      g.strokeStyle = 'rgba(179,156,255,0.22)';
+      g.lineWidth = 1;
+      g.beginPath();
+      for (let k = 0; k <= Math.min(200, z.w); k += 2) { const q = w2s(cam, W, H, z.x + k, z.y); g.moveTo(q.x, q.y); g.lineTo(q.x, q.y + h); }
+      for (let k = 0; k <= Math.min(200, z.h); k += 2) { const q = w2s(cam, W, H, z.x, z.y + k); g.moveTo(q.x, q.y); g.lineTo(q.x + w, q.y); }
+      g.stroke();
+      const a = ((z.angle ?? 0) * Math.PI) / 180;
+      const sp = zonePower(z);
+      drawArrows(g, z, cam, W, H, a, th.gravity, (o.t * Math.min(12, 2 + sp * 0.5)) % 2.5, 2.5);
+      if (o.editor) {
+        g.fillStyle = '#fff';
+        g.font = `700 ${Math.max(9, s * 0.45)}px Chakra Petch, sans-serif`;
+        g.textAlign = 'center';
+        g.fillText(`GRAVITY ${sp.toFixed(1)}`, p.x + w / 2, p.y + h / 2 + s * 0.2);
+      }
       break;
     }
     case 'jump': {

@@ -46,12 +46,14 @@ export const ON_TOP = 0.001; // a ball this close under a wall's top is on it, n
 export const bumperH = (p: Bumper) => (p.kick > 0 ? BUMPER_H : POST_H);
 /** a ramp steeper than this (its downhill acceleration beats the friction on it) never lets a ball rest */
 export const rampRolls = (z: Zone) => zonePower(z) > FRICTION * RAMP_FRICTION_MUL;
+/** a gravity field stronger than the felt's grip never lets a ball rest (it rolls until a wall holds it) */
+export const fieldRolls = (z: Zone) => zonePower(z) > FRICTION;
 
 // Defaults for the zone `power` field (and cannon `lift`), by kind.
 export const ZONE_DEFAULT_POWER: Record<Zone['kind'], number> = {
   sand: 0, ice: 0, water: 0, tele: 0,
   slope: 3.5, boost: 40, jump: 11,
-  conveyor: 6, spinner: 3, fan: 30, trampoline: 12, magnet: 25, cannon: 34,
+  conveyor: 6, spinner: 3, fan: 30, trampoline: 12, magnet: 25, cannon: 34, gravity: 12,
 };
 export const CANNON_DEFAULT_LIFT = 10;
 export const zonePower = (z: Zone) => z.power ?? ZONE_DEFAULT_POWER[z.kind];
@@ -215,7 +217,7 @@ export function restingOn(g: HoleGeom, b: BallState): boolean {
 // Priority when zones overlap: the first kind listed wins.
 const ZONE_PRIORITY: Record<Zone['kind'], number> = {
   water: 0, tele: 1, cannon: 2, jump: 3, trampoline: 4, boost: 5, conveyor: 6, spinner: 7,
-  magnet: 8, fan: 9, slope: 10, sand: 11, ice: 12,
+  magnet: 8, fan: 9, gravity: 10, slope: 11, sand: 12, ice: 13,
 };
 
 function zoneAt(g: HoleGeom, x: number, y: number): Zone | null {
@@ -412,6 +414,7 @@ function surfacePush(zone: Zone | null, b: BallState): { x: number; y: number } 
   switch (zone.kind) {
     case 'conveyor': case 'fan': return dirOf(zone);
     case 'slope': return rampRolls(zone) ? dirOf(zone) : null;
+    case 'gravity': return fieldRolls(zone) ? dirOf(zone) : null;
     case 'magnet': {
       const c = zoneCentre(zone);
       const dx = c.x - b.x, dy = c.y - b.y, d = Math.hypot(dx, dy);
@@ -492,6 +495,7 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
     if (onGround) {
       b.z = ground; b.vz = 0;
       let fr = FRICTION;
+      let trickle = true; // the felt's low-speed let-go (off in a gravity field: a pull that matched it would roll for ever)
       if (zone) {
         switch (zone.kind) {
           case 'water':
@@ -591,6 +595,20 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
             if (rampRolls(zone)) carried = zone; // it keeps rolling until something stops it
             break;
           }
+          case 'gravity': {
+            // a sideways gravity: a constant pull toward the field's
+            // direction, felt on the ground here and in the air below.
+            // Stronger than the felt's grip it never lets the ball rest —
+            // it rolls until a wall holds it (surfacePush wakes it again)
+            const d = dirOf(zone);
+            const p = zonePower(zone);
+            b.vx += d.x * p * h;
+            b.vy += d.y * p * h;
+            capSpeed(b);
+            trickle = false;
+            if (fieldRolls(zone)) carried = zone;
+            break;
+          }
           case 'sand': fr = FRICTION_SAND; break;
           case 'ice': fr = FRICTION_ICE; break;
         }
@@ -600,7 +618,7 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
       if (b.z <= ground + 0.001) {
         const s = speedOf(b);
         if (s > 0) {
-          const eased = fr === FRICTION && s < TRICKLE_SPEED ? fr * (TRICKLE_MUL + (1 - TRICKLE_MUL) * (s / TRICKLE_SPEED)) : fr;
+          const eased = trickle && fr === FRICTION && s < TRICKLE_SPEED ? fr * (TRICKLE_MUL + (1 - TRICKLE_MUL) * (s / TRICKLE_SPEED)) : fr;
           const ns = Math.max(0, s - eased * h);
           b.vx *= ns / s; b.vy *= ns / s;
         }
@@ -609,6 +627,14 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
       b.vz -= G * h;
       const k = 1 - AIR_DRAG * h;
       b.vx *= k; b.vy *= k;
+      // a gravity field bends a flight too
+      if (zone && zone.kind === 'gravity') {
+        const d = dirOf(zone);
+        const p = zonePower(zone);
+        b.vx += d.x * p * h;
+        b.vy += d.y * p * h;
+        capSpeed(b);
+      }
     }
     // a blower works on the ground and in the air: it shoves the ball along
     // and floats it a couple of units up, so it sails off the far side

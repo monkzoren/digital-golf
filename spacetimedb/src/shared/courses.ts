@@ -16,16 +16,18 @@ export interface Rect {
 
 export type ZoneKind =
   | 'sand' | 'ice' | 'water' | 'slope' | 'boost' | 'jump' | 'tele'
-  | 'conveyor' | 'spinner' | 'fan' | 'trampoline' | 'magnet' | 'cannon';
+  | 'conveyor' | 'spinner' | 'fan' | 'trampoline' | 'magnet' | 'cannon' | 'gravity';
 
 export interface Zone extends Rect {
   kind: ZoneKind;
-  /** slope / boost / conveyor / fan / cannon: direction in degrees (0 = +x, 90 = +y i.e. down). */
+  /** slope / boost / conveyor / fan / cannon / gravity: direction in degrees (0 = +x, 90 = +y i.e. down). */
   angle?: number;
   /** slope: downhill acceleration (u/s², also sets how steep the ramp is) ·
    *  boost: acceleration · jump: launch vz · conveyor: belt speed ·
    *  spinner: rad/s (negative = the other way) · fan: blow acceleration ·
-   *  trampoline: bounce vz · magnet: pull (negative = push) · cannon: muzzle speed. */
+   *  trampoline: bounce vz · magnet: pull (negative = push) · cannon: muzzle speed ·
+   *  gravity: sideways pull (u/s², on the ground AND in the air; stronger
+   *  than the felt's grip and nothing ever rests in it). */
   power?: number;
   /** cannon: launch height (vz). */
   lift?: number;
@@ -87,7 +89,7 @@ export interface Hole {
 export interface Course {
   id: number;
   name: string;
-  theme: 'park' | 'neon';
+  theme: 'park' | 'neon' | 'space';
   holes: Hole[];
 }
 
@@ -117,6 +119,19 @@ export const WALL_H = 1.1;
 export const R = (x: number, y: number, w: number, h: number): Rect => ({ x, y, w, h });
 export const rectPts = (r: Rect) => [r.x, r.y, r.x + r.w, r.y, r.x + r.w, r.y + r.h, r.x, r.y + r.h];
 export const polyRect = (x: number, y: number, w: number, h: number): Block => ({ pts: rectPts(R(x, y, w, h)) });
+
+/** Points of a star: `n` tips at radius `r`, the notches between them at
+ *  `r * inner`. A block shaped like this is a real star-shaped obstacle. */
+export function polyStar(cx: number, cy: number, r: number, n = 5, inner = 0.45, rot = -Math.PI / 2): number[] {
+  const out: number[] = [];
+  const k = Math.max(3, Math.min(12, Math.round(n)));
+  for (let i = 0; i < k * 2; i++) {
+    const a = rot + (i / (k * 2)) * Math.PI * 2;
+    const rr = i % 2 ? r * inner : r;
+    out.push(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr);
+  }
+  return out;
+}
 
 /** Points of a regular polygon / star-ish shape, for wacky obstacles. */
 export function polyNgon(cx: number, cy: number, r: number, n: number, rot = 0): number[] {
@@ -341,6 +356,9 @@ export const trampoline = (x: number, y: number, w: number, h: number, power = 1
 export const magnet = (x: number, y: number, w: number, h: number, power = 25): Zone => ({ kind: 'magnet', x, y, w, h, power });
 export const cannon = (x: number, y: number, w: number, h: number, angle: number, power = 24, lift = 10): Zone =>
   ({ kind: 'cannon', x, y, w, h, angle, power, lift });
+/** A gravity field: the ball is pulled toward `angle` at `power` u/s², rolling or flying. */
+export const gfield = (x: number, y: number, w: number, h: number, angle: number, power = 12): Zone =>
+  ({ kind: 'gravity', x, y, w, h, angle, power });
 /** A pendulum arm hanging from (cx, cy), swinging ±amp degrees every `period` s. */
 export function pendulum(cx: number, cy: number, len: number, width: number, amp: number, period: number, phase = 0): Block {
   return {
@@ -676,6 +694,16 @@ export const TOYBOX: Course = {
       floor: [R(0, 0, 40, 10)],
       zones: [jump(8, 0, 4, 10, 11), water(14, 0, 12, 10)],
       gravity: 0.4,
+    },
+    {
+      name: 'Gravity Field',
+      par: 3,
+      tip: 'The purple field pulls the ball sideways — rolling or flying. Aim upstream; nothing rests in it.',
+      tee: { x: 4, y: 4 },
+      cup: { x: 40, y: 4 },
+      floor: [R(0, 0, 44, 16)],
+      zones: [gfield(12, 0, 20, 16, 90, 9), sand(34, 12, 10, 4)],
+      bumpers: [post(37, 8, 0.6)],
     },
   ],
 };

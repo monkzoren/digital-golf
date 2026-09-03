@@ -14,9 +14,9 @@
 // climbing — so they are always entered from their low edge. A cannon loads the ball
 // that rolls in; the next shot is the player's, lofted.
 import {
-  type Block, type Course, type Hole, R, polyRect,
+  type Block, type Course, type Hole, R, polyRect, polyStar,
   bumper, post, windmill, slider, pendulum, laser, rubber,
-  sand, ice, water, slope, boost, jump, tele, conveyor, spinner, fan, trampoline, magnet, cannon,
+  sand, ice, water, slope, boost, jump, tele, conveyor, spinner, fan, trampoline, magnet, cannon, gfield,
 } from './courses';
 
 /** A triangle / any polygon block from flat points. */
@@ -669,4 +669,124 @@ export const GRAND: Course = {
   ],
 };
 
-export const LIBRARY: Course[] = [BANK, CLOCKWORK, RIDGE, MACHINE, FROST, GRAND];
+// ---------------------------------------------------------------------------
+// GALAXY ROAD — a rainbow road through deep space. Gravity fields that pull
+// sideways (and flip half way), wormholes, black holes, star jumps and
+// star-shaped obstacles. Water is the void; sand is moon dust.
+// ---------------------------------------------------------------------------
+/** A star-shaped block (5 tips); `bounce` > 1 makes it a rubber "power star". */
+const star = (cx: number, cy: number, r: number, bounce?: number, tips = 5): Block => {
+  const b: Block = { pts: polyStar(cx, cy, r, tips) };
+  if (bounce !== undefined) b.bounce = bounce;
+  return b;
+};
+
+export const GALAXY: Course = {
+  id: 9,
+  name: 'Galaxy Road',
+  theme: 'space',
+  holes: [
+    {
+      name: 'Liftoff',
+      par: 3,
+      tip: 'Two gravity fields, opposite ways: the ball bends down, then up. Nothing rests in them.',
+      tee: { x: 4, y: 7 },
+      cup: { x: 66, y: 3 },
+      floor: [R(0, 0, 70, 14)],
+      zones: [gfield(14, 0, 16, 14, 90, 8), gfield(36, 0, 16, 14, 270, 8), sand(56, 8, 14, 6)],
+      bumpers: [post(33, 7, 0.6), post(60, 4, 0.5)],
+    },
+    {
+      name: 'Wormhole',
+      par: 2,
+      tip: 'The void cuts the road; wormholes cross it. The big one drops you in moon dust. The small one keeps your line.',
+      tee: { x: 4, y: 8 },
+      cup: { x: 72, y: 15 },
+      floor: [R(0, 0, 80, 18)],
+      zones: [water(22, 0, 5, 18), tele(15, 5, 4, 8, 30, 15), tele(16, 14, 3, 3, 50, 3), sand(34, 0, 4, 18), sand(27, 12, 7, 6), sand(60, 0, 8, 6), sand(74, 0, 6, 8)],
+      blocks: [star(11, 14.5, 1.8), star(56, 10, 1.6)],
+      bumpers: [post(66, 8, 0.5), post(68, 16, 0.5), post(76, 12, 0.5), post(44, 12, 0.5)],
+    },
+    {
+      name: 'Star Jump',
+      par: 3,
+      tip: 'Low gravity. The launch star throws you over the void; a field on the far side drags you off your line.',
+      tee: { x: 4, y: 7 },
+      cup: { x: 64, y: 3 },
+      floor: [R(0, 0, 70, 14)],
+      zones: [jump(12, 4, 4, 6, 12), water(18, 0, 10, 14), gfield(42, 0, 14, 14, 90, 8), sand(58, 8, 12, 6), sand(30, 0, 3, 5)],
+      blocks: [low(30, 0, 1, 14, 1.3), star(60, 5.5, 1.4)],
+      bumpers: [post(40, 4, 0.6), post(66, 6, 0.5)],
+      gravity: 0.6,
+    },
+    {
+      name: 'Rings of Saturn',
+      par: 4,
+      tip: 'A planet on a spinning ring. Ride the ring round the top and it throws you down the exit lane.',
+      tee: { x: 5, y: 36 },
+      cup: { x: 72, y: 5 },
+      floor: [R(0, 0, 40, 40), R(40, 0, 36, 10)],
+      zones: [spinner(8, 6, 24, 24, 2.2), sand(60, 0, 3, 10), sand(0, 0, 8, 6), sand(24, 32, 16, 8)],
+      bumpers: [post(20, 18, 2.4), post(68, 3, 0.5), post(68, 8, 0.5)],
+    },
+    {
+      name: 'Comet',
+      par: 5,
+      tip: 'A long tail of gravity fields, all pulling toward the void. Aim upstream, every time.',
+      tee: { x: 4, y: 4 },
+      cup: { x: 90, y: 3 },
+      floor: [R(0, 0, 94, 14)],
+      zones: [water(10, 12, 74, 2), gfield(10, 0, 20, 12, 90, 5), ice(30, 0, 12, 12), gfield(42, 0, 20, 12, 90, 5), gfield(74, 0, 10, 12, 90, 5), sand(84, 8, 10, 6)],
+      bumpers: [post(36, 6, 0.6), post(68, 5, 0.6), post(86, 4, 0.5)],
+    },
+    {
+      name: 'Black Hole',
+      par: 3,
+      tip: 'The cup is straight ahead — through a black hole. Slingshot round it with pace, or hug the rails.',
+      tee: { x: 4, y: 15 },
+      cup: { x: 62, y: 15 },
+      floor: [R(0, 0, 66, 30)],
+      zones: [magnet(23, 5, 20, 20, 30), water(30.5, 12.5, 5, 5), sand(48, 0, 4, 8), sand(48, 22, 4, 8)],
+      blocks: [star(14, 5, 2), star(52, 25, 2)],
+      bumpers: [post(58, 11, 0.5), post(58, 19, 0.5)],
+    },
+    {
+      name: 'Moon Base',
+      par: 3,
+      tip: 'Moon gravity. Up the ramp, onto the trampoline, over the void — then a field drags you to the top.',
+      tee: { x: 4, y: 6 },
+      cup: { x: 66, y: 2 },
+      floor: [R(0, 0, 72, 12)],
+      zones: [slope(12, 0, 6, 12, 180, 9), trampoline(20, 0, 8, 12, 13), water(30, 0, 8, 12), gfield(46, 0, 10, 12, 270, 7), sand(58, 6, 14, 6)],
+      bumpers: [post(42, 6, 0.6), post(62, 3, 0.5)],
+      gravity: 0.4,
+    },
+    {
+      name: 'Pulsar',
+      par: 3,
+      tip: 'Two beams pulse, an asteroid swings between them, and the last stretch pulls back toward you.',
+      tee: { x: 4, y: 6 },
+      cup: { x: 66, y: 6 },
+      floor: [R(0, 0, 70, 12)],
+      blocks: [laser(20, 0, 1, 12, 2, 0.5, 0), pendulum(30, 0, 9, 1.4, 60, 3), laser(40, 0, 1, 12, 2, 0.5, 0.5)],
+      zones: [gfield(44, 0, 14, 12, 180, 4)],
+      bumpers: [post(62, 3, 0.5), post(62, 9, 0.5)],
+    },
+    {
+      name: 'Supernova',
+      par: 5,
+      tip: 'Gravity, power stars, a launch star over the void, a black hole and a wormhole. Everything, all at once.',
+      tee: { x: 4, y: 14 },
+      cup: { x: 100, y: 6 },
+      floor: [R(0, 0, 60, 28), R(60, 0, 44, 12)],
+      zones: [
+        gfield(10, 0, 14, 28, 90, 8), cannon(38, 11, 4, 6, 0, 34, 10), water(44, 0, 8, 28),
+        tele(54, 24, 4, 4, 92, 3), gfield(62, 0, 10, 12, 270, 8), magnet(74, 0, 12, 12, 24), sand(88, 6, 16, 6),
+      ],
+      blocks: [star(30, 8, 2.4, 1.4), star(30, 20, 2.4, 1.4)],
+      bumpers: [post(56, 6, 0.6), post(96, 3, 0.5), post(96, 9, 0.5)],
+    },
+  ],
+};
+
+export const LIBRARY: Course[] = [BANK, CLOCKWORK, RIDGE, MACHINE, FROST, GRAND, GALAXY];

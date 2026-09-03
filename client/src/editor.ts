@@ -8,7 +8,7 @@ import {
 } from '@shared/courses';
 import { cleanHole, LIMITS, THEME_NAMES } from '@shared/mapformat';
 import {
-  type BallState, CANNON_DEFAULT_LIFT, DT, ZONE_DEFAULT_POWER, geomOf, groundZ, invalidateGeom, newEvents, rampRise,
+  type BallState, CANNON_DEFAULT_LIFT, DT, FRICTION, ZONE_DEFAULT_POWER, geomOf, groundZ, invalidateGeom, newEvents, rampRise,
   restingOn, shotFrom, stepBall,
 } from '@shared/physics';
 import { type Camera, drawHole, fitCamera, s2w, THEMES, w2s } from './render';
@@ -67,6 +67,7 @@ const TOOL_DEFS: { id: Tool; label: string; color: string; group: string; hint: 
   { id: 'trampoline', label: 'Trampoline', color: '#3d7bff', group: 'Toy box', hint: 'Drag a pad that bounces a falling ball back up' },
   { id: 'magnet', label: 'Magnet', color: '#ff5fb8', group: 'Toy box', hint: 'Drag a field that pulls (or pushes) the ball' },
   { id: 'cannon', label: 'Cannon', color: '#3a3f4a', group: 'Toy box', hint: 'Drag a cannon; roll in, then aim and fire a lofted shot' },
+  { id: 'gravity', label: 'Gravity field', color: '#b39cff', group: 'Toy box', hint: 'Drag a field that pulls the ball one way — rolling or flying' },
 ];
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -425,7 +426,7 @@ function onUp(e: PointerEvent) {
       const z: Zone = { kind: tool as ZoneKind, x, y, w, h: hh };
       const p = ZONE_DEFAULT_POWER[z.kind];
       if (p) z.power = p;
-      if (z.kind === 'slope' || z.kind === 'boost' || z.kind === 'conveyor' || z.kind === 'fan' || z.kind === 'cannon') z.angle = 0;
+      if (z.kind === 'slope' || z.kind === 'boost' || z.kind === 'conveyor' || z.kind === 'fan' || z.kind === 'cannon' || z.kind === 'gravity') z.angle = 0;
       if (z.kind === 'cannon') z.lift = CANNON_DEFAULT_LIFT;
       if (z.kind === 'tele') { z.tx = x + w + 3; z.ty = y + hh / 2; }
       h.zones.push(z); sel = { kind: 'zone', i: h.zones.length - 1 };
@@ -602,8 +603,8 @@ function renderProps() {
     html = `<h3>${z ? z.kind.toUpperCase() : 'FLOOR'}</h3>
       <div class="grid2">${field('X', numIn('p-x', r.x))}${field('Y', numIn('p-y', r.y))}${field('W', numIn('p-w', r.w, 0.5, 0.5))}${field('H', numIn('p-h', r.h, 0.5, 0.5))}</div>`;
     if (z) {
-      const directional = ['slope', 'boost', 'conveyor', 'fan', 'cannon'].includes(z.kind);
-      const dirLabel = z.kind === 'slope' ? 'Downhill direction (° · 0 = right, 90 = down)' : z.kind === 'cannon' ? 'Barrel rests pointing (° · the player aims it)' : 'Direction (° · 0 = right, 90 = down)';
+      const directional = ['slope', 'boost', 'conveyor', 'fan', 'cannon', 'gravity'].includes(z.kind);
+      const dirLabel = z.kind === 'slope' ? 'Downhill direction (° · 0 = right, 90 = down)' : z.kind === 'cannon' ? 'Barrel rests pointing (° · the player aims it)' : z.kind === 'gravity' ? 'Pulls toward (° · 0 = right, 90 = down)' : 'Direction (° · 0 = right, 90 = down)';
       if (directional) html += field(dirLabel, `<input type="range" id="p-angle" min="0" max="359" step="1" value="${z.angle ?? 0}" /><div class="tiny" id="p-angle-v">${z.angle ?? 0}°</div>`);
       const power = z.power ?? ZONE_DEFAULT_POWER[z.kind];
       const powerField: Partial<Record<ZoneKind, [string, number, number, number]>> = {
@@ -616,6 +617,7 @@ function renderProps() {
         trampoline: ['Bounce (vz)', 0.5, 3, 30],
         magnet: ['Pull (u/s² · negative = push away)', 1, -80, 80],
         cannon: ['Muzzle speed at full power (u/s)', 1, 5, 46],
+        gravity: ['Pull (u/s²)', 0.5, 0, 80],
       };
       const pf = powerField[z.kind];
       if (pf) html += field(pf[0], numIn('p-power', power, pf[1], pf[2], pf[3]));
@@ -624,6 +626,7 @@ function renderProps() {
       if (z.kind === 'spinner') html += '<div class="tiny">The disc fills the smaller side of the rectangle.</div>';
       if (z.kind === 'fan') html += '<div class="tiny">Works on the ground and in the air: floats the ball ~2 u up and shoves it along.</div>';
       if (z.kind === 'trampoline') html += '<div class="tiny">Only a FALLING ball bounces — pair it with a ramp, jump pad or cannon.</div>';
+      if (z.kind === 'gravity') html += `<div class="tiny">Sideways gravity: pulls the ball on the ground and in the air. Above ${FRICTION} (the felt's grip) nothing rests in it — the ball rolls until a wall holds it.</div>`;
       if (z.kind === 'tele') html += `<div class="grid2">${field('Exit X', numIn('p-tx', z.tx ?? 0))}${field('Exit Y', numIn('p-ty', z.ty ?? 0))}</div><div class="tiny">Drag the dashed ring to move the exit.</div>`;
     }
     el.innerHTML = html + delBtn;

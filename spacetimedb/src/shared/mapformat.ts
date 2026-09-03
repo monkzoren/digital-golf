@@ -21,8 +21,8 @@ export const LIMITS = {
   par: 12,
 };
 
-export const THEME_NAMES = ['park', 'neon'];
-const ZONE_KINDS: ZoneKind[] = ['sand', 'ice', 'water', 'slope', 'boost', 'jump', 'tele', 'conveyor', 'spinner', 'fan', 'trampoline', 'magnet', 'cannon'];
+export const THEME_NAMES = ['park', 'neon', 'space'];
+const ZONE_KINDS: ZoneKind[] = ['sand', 'ice', 'water', 'slope', 'boost', 'jump', 'tele', 'conveyor', 'spinner', 'fan', 'trampoline', 'magnet', 'cannon', 'gravity'];
 /** zones whose `power` may be negative (it flips their direction) */
 const SIGNED_POWER: ZoneKind[] = ['spinner', 'magnet'];
 
