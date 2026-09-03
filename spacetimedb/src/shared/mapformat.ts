@@ -19,10 +19,11 @@ export const LIMITS = {
   coord: 400, // |x|,|y| ≤ this
   size: 400,
   par: 12,
+  floorZ: 20, // tallest platform
 };
 
-export const THEME_NAMES = ['park', 'neon'];
-const ZONE_KINDS: ZoneKind[] = ['sand', 'ice', 'water', 'slope', 'boost', 'jump', 'tele', 'conveyor', 'spinner', 'fan', 'trampoline', 'magnet', 'cannon'];
+export const THEME_NAMES = ['park', 'neon', 'space'];
+const ZONE_KINDS: ZoneKind[] = ['sand', 'ice', 'water', 'slope', 'boost', 'jump', 'tele', 'conveyor', 'spinner', 'fan', 'trampoline', 'magnet', 'cannon', 'gravity'];
 /** zones whose `power` may be negative (it flips their direction) */
 const SIGNED_POWER: ZoneKind[] = ['spinner', 'magnet'];
 
@@ -30,12 +31,18 @@ const num = (v: unknown) => typeof v === 'number' && Number.isFinite(v);
 const clampN = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 const r2 = (v: number) => Math.round(v * 100) / 100;
 
-function cleanRect(v: any, what: string): Rect {
+function cleanRect(v: any, what: string, floor = false): Rect {
   if (!v || !num(v.x) || !num(v.y) || !num(v.w) || !num(v.h)) throw new Error(`${what}: bad rect`);
   if (v.w < 0.5 || v.h < 0.5) throw new Error(`${what}: too small (min 0.5)`);
   if (v.w > LIMITS.size || v.h > LIMITS.size) throw new Error(`${what}: too big`);
   if (Math.abs(v.x) > LIMITS.coord || Math.abs(v.y) > LIMITS.coord) throw new Error(`${what}: out of range`);
-  return { x: r2(v.x), y: r2(v.y), w: r2(v.w), h: r2(v.h) };
+  const out: Rect = { x: r2(v.x), y: r2(v.y), w: r2(v.w), h: r2(v.h) };
+  if (floor && v.z != null) {
+    if (!num(v.z)) throw new Error(`${what}: bad height`);
+    const z = r2(clampN(v.z, 0, LIMITS.floorZ));
+    if (z > 0) out.z = z;
+  }
+  return out;
 }
 
 function cleanPts(v: any, what: string): number[] {
@@ -88,7 +95,7 @@ export function cleanHole(raw: any): Hole {
   const par = num(raw.par) ? clampN(Math.round(raw.par), 1, LIMITS.par) : 3;
   if (!Array.isArray(raw.floor) || raw.floor.length === 0) throw new Error('a hole needs at least one floor');
   if (raw.floor.length > LIMITS.floorRects) throw new Error(`too many floor pieces (max ${LIMITS.floorRects})`);
-  const floor = raw.floor.map((r: any, i: number) => cleanRect(r, `floor ${i + 1}`));
+  const floor = raw.floor.map((r: any, i: number) => cleanRect(r, `floor ${i + 1}`, true));
   if (!raw.tee || !num(raw.tee.x) || !num(raw.tee.y)) throw new Error('missing tee');
   if (!raw.cup || !num(raw.cup.x) || !num(raw.cup.y)) throw new Error('missing cup');
   const tee = { x: r2(raw.tee.x), y: r2(raw.tee.y) };

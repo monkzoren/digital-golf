@@ -30,6 +30,12 @@ TypeScript three.js game with a built-in course editor.
   the round's holes. Balls collide with each
   other — bump a rival off the line, or get bumped. A ball a moving block
   squeezes into a wall is reset, never left stuck.
+- **Height.** Floors can be raised: a platform's edges are cliff faces
+  (a wall to the ball below, a drop-off to the ball on top), ramps climb
+  onto it, and everything on it — blocks, bumpers, hazards, the cup, the
+  golfer — sits at its level. Rings of Saturn plays from a high room down
+  into its exit lane; Liftoff and Black Hole end on decks you have to
+  climb; Star Jump and Moon Base fly the void onto a high road.
 - **Real hazards.** Bouncy walls, pinball bumpers, posts, sand, ice, water
   (+1 stroke and back you go), real ramps (a wedge you roll up, drop off the
   top of and bounce off the back of), boost pads, jump pads that launch the
@@ -40,9 +46,11 @@ TypeScript three.js game with a built-in course editor.
   falling ball back up, magnets that pull (or, negative, push), cannons
   that load the ball that rolls in and let you aim and fire it in an arc,
   pendulums, blinking laser gates, rubber
-  walls that return the ball harder than it arrived, and per-hole gravity
-  (moon holes). Every piece has its own hole on the built-in *Toy Box*
-  course — duplicate it in the editor to see how each one is set up.
+  walls that return the ball harder than it arrived, per-hole gravity
+  (moon holes), and **gravity fields** — patches of warped space that pull
+  the ball sideways whether it is rolling or flying, strong enough that
+  nothing rests in them. Every piece has its own hole on the built-in *Toy
+  Box* course — duplicate it in the editor to see how each one is set up.
 - **Rounds, not holes.** A room plays a whole course: intro card, timed hole,
   scorecard, next hole, podium. Round options: max strokes, time per hole,
   ball collisions on/off, water penalty (+1 stroke or a free reset), shot
@@ -50,15 +58,25 @@ TypeScript three.js game with a built-in course editor.
   Late joiners drop straight onto the tee. Refreshing mid-round keeps your
   seat for 25 s. The host can only start once everyone in the lobby has
   readied up.
-- **Nine built-in courses, 81 holes.** Sunny Park (the tutorial), Neon
+- **Ten built-in courses, 92 holes.** Sunny Park (the tutorial), Neon
   Orbit and Toy Box (one hole per gadget) show the pieces off; the launch
   library — Bank Shot Alley, Clockwork, Ramp Ridge, Machine Works, Frost &
-  Flame and the championship Grand Tour — is long (two to five stages of
-  hazards, 60–150 units of travel, par 3–5) and built around **hidden
-  holes-in-one**: most holes have an ace line, verified with the real
-  physics, that is never the obvious one (a carom, a timed gap, a launch,
-  a gadget chain) and is narrow enough to be a feat. Plus **unlimited
-  player-made courses.**
+  Flame, the championship Grand Tour and **Galaxy Road** — is long (two to
+  five stages of hazards, 60–150 units of travel, par 2–5) and built around
+  **hidden holes-in-one**: most holes have an ace line, verified with the
+  real physics, that is never the obvious one (a carom, a timed gap, a
+  launch, a gadget chain) and is narrow enough to be a feat. Galaxy Road
+  is a rainbow road floating in deep space: gravity fields that flip half
+  way down a hole, wormholes across the void, a black hole to slingshot
+  round, star jumps in moon gravity and gold star obstacles. Plus
+  **unlimited player-made courses.**
+- **Worlds, not just palettes.** A course (or any hole) picks a theme and
+  the whole 3D scene follows it — sky and the light it casts, the ground
+  (or none: space holes float), fog, felt, rails, blocks, what "sand" and
+  "water" are. Three ship: the park, a synthwave neon night over a gridded
+  plain, and deep space with nebulae, planets and a drifting star cloud.
+  Adding a fantastical world is one record in `client/src/themes3d.ts` plus
+  a 2D palette (`THEMES` in `render.ts`) and its name in `THEME_NAMES`.
 - **Course editor.** Draw floors, walls, movers, surfaces and hazards on a
   grid, tweak every parameter in a properties panel, undo/redo, duplicate,
   import/export JSON, **test-play on the real 3D stage with the exact

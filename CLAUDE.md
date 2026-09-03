@@ -20,14 +20,31 @@ README.md for architecture and run instructions. Key facts:
   splits and pitches them), and a ball rolling off the top of a wedge is
   launched with the slope's vertical share of its pace.
   Every zone kind (the toy box: conveyor, spinner, fan, trampoline, magnet,
-  cannon), block motion (rotate/slide/swing/blink) and block `bounce` must
+  cannon, gravity), block motion (rotate/slide/swing/blink) and block `bounce` must
   be handled in physics.ts, mapformat.ts, render.ts (2D), render3d.ts (3D)
   and editor.ts (tool + props); `TOYBOX` in courses.ts has one hole per piece.
   In 3D a magnet is a black hole (`blackHoleMesh`: well, spinning accretion
   disc, horizon ring, dust on tightening orbits; orange and reversed when it
   repels), animated per frame from `blackHoles`.
-- `spacetimedb/src/shared/library.ts` holds the launch courses (six, all
-  designed around hidden holes-in-one); `spacetimedb/scripts/course-check.ts`
+  A `gravity` zone (`gfield` helper) is a flat sideways pull (`angle`,
+  `power` u/s²) applied on the ground AND in the air; above FRICTION
+  (`fieldRolls`) nothing rests in it — it is `carried` like a rolling
+  ramp and the trickle easing is off inside it (a pull that matched the
+  eased friction would roll for ever). `polyStar` makes star-shaped blocks.
+  Floor rects may carry `z` (a raised platform). `floorZ(hole, x, y)` is the
+  slab height there (the tallest slab wins); `groundZ` starts from it; every
+  block, bumper and zone stands on the slab under its centre (`baseOf(g,
+  piece)`, computed in `geomOf`) and its height is measured from there.
+  `floorWalls` judges each edge piece by what lies just outside it: nothing
+  → a rail (`rail`, rides the felt); a lower slab → a cliff face (`cliff`,
+  `h` = the platform height, absolute, climbable within STEP_CLIMB so a
+  ramp that meets it a hair low still works, no rail on top so the ball
+  rolls off); level or higher → open. `slopeTo(..., rise)` sizes a ramp to
+  meet a platform. Overlapping rects are fine (a platform laid over a
+  floor); the renderers skip cliff segs (the taller slab's side is the face).
+  Keep a zone inside one level.
+- `spacetimedb/src/shared/library.ts` holds the launch courses (seven, all
+  designed around hidden holes-in-one; Galaxy Road is the `space` one); `spacetimedb/scripts/course-check.ts`
   (`npm run check-courses` in spacetimedb/) verifies every built-in hole
   with the real physics: ace exists, is narrow (< 4.5% of shots) and
   hittable, greedy play finishes within par + 1, a ±3° "decent player"
@@ -61,7 +78,19 @@ README.md for architecture and run instructions. Key facts:
   the tennis code (the stadium bowl, crowd and umpire are gone — holes sit
   on an open lawn so any course size fits; fog and the shadow frustum scale
   with the hole bounds in `fitShadowFrustum`); `setHole` builds a hole
-  as meshes, `drawScene` takes a `GolfScene`. Free look (`orbitLook`,
+  as meshes, `drawScene` takes a `GolfScene`. The WORLD around a hole is
+  a scene theme (`themes3d.ts`, `SCENE_THEMES`: park / neon / space):
+  the sky painter (background + PMREM lighting, cached per theme), ground
+  tile or none, fog, sun/hemisphere, felt/rail/block/low/flag materials
+  (`themeMats`, built once per theme and never disposed with a hole),
+  sand/water/slope tints and optional decor. `applySceneTheme` swaps the
+  scene when the hole's `theme` changes (back to park when there is no
+  hole). A new theme is one record there + a `THEMES` palette in
+  render.ts + its name in `THEME_NAMES` (mapformat.ts) — the editor's
+  theme picker reads `THEME_NAMES`. `client/preview.html` (`src/preview.ts`)
+  shows any built-in hole on the 3D stage with no server running
+  (`?course=Galaxy&hole=3&cam=play&look=1`) — use it (headless Chromium
+  works) to check a theme or material change. Free look (`orbitLook`,
   `zoomLook`) is an offset over the automatic camera, driven by
   `freelook.ts`. Rendering is PBR: every
   material goes through `std`/`metal`/`gloss` (MeshStandardMaterial) or

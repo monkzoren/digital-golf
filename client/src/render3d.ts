@@ -10,8 +10,9 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { CHARACTERS, type Character, type HairStyle } from './characters';
 import { getGraphics, onGraphicsChange, type GraphicsSettings } from './graphics';
 import type { Hole, Zone, Block, Rect } from '@shared/courses';
-import { WALL_H, floorWalls, holeBounds, motionAngle, moverActive, pointInFloor, rampFrac } from '@shared/courses';
-import { BALL_R, CUP_R, geomOf, groundZ, rampRise, zonePower } from '@shared/physics';
+import { WALL_H, floorWalls, floorZ, holeBounds, motionAngle, moverActive, pointInFloor, rampFrac } from '@shared/courses';
+import { BALL_R, CUP_R, baseOf, geomOf, groundZ, rampRise, zonePower } from '@shared/physics';
+import { sceneThemeFor, texHash, type MatSpec, type SceneTheme } from './themes3d';
 
 // ---------------------------------------------------------------------------
 // Real-3D Virtua Tennis-style renderer (Three.js / WebGL), inherited from
@@ -328,6 +329,8 @@ const ZERO_POSE: Pose = {
 
 interface PlayerRig {
   root: THREE.Group;
+  /** the floor height the golfer stands at (a platform, a ramp) */
+  groundZ: number;
   upper: THREE.Group;
   thighL: THREE.Group; calfL: THREE.Group;
   thighR: THREE.Group; calfR: THREE.Group;
@@ -1480,7 +1483,7 @@ function makePlayerRig(side: number, intoScene: THREE.Scene = scene3): PlayerRig
   root.rotation.order = 'YZX'; // yaw first, then dive-roll about the local Z
   intoScene.add(root);
   return {
-    root,
+    root, groundZ: 0,
     upper,
     thighL: legL.thigh, calfL: legL.calf,
     thighR: legR.thigh, calfR: legR.calf,
@@ -1550,7 +1553,7 @@ function applyPose(
   rig.shoulderR.rotation.set(p.shRx + b3, 0, p.shRz);
   rig.elbowR.rotation.x = p.elR;
   rig.root.rotation.y = finalYaw;
-  rig.root.position.y = FLOOR_Y - p.crouch;
+  rig.root.position.y = FLOOR_Y + rig.groundZ - p.crouch;
 }
 
 // --- pose library -----------------------------------------------------------
@@ -1658,113 +1661,94 @@ function golfSlumpPose(now: number): Pose {
   };
 }
 
-// Grass: a tile of the lawn. The hole itself is built as meshes on top.
-function makeGroundTexture(): THREE.CanvasTexture {
+// The ground: a tile of the theme's plain (the park's lawn, the neon grid).
+// The hole itself is built as meshes on top.
+function makeGroundTexture(theme: SceneTheme): THREE.CanvasTexture {
   const c = document.createElement('canvas');
   c.width = gfx.detail ? 1024 : 512;
   c.height = c.width * 1.5;
   const g = c.getContext('2d')!;
-  g.fillStyle = '#458f45';
-  g.fillRect(0, 0, c.width, c.height);
-  // mowing stripes running the length of the tile
-  const stripe = c.width / 14;
-  for (let i = 0; i < 14; i++) {
-    g.fillStyle = i % 2 ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)';
-    g.fillRect(i * stripe, 0, stripe, c.height);
-  }
-  if (gfx.detail) {
-    for (let i = 0; i < 14000; i++) {
-      g.fillStyle = texHash(i * 1.3) > 0.5 ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.06)';
-      g.fillRect(texHash(i * 7.1) * c.width, texHash(i * 3.7) * c.height, 1.5, 1.5);
-    }
-  }
+  (theme.ground ?? (() => {}))(g, c.width, c.height);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 8;
   return tex;
 }
 
-const texHash = (n: number) => {
-  const s = Math.sin(n) * 43758.5453;
-  return s - Math.floor(s);
-};
-
-// The sky as an equirectangular panorama: zenith blue down to a warm haze
-// at the horizon, a sun glow where the key light sits, cumulus puffs, and a
-// muted grass-green lower hemisphere. One texture serves twice — as the
-// background (it turns with the camera, so the sky is a place rather than
-// a wallpaper) and, prefiltered, as the image-based lighting every PBR
-// surface reflects.
-let skyTex: THREE.Texture | null = null;
-function makeSkyTexture(): THREE.Texture {
-  if (skyTex) return skyTex;
+// ---------------------------------------------------------------------------
+// Scene themes (see themes3d.ts): the sky as an equirectangular panorama —
+// one texture serves twice, as the background (it turns with the camera, so
+// the sky is a place rather than a wallpaper) and, prefiltered, as the
+// image-based lighting every PBR surface reflects — plus the ground, fog,
+// lights and the hole's own materials. A hole carries its theme name; the
+// scene switches when the hole does and falls back to the park for the
+// idle lawn behind the menus.
+// ---------------------------------------------------------------------------
+const skyTexByTheme = new Map<string, THREE.Texture>();
+function skyTextureFor(name: string): THREE.Texture {
+  let tex = skyTexByTheme.get(name);
+  if (tex) return tex;
+  const th = sceneThemeFor(name);
   const c = document.createElement('canvas');
-  c.width = 2048;
-  c.height = 1024;
-  const W = c.width, H = c.height;
+  c.width = th.skySize ?? 2048;
+  c.height = c.width / 2;
   const g = c.getContext('2d')!;
-  const grad = g.createLinearGradient(0, 0, 0, H);
-  grad.addColorStop(0, '#1e4f9a');
-  grad.addColorStop(0.22, '#3a7cc4');
-  grad.addColorStop(0.42, '#8fbde4');
-  grad.addColorStop(0.495, '#e8eef0'); // haze band right at the horizon
-  grad.addColorStop(0.505, '#7c9a6a');
-  grad.addColorStop(0.6, '#4f7a42');
-  grad.addColorStop(1, '#2f4a2a');
-  g.fillStyle = grad;
-  g.fillRect(0, 0, W, H);
-  // sun glow at the key light's direction (equirect: u from atan2(z, x),
-  // v from elevation; canvas row 0 is the zenith)
-  const d = SUN_POS.clone().normalize();
-  const su = (Math.atan2(d.z, d.x) / (Math.PI * 2) + 0.5) * W;
-  const sv = (0.5 - Math.asin(d.y) / Math.PI) * H;
-  const glow = g.createRadialGradient(su, sv, 0, su, sv, 260);
-  glow.addColorStop(0, 'rgba(255,250,232,1)');
-  glow.addColorStop(0.06, 'rgba(255,247,220,0.9)');
-  glow.addColorStop(0.3, 'rgba(255,240,205,0.3)');
-  glow.addColorStop(1, 'rgba(255,236,196,0)');
-  g.fillStyle = glow;
-  g.fillRect(0, 0, W, H / 2);
-  // clouds live in the band between ~12° and ~40° above the horizon
-  for (let i = 0; i < 26; i++) {
-    const cx = texHash(i * 3.1) * W;
-    const cy = H * (0.28 + texHash(i * 5.7) * 0.17);
-    const sc = (0.8 + texHash(i * 7.9)) * (1 + (cy / H - 0.28) * 2);
-    g.fillStyle = `rgba(255,255,255,${0.12 + texHash(i * 2.3) * 0.16})`;
-    for (let p = 0; p < 7; p++) {
-      const px = cx + (texHash(i * 11.3 + p) - 0.5) * 170 * sc;
-      const py = cy + (texHash(i * 13.7 + p) - 0.5) * 30 * sc;
-      const pr = (18 + texHash(i * 17.9 + p) * 26) * sc;
-      g.beginPath();
-      g.ellipse(px, py, pr, pr * 0.5, 0, 0, Math.PI * 2);
-      g.fill();
-    }
-  }
-  const tex = new THREE.CanvasTexture(c);
+  th.sky(g, c.width, c.height, SUN_POS);
+  tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.mapping = THREE.EquirectangularReflectionMapping;
-  skyTex = tex;
+  skyTexByTheme.set(name, tex);
   return tex;
 }
 
-/** Prefilter the sky into an environment map for a renderer (PMREM output
- *  belongs to the WebGL context that made it, so each renderer gets its
- *  own). */
-function makeEnvironment(r: THREE.WebGLRenderer): THREE.Texture {
+/** Prefilter a theme's sky into an environment map for a renderer (PMREM
+ *  output belongs to the WebGL context that made it, so each renderer gets
+ *  its own). */
+function makeEnvironment(r: THREE.WebGLRenderer, theme = 'park'): THREE.Texture {
   const pmrem = new THREE.PMREMGenerator(r);
-  const env = pmrem.fromEquirectangular(makeSkyTexture()).texture;
+  const env = pmrem.fromEquirectangular(skyTextureFor(theme)).texture;
   pmrem.dispose();
   return env;
 }
 
+const envByTheme = new Map<string, THREE.Texture>(); // the main renderer's PMREMs
+let hemi: THREE.HemisphereLight;
+let groundMesh: THREE.Mesh;
+let sceneTheme = ''; // the theme the scene is currently dressed in
+
+/** Dress the scene for a theme: sky, lighting, fog, ground. Cheap when unchanged. */
+function applySceneTheme(name: string) {
+  if (name === sceneTheme) return;
+  sceneTheme = name;
+  const th = sceneThemeFor(name);
+  scene3.background = skyTextureFor(name);
+  scene3.backgroundIntensity = th.backgroundIntensity;
+  let env = envByTheme.get(name);
+  if (!env) { env = makeEnvironment(renderer, name); envByTheme.set(name, env); }
+  envTex = env;
+  scene3.environment = env;
+  scene3.environmentIntensity = th.envIntensity;
+  (scene3.fog as THREE.Fog).color.setHex(th.fog);
+  sun.color.setHex(th.sun.color);
+  sun.intensity = th.sun.intensity;
+  hemi.color.setHex(th.hemi.sky);
+  hemi.groundColor.setHex(th.hemi.ground);
+  hemi.intensity = th.hemi.intensity;
+  groundMesh.visible = th.ground !== null;
+  groundBakedFor = '';
+  bakeGround();
+  markMaterialsDirty();
+}
+
 let groundMat: THREE.MeshStandardMaterial;
-let groundBaked = false;
+let groundBakedFor = '';
 
 function bakeGround() {
-  if (groundBaked) return;
-  groundBaked = true;
+  const th = sceneThemeFor(sceneTheme);
+  if (groundBakedFor === sceneTheme || !th.ground) return;
+  groundBakedFor = sceneTheme;
   const old = groundMat.map;
-  const map = makeGroundTexture();
+  const map = makeGroundTexture(th);
   map.wrapS = map.wrapT = THREE.RepeatWrapping;
   map.repeat.set((GROUND_R * 2) / GROUND_TILE, (GROUND_R * 2) / (GROUND_TILE * 1.5));
   groundMat.map = map;
@@ -1791,10 +1775,10 @@ function scaleUv(geo: THREE.BufferGeometry, kx: number, ky = 1) {
 
 function buildEnvironment() {
   groundMat = std({});
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(GROUND_R * 2, GROUND_R * 2), groundMat);
-  ground.rotation.x = -Math.PI / 2;
-  ground.receiveShadow = true;
-  scene3.add(ground);
+  groundMesh = new THREE.Mesh(new THREE.PlaneGeometry(GROUND_R * 2, GROUND_R * 2), groundMat);
+  groundMesh.rotation.x = -Math.PI / 2;
+  groundMesh.receiveShadow = true;
+  scene3.add(groundMesh);
 }
 
 // ---------------------------------------------------------------------------
@@ -1850,11 +1834,6 @@ function buildScene() {
   });
 
   scene3 = new THREE.Scene();
-  scene3.background = makeSkyTexture();
-  scene3.backgroundIntensity = 1.0;
-  envTex = makeEnvironment(renderer);
-  scene3.environment = envTex;
-  scene3.environmentIntensity = 0.5;
   scene3.fog = new THREE.Fog(0xdce8f2, FOG_NEAR_MIN, FOG_NEAR_MIN * FOG_FAR_MUL);
 
   const aspect =
@@ -1872,10 +1851,12 @@ function buildScene() {
   fitShadowFrustum(null);
   scene3.add(sun);
   // the sky map does most of the fill; this only lifts the deepest shade
-  scene3.add(new THREE.HemisphereLight(0xcfe4ff, 0x3a6b32, 0.25));
+  hemi = new THREE.HemisphereLight(0xcfe4ff, 0x3a6b32, 0.25);
+  scene3.add(hemi);
 
   buildEnvironment();
-  bakeGround();
+  sceneTheme = '';
+  applySceneTheme('park'); // sky, environment map, fog, lights, ground
   initParticles();
 
   // eight golfers, eight balls
@@ -2099,7 +2080,7 @@ function applyGraphics(next: GraphicsSettings, prev: GraphicsSettings) {
   if (next.shadows !== prev.shadows) applyShadows();
   if (next.grade !== prev.grade) applyGrade();
   if (next.detail !== prev.detail) {
-    groundBaked = false; // re-bake the grass at the new detail level
+    groundBakedFor = ''; // re-bake the ground at the new detail level
     bakeGround();
   }
   if (next.particles) {
@@ -2126,7 +2107,7 @@ let aimHead: THREE.Mesh;
 let holeGroup: THREE.Group;
 let builtHoleKey = '';
 let builtGeom: ReturnType<typeof geomOf> | null = null;
-interface MoverProp { block: Block; group: THREE.Group; pivotX: number; pivotY: number; mesh?: THREE.Mesh }
+interface MoverProp { block: Block; group: THREE.Group; pivotX: number; pivotY: number; baseZ: number; mesh?: THREE.Mesh }
 let movers: MoverProp[] = [];
 let waterMats: THREE.MeshPhysicalMaterial[] = [];
 // scrolling surfaces: the texture slides along the zone's own direction
@@ -2413,21 +2394,12 @@ function makeGolfBallTexture(): THREE.CanvasTexture {
   return tex;
 }
 
-function makeFeltTexture(): THREE.CanvasTexture {
+function makeFeltTexture(theme: SceneTheme): THREE.CanvasTexture {
   const c = document.createElement('canvas');
   c.width = 256;
   c.height = 256;
   const g = c.getContext('2d')!;
-  g.fillStyle = '#36a24a';
-  g.fillRect(0, 0, 256, 256);
-  for (let i = 0; i < 8; i++) {
-    g.fillStyle = i % 2 ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.03)';
-    g.fillRect(i * 32, 0, 32, 256);
-  }
-  for (let i = 0; i < 1500; i++) {
-    g.fillStyle = texHash(i * 1.7) > 0.5 ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)';
-    g.fillRect(texHash(i * 3.3) * 256, texHash(i * 5.9) * 256, 1.5, 1.5);
-  }
+  theme.felt.paint(g, 256, 256);
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -2435,7 +2407,7 @@ function makeFeltTexture(): THREE.CanvasTexture {
   return tex;
 }
 
-function makeZoneTexture(z: Zone): THREE.CanvasTexture {
+function makeZoneTexture(z: Zone, theme: SceneTheme): THREE.CanvasTexture {
   const PX = 24;
   const c = document.createElement('canvas');
   // a spinner's texture wraps its disc (which fills the rect's shorter
@@ -2467,8 +2439,8 @@ function makeZoneTexture(z: Zone): THREE.CanvasTexture {
   };
   switch (z.kind) {
     case 'sand':
-      g.fillStyle = '#e9d18c'; g.fillRect(0, 0, W, H);
-      g.fillStyle = 'rgba(0,0,0,0.12)';
+      g.fillStyle = theme.sand.base; g.fillRect(0, 0, W, H);
+      g.fillStyle = theme.sand.speck;
       for (let i = 0; i < (W * H) / 60; i++) g.fillRect(texHash(i * 7.9) * W, texHash(i * 3.1) * H, 2, 2);
       break;
     case 'ice':
@@ -2478,22 +2450,51 @@ function makeZoneTexture(z: Zone): THREE.CanvasTexture {
       break;
     case 'water': {
       const grad = g.createLinearGradient(0, 0, 0, H);
-      grad.addColorStop(0, '#3a9ae6'); grad.addColorStop(1, '#1f5f9c');
+      grad.addColorStop(0, theme.water.top); grad.addColorStop(1, theme.water.bottom);
       g.fillStyle = grad; g.fillRect(0, 0, W, H);
-      g.strokeStyle = 'rgba(255,255,255,0.28)'; g.lineWidth = 2;
+      g.strokeStyle = theme.water.lines; g.lineWidth = 2;
       for (let y = 10; y < H; y += 26) {
         g.beginPath();
         for (let x = 0; x <= W; x += 6) { const yy = y + 5 * Math.sin(x / 14); if (x === 0) g.moveTo(x, yy); else g.lineTo(x, yy); }
         g.stroke();
+      }
+      if (theme.water.stars) {
+        // the void: stars show through it
+        for (let i = 0; i < (W * H) / 150; i++) {
+          const sz = 0.8 + texHash(i * 4.7) ** 2 * 2;
+          g.fillStyle = `rgba(255,255,255,${0.3 + texHash(i * 2.3) * 0.7})`;
+          g.beginPath(); g.arc(texHash(i * 7.9) * W, texHash(i * 3.1) * H, sz, 0, Math.PI * 2); g.fill();
+        }
       }
       break;
     }
     case 'slope': {
       const a = ((z.angle ?? 0) * Math.PI) / 180;
       const grad = g.createLinearGradient(W / 2 - Math.cos(a) * W / 2, H / 2 - Math.sin(a) * H / 2, W / 2 + Math.cos(a) * W / 2, H / 2 + Math.sin(a) * H / 2);
-      grad.addColorStop(0, '#5cc25f'); grad.addColorStop(1, '#2d7d38');
+      grad.addColorStop(0, theme.slope[0]); grad.addColorStop(1, theme.slope[1]);
       g.fillStyle = grad; g.fillRect(0, 0, W, H);
       arrows('rgba(255,255,255,0.35)', 3);
+      break;
+    }
+    case 'gravity': {
+      // a patch of warped space: dark, a grid bowing toward the pull, and
+      // streaming chevrons the way the ball is dragged (scrolled in drawScene)
+      g.fillStyle = '#150c3a'; g.fillRect(0, 0, W, H);
+      const a = ((z.angle ?? 0) * Math.PI) / 180;
+      const ux = Math.cos(a), uy = Math.sin(a);
+      const gl = g.createLinearGradient(W / 2 - ux * W / 2, H / 2 - uy * H / 2, W / 2 + ux * W / 2, H / 2 + uy * H / 2);
+      gl.addColorStop(0, 'rgba(120,90,255,0)'); gl.addColorStop(1, 'rgba(120,90,255,0.35)');
+      g.fillStyle = gl; g.fillRect(0, 0, W, H);
+      g.strokeStyle = 'rgba(179,156,255,0.22)'; g.lineWidth = 1.5;
+      g.beginPath();
+      for (let x = 0; x <= W; x += 2 * PX) { g.moveTo(x, 0); g.lineTo(x, H); }
+      for (let y = 0; y <= H; y += 2 * PX) { g.moveTo(0, y); g.lineTo(W, y); }
+      g.stroke();
+      for (let i = 0; i < (W * H) / 400; i++) {
+        g.fillStyle = `rgba(255,255,255,${0.2 + texHash(i * 2.3) * 0.5})`;
+        g.fillRect(texHash(i * 7.9) * W, texHash(i * 3.1) * H, 1.5, 1.5);
+      }
+      arrows('#c9b8ff', 2.5);
       break;
     }
     case 'boost': {
@@ -2591,7 +2592,7 @@ function makeZoneTexture(z: Zone): THREE.CanvasTexture {
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 4;
-  if (z.kind === 'water' || z.kind === 'boost' || z.kind === 'conveyor' || z.kind === 'fan') { tex.wrapS = tex.wrapT = THREE.RepeatWrapping; }
+  if (z.kind === 'water' || z.kind === 'boost' || z.kind === 'conveyor' || z.kind === 'fan' || z.kind === 'gravity') { tex.wrapS = tex.wrapT = THREE.RepeatWrapping; }
   return tex;
 }
 
@@ -2616,11 +2617,11 @@ function radialCanvas(size: number, stops: [number, string][], paint?: (g: Canva
  *  streams in. A repelling magnet is the same thing in reverse — a white
  *  hole in orange, everything flung outward. The zone rect stays the pull
  *  area (the well's shadow fills it); the disc fills the shorter side. */
-function blackHoleMesh(z: Zone, cx: number, cz: number, i: number): THREE.Group {
+function blackHoleMesh(z: Zone, cx: number, cz: number, i: number, y: number): THREE.Group {
   const repel = zonePower(z) < 0;
   const d = Math.min(z.w, z.h);
   const group = new THREE.Group();
-  group.position.set(cx, FLOOR_Y, cz);
+  group.position.set(cx, y, cz); // y: the felt (or platform) the zone lies on
   const tint = repel ? { r: 1, g: 0.55, b: 0.2 } : { r: 1, g: 0.35, b: 0.75 };
   const rgba = (a: number, k = 1) => `rgba(${Math.round(255 * Math.min(1, tint.r * k))},${Math.round(255 * Math.min(1, tint.g * k))},${Math.round(255 * Math.min(1, tint.b * k))},${a})`;
   // 1. the well: a dark stain over the whole rect that deepens to black
@@ -2706,9 +2707,10 @@ function blackHoleMesh(z: Zone, cx: number, cz: number, i: number): THREE.Group 
 /** A slope zone as a real wedge: a tilted felt top over wooden faces. */
 function rampMesh(z: Zone, ox: number, oy: number, topMat: THREE.Material): THREE.Group {
   const rise = rampRise(z);
+  const bz = FLOOR_Y + (builtGeom ? baseOf(builtGeom, z) : 0);
   const c = [[z.x, z.y], [z.x + z.w, z.y], [z.x + z.w, z.y + z.h], [z.x, z.y + z.h]];
-  const top = c.map(([x, y]) => new THREE.Vector3(x - ox, FLOOR_Y + rise * (1 - rampFrac(z, x, y)), y - oy));
-  const base = c.map(([x, y]) => new THREE.Vector3(x - ox, FLOOR_Y - 0.02, y - oy));
+  const top = c.map(([x, y]) => new THREE.Vector3(x - ox, bz + rise * (1 - rampFrac(z, x, y)), y - oy));
+  const base = c.map(([x, y]) => new THREE.Vector3(x - ox, bz - 0.02, y - oy));
   const group = new THREE.Group();
   // top: two triangles wound to face up, uv across the rect
   {
@@ -2766,7 +2768,7 @@ const ROLLER_R = 0.11;
 function spinnerMesh(z: Zone, cx: number, cz: number, topMat: THREE.Material): THREE.Group {
   const r = Math.min(z.w, z.h) / 2;
   const root = new THREE.Group();
-  root.position.set(cx, FLOOR_Y, cz);
+  root.position.set(cx, FLOOR_Y + (builtGeom ? baseOf(builtGeom, z) : 0), cz);
   // the collar: a flat steel ring around the disc with a gap it turns in
   const collar = new THREE.Mesh(new THREE.RingGeometry(r + 0.05, r + 0.22, 64), SPINNER_RIM_MAT);
   collar.rotation.x = -Math.PI / 2;
@@ -2808,7 +2810,7 @@ function spinnerMesh(z: Zone, cx: number, cz: number, topMat: THREE.Material): T
  *  that turns at belt speed; a belt set at an odd angle gets a plain frame. */
 function conveyorMesh(z: Zone, cx: number, cz: number, topMat: THREE.MeshStandardMaterial): THREE.Group {
   const root = new THREE.Group();
-  root.position.set(cx, FLOOR_Y + 0.012, cz);
+  root.position.set(cx, FLOOR_Y + (builtGeom ? baseOf(builtGeom, z) : 0) + 0.012, cz);
   const angle = ((z.angle ?? 0) % 360 + 360) % 360;
   const alongX = angle % 180 === 0, alongY = angle % 180 === 90;
   const speed = zonePower(z);
@@ -2869,9 +2871,39 @@ function extrudedBlock(pts: number[], ox: number, oy: number, height: number, ma
   return m;
 }
 
-const FELT_MAT = std({ color: 0xffffff, roughness: 0.92 });
-const WALL_MAT = std({ color: 0xffffff, roughness: 0.55 });
-const WALL_LOW_MAT = std({ color: 0xf3dfbc, roughness: 0.55 });
+// The hole's own materials — felt, rails, blocks, low walls, flag — are the
+// theme's: oak and green baize in the park, neon glass in the night, gold
+// and a rainbow road in space. One set per theme, built on first use.
+interface ThemeMats { felt: THREE.MeshStandardMaterial; rail: THREE.MeshStandardMaterial; block: THREE.MeshStandardMaterial; low: THREE.MeshStandardMaterial; flag: THREE.MeshStandardMaterial }
+const themeMatsByName = new Map<string, ThemeMats>();
+const themeOwned = new Set<THREE.Material>(); // shared across holes: never disposed with one
+function matFromSpec(spec: MatSpec): THREE.MeshStandardMaterial {
+  const m = std({ color: spec.color, roughness: spec.roughness, metalness: spec.metalness ?? 0 });
+  if (spec.emissive) { m.emissive.copy(spec.emissive); m.emissiveIntensity = spec.emissiveIntensity ?? 1; }
+  if (spec.wood) {
+    const sf = surfaces();
+    m.map = sf.wood;
+    m.normalMap = sf.woodN;
+    m.normalScale.set(0.6, 0.6);
+  }
+  return m;
+}
+function themeMats(name: string): ThemeMats {
+  let set = themeMatsByName.get(name);
+  if (set) return set;
+  const th = sceneThemeFor(name);
+  const sf = surfaces();
+  const felt = std({ roughness: th.felt.roughness, map: makeFeltTexture(th), normalMap: sf.feltN });
+  felt.normalScale.set(0.35, 0.35);
+  if (th.felt.glow) { felt.emissiveMap = felt.map; felt.emissive.setRGB(1, 1, 1); felt.emissiveIntensity = th.felt.glow; }
+  set = {
+    felt, rail: matFromSpec(th.rail), block: matFromSpec(th.block), low: matFromSpec(th.low),
+    flag: std({ color: th.flag, side: THREE.DoubleSide, roughness: 0.9 }),
+  };
+  for (const m of Object.values(set)) themeOwned.add(m);
+  themeMatsByName.set(name, set);
+  return set;
+}
 const WALL_SIDE_MAT = std({ color: 0xb59468, roughness: 0.6, side: THREE.DoubleSide });
 const RUBBER_MAT = gloss({ color: 0xff7ad9, emissive: 0x3a0d2c, roughness: 0.45 });
 const LASER_ON_MAT = new THREE.MeshBasicMaterial({ color: new THREE.Color(3.2, 0.35, 0.8), transparent: true, opacity: 0.9 });
@@ -2886,7 +2918,7 @@ const RAIL_MAT = gloss({ color: 0xffc21a, roughness: 0.4 });
 const ROLLER_MAT = metal({ color: 0xb8bcc4, roughness: 0.3, flatShading: true });
 const SPINNER_RIM_MAT = metal({ color: 0x9aa4b8, roughness: 0.42 });
 const HUB_MAT = metal({ color: 0xc9cfd8, roughness: 0.34 });
-const STOCK_MATS: THREE.Material[] = [FELT_MAT, WALL_MAT, WALL_LOW_MAT, WALL_SIDE_MAT, RUBBER_MAT, LASER_ON_MAT, LASER_OFF_MAT, CANNON_MAT, CANNON_RIM_MAT, FAN_BLADE_MAT, BED_MAT,
+const STOCK_MATS: THREE.Material[] = [WALL_SIDE_MAT, RUBBER_MAT, LASER_ON_MAT, LASER_OFF_MAT, CANNON_MAT, CANNON_RIM_MAT, FAN_BLADE_MAT, BED_MAT,
   BELT_SIDE_MAT, RAIL_MAT, ROLLER_MAT, SPINNER_RIM_MAT, HUB_MAT];
 
 // Water is a real pond: the felt is carved away over the zone, a pebble bed
@@ -2901,10 +2933,10 @@ function subtractRect(a: Rect, cut: Rect): Rect[] {
   const x1 = Math.min(a.x + a.w, cut.x + cut.w), y1 = Math.min(a.y + a.h, cut.y + cut.h);
   if (x1 - x0 <= 0.001 || y1 - y0 <= 0.001) return [a];
   const out: Rect[] = [];
-  if (y0 > a.y) out.push({ x: a.x, y: a.y, w: a.w, h: y0 - a.y }); // above
-  if (a.y + a.h > y1) out.push({ x: a.x, y: y1, w: a.w, h: a.y + a.h - y1 }); // below
-  if (x0 > a.x) out.push({ x: a.x, y: y0, w: x0 - a.x, h: y1 - y0 }); // left
-  if (a.x + a.w > x1) out.push({ x: x1, y: y0, w: a.x + a.w - x1, h: y1 - y0 }); // right
+  if (y0 > a.y) out.push({ x: a.x, y: a.y, w: a.w, h: y0 - a.y, z: a.z }); // above
+  if (a.y + a.h > y1) out.push({ x: a.x, y: y1, w: a.w, h: a.y + a.h - y1, z: a.z }); // below
+  if (x0 > a.x) out.push({ x: a.x, y: y0, w: x0 - a.x, h: y1 - y0, z: a.z }); // left
+  if (a.x + a.w > x1) out.push({ x: x1, y: y0, w: a.x + a.w - x1, h: y1 - y0, z: a.z }); // right
   return out;
 }
 
@@ -2937,21 +2969,28 @@ function makePondAlpha(): THREE.CanvasTexture {
   return new THREE.CanvasTexture(c);
 }
 
-function pondMesh(z: Zone, cx: number, cz: number): THREE.Group {
+const bedMatByTheme = new Map<string, THREE.MeshStandardMaterial>();
+function pondMesh(z: Zone, cx: number, cz: number, theme: SceneTheme, themeName: string): THREE.Group {
   const sf = surfaces();
   const group = new THREE.Group();
   // the basin: a back-faced box whose inside is the bed and the banks
-  if (!BED_MAT.map) {
-    BED_MAT.map = sf.bed;
-    BED_MAT.normalMap = sf.feltN.clone();
-    BED_MAT.normalMap.needsUpdate = true;
-    BED_MAT.normalScale.set(0.7, 0.7);
-    BED_MAT.needsUpdate = true;
+  let bed = bedMatByTheme.get(themeName);
+  if (!bed) {
+    bed = BED_MAT.clone();
+    bed.color.set(theme.water.bed);
+    bed.map = sf.bed;
+    bed.normalMap = sf.feltN.clone();
+    bed.normalMap.needsUpdate = true;
+    bed.normalScale.set(0.7, 0.7);
+    bed.needsUpdate = true;
+    themeOwned.add(bed);
+    bedMatByTheme.set(themeName, bed);
   }
+  const bz = FLOOR_Y + (builtGeom ? baseOf(builtGeom, z) : 0);
   const basinGeo = new THREE.BoxGeometry(z.w, POND_DEPTH, z.h);
   scaleUv(basinGeo, Math.max(1, z.w / 4), Math.max(1, z.h / 4));
-  const basin = new THREE.Mesh(basinGeo, BED_MAT);
-  basin.position.set(cx, FLOOR_Y - POND_DEPTH / 2, cz);
+  const basin = new THREE.Mesh(basinGeo, bed);
+  basin.position.set(cx, bz - POND_DEPTH / 2, cz);
   basin.receiveShadow = true;
   group.add(basin);
   // the surface, a hair below the felt so the banks show a lip
@@ -2960,15 +2999,15 @@ function pondMesh(z: Zone, cx: number, cz: number): THREE.Group {
   ripple.needsUpdate = true;
   // the painted wave lines carry the stylised read; the physical layer
   // adds the sky reflection and sun sparkle over them
-  const waves = makeZoneTexture(z);
+  const waves = makeZoneTexture(z, theme);
   const mat = new THREE.MeshPhysicalMaterial({
-    map: waves, color: 0x9ed4ff, transparent: true, opacity: 0.76, alphaMap: makePondAlpha(),
+    map: waves, color: theme.water.surface, transparent: true, opacity: theme.water.opacity, alphaMap: makePondAlpha(),
     roughness: 0.12, metalness: 0, normalMap: ripple, normalScale: new THREE.Vector2(0.9, 0.9),
     envMapIntensity: 1.6, depthWrite: false,
   });
   const surface = new THREE.Mesh(new THREE.PlaneGeometry(z.w, z.h), mat);
   surface.rotation.x = -Math.PI / 2;
-  surface.position.set(cx, FLOOR_Y - 0.07, cz);
+  surface.position.set(cx, bz - 0.07, cz);
   surface.receiveShadow = true;
   surface.renderOrder = 2; // after the bed, so the blend sees it
   group.add(surface);
@@ -2978,8 +3017,6 @@ function pondMesh(z: Zone, cx: number, cz: number): THREE.Group {
 const BUMPER_MAT = gloss({ color: 0xe03030, emissive: 0x400000, roughness: 0.28 });
 const POST_MAT = metal({ color: 0x9aa4b8, roughness: 0.45 });
 const CUP_MAT = new THREE.MeshBasicMaterial({ color: 0xffffff });
-const FLAG_MAT = std({ color: 0xe83828, side: THREE.DoubleSide, roughness: 0.9 });
-let feltTex: THREE.CanvasTexture | null = null;
 
 function disposeHole() {
   holeGroup.traverse(obj => {
@@ -2987,7 +3024,7 @@ function disposeHole() {
     mesh.geometry?.dispose();
     const mats = (Array.isArray(mesh.material) ? mesh.material : [mesh.material]) as (THREE.Material & { map?: THREE.Texture | null; normalMap?: THREE.Texture | null; alphaMap?: THREE.Texture | null })[];
     for (const mat of mats) {
-      if (!mat || [...STOCK_MATS, BUMPER_MAT, POST_MAT, CUP_MAT, FLAG_MAT].includes(mat as any)) continue; // shared, lives on
+      if (!mat || themeOwned.has(mat) || [...STOCK_MATS, BUMPER_MAT, POST_MAT, CUP_MAT].includes(mat as any)) continue; // shared, lives on
       mat.map?.dispose();
       mat.normalMap?.dispose(); // per-zone clones of the tiling normals
       mat.alphaMap?.dispose();
@@ -3006,7 +3043,9 @@ function disposeHole() {
   cannons = [];
   flagMesh = null;
   builtGeom = null;
+  decorSpin = [];
 }
+let decorSpin: THREE.Object3D[] = []; // theme scenery that drifts slowly (star clouds)
 
 /** Build the hole's meshes. Called when scene.holeKey changes. */
 function setHole(hole: Hole) {
@@ -3015,39 +3054,52 @@ function setHole(hole: Hole) {
   holeCX = b.minX + b.w / 2;
   holeCY = b.minY + b.h / 2;
   fitShadowFrustum(b);
-  if (!feltTex) {
+  // the world the hole sits in, and the materials it is built from
+  const themeName = sceneThemeFor(hole.theme) === sceneThemeFor('park') ? 'park' : hole.theme!;
+  applySceneTheme(themeName);
+  const th = sceneThemeFor(themeName);
+  const TM = themeMats(themeName);
+  const FELT_MAT = TM.felt, WALL_MAT = TM.rail, BLOCK_MAT = TM.block, WALL_LOW_MAT = TM.low;
+  if (!WALL_SIDE_MAT.map) {
     const sf = surfaces();
-    feltTex = makeFeltTexture();
-    FELT_MAT.map = feltTex;
-    FELT_MAT.normalMap = sf.feltN;
-    FELT_MAT.normalScale.set(0.35, 0.35);
-    FELT_MAT.needsUpdate = true;
-    for (const m of [WALL_MAT, WALL_LOW_MAT, WALL_SIDE_MAT]) {
-      m.map = sf.wood;
-      m.normalMap = sf.woodN;
-      m.normalScale.set(0.6, 0.6);
-      m.needsUpdate = true;
-    }
+    WALL_SIDE_MAT.map = sf.wood;
+    WALL_SIDE_MAT.normalMap = sf.woodN;
+    WALL_SIDE_MAT.normalScale.set(0.6, 0.6);
+    WALL_SIDE_MAT.needsUpdate = true;
   }
+  th.decor?.(holeGroup, Math.hypot(b.w, b.h) / 2);
+  holeGroup.traverse(o => { if (o.name === 'decor-spin') decorSpin.push(o); });
 
+  const geom = geomOf(hole);
+  builtGeom = geom;
   // felt: one slab per floor rect (they overlap where rects join — fine),
-  // with the ponds cut out
+  // with the ponds cut out. A raised rect is a platform: a taller slab whose
+  // sides are the cliff faces the physics has, dressed as rails
   for (const r of carvedFloor(hole)) {
-    const geo = new THREE.BoxGeometry(r.w, FLOOR_Y, r.h);
+    const rz = r.z ?? 0;
+    const H = FLOOR_Y + rz;
+    const geo = new THREE.BoxGeometry(r.w, H, r.h);
     const uv = geo.attributes.uv as THREE.BufferAttribute;
-    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * r.w / 6, uv.getY(i) * r.h / 6);
-    const m = new THREE.Mesh(geo, FELT_MAT);
-    m.position.set(r.x + r.w / 2 - holeCX, FLOOR_Y / 2, r.y + r.h / 2 - holeCY);
+    // faces: +x −x +y −y +z −z, four vertices each — felt on top in world
+    // units, the sides tiled like the rails
+    for (let i = 0; i < uv.count; i++) {
+      const face = Math.floor(i / 4);
+      if (face === 2 || face === 3) uv.setXY(i, uv.getX(i) * r.w / 6, uv.getY(i) * r.h / 6);
+      else uv.setXY(i, uv.getX(i) * (face < 2 ? r.h : r.w) / 4, uv.getY(i) * H / WALL_H);
+    }
+    const side = rz > 0 ? WALL_MAT : FELT_MAT;
+    const m = new THREE.Mesh(geo, [side, side, FELT_MAT, FELT_MAT, side, side]);
+    m.position.set(r.x + r.w / 2 - holeCX, H / 2, r.y + r.h / 2 - holeCY);
     m.receiveShadow = true;
+    m.castShadow = rz > 0;
     holeGroup.add(m);
   }
   // boundary rails (blocks are built as solids below)
-  const geom = geomOf(hole);
-  builtGeom = geom;
   // A rail rides the felt (exactly as the physics has it): where it runs
   // past a wedge it is split at the wedge's edges and each piece is pitched
   // to climb with it.
   for (const seg of floorWalls(hole.floor)) {
+    if (!seg.rail) continue; // a cliff face is the platform slab's own side
     const dx = seg.bx - seg.ax, dy = seg.by - seg.ay;
     const len = Math.hypot(dx, dy);
     if (len < 0.01) continue;
@@ -3088,10 +3140,11 @@ function setHole(hole: Hole) {
     const height = Math.max(0.2, bl.h ?? WALL_H);
     const low = height < WALL_H;
     const rubber = bl.bounce !== undefined && bl.bounce > 1;
-    const mat = rubber ? RUBBER_MAT : low ? WALL_LOW_MAT : WALL_MAT;
+    const mat = rubber ? RUBBER_MAT : low ? WALL_LOW_MAT : BLOCK_MAT;
+    const bz = baseOf(geom, bl);
     if (!bl.motion) {
       const m = extrudedBlock(bl.pts, holeCX, holeCY, height, mat);
-      m.position.y = FLOOR_Y;
+      m.position.y = FLOOR_Y + bz;
       holeGroup.add(m);
       continue;
     }
@@ -3099,26 +3152,27 @@ function setHole(hole: Hole) {
     if (bl.motion.type === 'rotate' || bl.motion.type === 'swing') { px = bl.motion.cx; py = bl.motion.cy; }
     else { let sx = 0, sy = 0; const n = bl.pts.length / 2; for (let i = 0; i < bl.pts.length; i += 2) { sx += bl.pts[i]; sy += bl.pts[i + 1]; } px = sx / n; py = sy / n; }
     const group = new THREE.Group();
-    group.position.set(px - holeCX, FLOOR_Y, py - holeCY);
+    group.position.set(px - holeCX, FLOOR_Y + bz, py - holeCY);
     const laser = bl.motion.type === 'blink';
     const body = extrudedBlock(bl.pts, px, py, laser ? height * 1.3 : height, laser ? LASER_ON_MAT : mat);
     if (laser) { body.castShadow = false; body.receiveShadow = false; }
     group.add(body);
     if (bl.hub && (bl.motion.type === 'rotate' || bl.motion.type === 'swing')) {
-      const hub = new THREE.Mesh(new THREE.CylinderGeometry(bl.hub, bl.hub, height + 0.3, 16), WALL_MAT);
+      const hub = new THREE.Mesh(new THREE.CylinderGeometry(bl.hub, bl.hub, height + 0.3, 16), BLOCK_MAT);
       hub.position.y = (height + 0.3) / 2;
       hub.castShadow = true;
       group.add(hub);
     }
     holeGroup.add(group);
-    movers.push({ block: bl, group, pivotX: px, pivotY: py, mesh: laser ? body : undefined });
+    movers.push({ block: bl, group, pivotX: px, pivotY: py, baseZ: bz, mesh: laser ? body : undefined });
   }
   // zones
   (hole.zones ?? []).forEach((z, i) => {
     const cx = z.x + z.w / 2 - holeCX, cz = z.y + z.h / 2 - holeCY;
-    if (z.kind === 'water') { holeGroup.add(pondMesh(z, cx, cz)); return; }
-    if (z.kind === 'magnet') { holeGroup.add(blackHoleMesh(z, cx, cz, i)); return; }
-    const tex = makeZoneTexture(z);
+    const zy = FLOOR_Y + baseOf(geom, z); // the platform the zone lies on
+    if (z.kind === 'water') { holeGroup.add(pondMesh(z, cx, cz, th, themeName)); return; }
+    if (z.kind === 'magnet') { holeGroup.add(blackHoleMesh(z, cx, cz, i, zy)); return; }
+    const tex = makeZoneTexture(z, th);
     const flat = z.kind === 'tele';
     // portals are emitters (over-bright so they bloom)
     const glow = 1.7;
@@ -3151,6 +3205,9 @@ function setHole(hole: Hole) {
         sm.roughness = 0.5; sm.metalness = 0.4;
       } else if (z.kind === 'jump' || z.kind === 'boost' || z.kind === 'trampoline') {
         sm.roughness = 0.45;
+      } else if (z.kind === 'gravity') {
+        // warped space glows faintly from within
+        sm.roughness = 0.6; sm.emissiveMap = tex; sm.emissive.setRGB(1, 1, 1); sm.emissiveIntensity = 0.45;
       }
     }
     if (z.kind === 'slope') {
@@ -3166,21 +3223,21 @@ function setHole(hole: Hole) {
     } else {
       const m = new THREE.Mesh(new THREE.PlaneGeometry(z.w, z.h), mat);
       m.rotation.x = -Math.PI / 2;
-      m.position.set(cx, FLOOR_Y + 0.012 + i * 0.001, cz);
+      m.position.set(cx, zy + 0.012 + i * 0.001, cz);
       m.receiveShadow = true;
       holeGroup.add(m);
     }
-    if (z.kind === 'boost' || z.kind === 'conveyor' || z.kind === 'fan') {
+    if (z.kind === 'boost' || z.kind === 'conveyor' || z.kind === 'fan' || z.kind === 'gravity') {
       // texture u runs along golf +x, v along golf −y (the plane is laid flat
       // by rotating −90° about x), so scroll u with cos and v against sin
       const a = ((z.angle ?? 0) * Math.PI) / 180;
-      const rate = z.kind === 'conveyor' ? Math.max(1, zonePower(z)) * 0.06 : z.kind === 'fan' ? 0.9 : 0.6;
+      const rate = z.kind === 'conveyor' ? Math.max(1, zonePower(z)) * 0.06 : z.kind === 'fan' ? 0.9 : z.kind === 'gravity' ? Math.min(0.6, 0.1 + zonePower(z) * 0.03) : 0.6;
       boostMats.push({ mat: mat as THREE.MeshStandardMaterial, dx: Math.cos(a) * z.w, dy: Math.sin(a) * z.h, rate });
     }
     if (z.kind === 'fan') {
       // a propeller whirring in a hub at the centre
       const group = new THREE.Group();
-      group.position.set(cx, FLOOR_Y + 0.35, cz);
+      group.position.set(cx, zy + 0.35, cz);
       const r = Math.min(z.w, z.h) * 0.32;
       for (let k = 0; k < 3; k++) {
         const blade = new THREE.Mesh(new THREE.BoxGeometry(r, 0.08, 0.34), FAN_BLADE_MAT);
@@ -3199,7 +3256,7 @@ function setHole(hole: Hole) {
       // aim of whoever is loaded in it (see drawScene)
       const len = Math.max(1.2, Math.min(z.w, z.h) * 0.9);
       const group = new THREE.Group();
-      group.position.set(cx, FLOOR_Y + 0.55, cz);
+      group.position.set(cx, zy + 0.55, cz);
       const dir = new THREE.Vector3(1, 0.55, 0).normalize();
       const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.42, len, 16), CANNON_MAT);
       barrel.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
@@ -3215,7 +3272,7 @@ function setHole(hole: Hole) {
       group.rotation.y = -restAngle;
       holeGroup.add(group);
       const base = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.7, 0.5, 16), CANNON_MAT);
-      base.position.set(cx, FLOOR_Y + 0.25, cz);
+      base.position.set(cx, zy + 0.25, cz);
       base.castShadow = true;
       holeGroup.add(base);
       cannons.push({ zone: z, group, restAngle });
@@ -3225,7 +3282,7 @@ function setHole(hole: Hole) {
       if (z.tx !== undefined && z.ty !== undefined) {
         const ring = new THREE.Mesh(new THREE.TorusGeometry(0.8, 0.09, 8, 24), new THREE.MeshBasicMaterial({ color: new THREE.Color(1.6, 0.9, 2.4) }));
         ring.rotation.x = Math.PI / 2;
-        ring.position.set(z.tx - holeCX, FLOOR_Y + 0.05, z.ty - holeCY);
+        ring.position.set(z.tx - holeCX, FLOOR_Y + floorZ(hole, z.tx, z.ty) + 0.05, z.ty - holeCY);
         holeGroup.add(ring);
       }
     }
@@ -3233,14 +3290,15 @@ function setHole(hole: Hole) {
   // bumpers + posts
   for (const bp of hole.bumpers ?? []) {
     const h = bp.kick > 0 ? 0.9 : 1.1;
+    const by = FLOOR_Y + baseOf(geom, bp);
     const body = new THREE.Mesh(new THREE.CylinderGeometry(bp.r, bp.r * 1.05, h, 20), bp.kick > 0 ? BUMPER_MAT : POST_MAT);
-    body.position.set(bp.x - holeCX, FLOOR_Y + h / 2, bp.y - holeCY);
+    body.position.set(bp.x - holeCX, by + h / 2, bp.y - holeCY);
     body.castShadow = true;
     holeGroup.add(body);
     if (bp.kick > 0) {
       const ring = new THREE.Mesh(new THREE.TorusGeometry(bp.r * 0.8, 0.07, 8, 24), gloss({ color: 0xffffff }));
       ring.rotation.x = Math.PI / 2;
-      ring.position.set(bp.x - holeCX, FLOOR_Y + h + 0.02, bp.y - holeCY);
+      ring.position.set(bp.x - holeCX, by + h + 0.02, bp.y - holeCY);
       holeGroup.add(ring);
     }
   }
@@ -3248,26 +3306,27 @@ function setHole(hole: Hole) {
   {
     const cup = new THREE.Mesh(new THREE.CircleGeometry(CUP_R, 28), CUP_MAT);
     if (!CUP_MAT.map) { CUP_MAT.map = surfaces().cup; CUP_MAT.needsUpdate = true; }
+    const cy = FLOOR_Y + floorZ(hole, hole.cup.x, hole.cup.y);
     cup.rotation.x = -Math.PI / 2;
-    cup.position.set(hole.cup.x - holeCX, FLOOR_Y + 0.02, hole.cup.y - holeCY);
+    cup.position.set(hole.cup.x - holeCX, cy + 0.02, hole.cup.y - holeCY);
     holeGroup.add(cup);
     const rim = new THREE.Mesh(new THREE.RingGeometry(CUP_R, CUP_R + 0.14, 28), gloss({ color: 0xf0f0f0, roughness: 0.4 }));
     rim.rotation.x = -Math.PI / 2;
-    rim.position.set(hole.cup.x - holeCX, FLOOR_Y + 0.021, hole.cup.y - holeCY);
+    rim.position.set(hole.cup.x - holeCX, cy + 0.021, hole.cup.y - holeCY);
     holeGroup.add(rim);
     const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, 5, 8), gloss({ color: 0xf4f4f4, roughness: 0.4 }));
-    stick.position.set(hole.cup.x - holeCX, FLOOR_Y + 2.5, hole.cup.y - holeCY);
+    stick.position.set(hole.cup.x - holeCX, cy + 2.5, hole.cup.y - holeCY);
     stick.castShadow = true;
     holeGroup.add(stick);
-    const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 1.0, 12, 4), FLAG_MAT);
-    flag.position.set(hole.cup.x - holeCX + 0.85, FLOOR_Y + 4.4, hole.cup.y - holeCY);
+    const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 1.0, 12, 4), TM.flag);
+    flag.position.set(hole.cup.x - holeCX + 0.85, cy + 4.4, hole.cup.y - holeCY);
     flag.castShadow = true;
     holeGroup.add(flag);
     flagMesh = flag;
     // tee marker
     const tee = new THREE.Mesh(new THREE.RingGeometry(0.85, 1.0, 28), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 }));
     tee.rotation.x = -Math.PI / 2;
-    tee.position.set(hole.tee.x - holeCX, FLOOR_Y + 0.012, hole.tee.y - holeCY);
+    tee.position.set(hole.tee.x - holeCX, FLOOR_Y + floorZ(hole, hole.tee.x, hole.tee.y) + 0.012, hole.tee.y - holeCY);
     holeGroup.add(tee);
   }
 }
@@ -3302,8 +3361,9 @@ export function drawScene(scene: GolfScene) {
     // everybody's golfer teleports to the new tee — no walking across holes
     for (const g of golfers) { g.px = NaN; g.holedAt = -1; g.wasHoled = false; g.swingStart = -1; }
   }
-  if (!scene.hole && builtHoleKey) { builtHoleKey = ''; disposeHole(); fitShadowFrustum(null); }
+  if (!scene.hole && builtHoleKey) { builtHoleKey = ''; disposeHole(); fitShadowFrustum(null); applySceneTheme('park'); }
   const hole = scene.hole;
+  for (const d of decorSpin) d.rotation.y = (now / 90000) % (Math.PI * 2);
 
   // movers + surface animation
   const t = scene.t;
@@ -3312,7 +3372,7 @@ export function drawScene(scene: GolfScene) {
     if (mo.type === 'rotate' || mo.type === 'swing') m.group.rotation.y = -motionAngle(mo, t);
     else if (mo.type === 'slide') {
       const k = Math.sin(((t / mo.period) + (mo.phase ?? 0)) * Math.PI * 2);
-      m.group.position.set(m.pivotX - holeCX + mo.dx * k, FLOOR_Y, m.pivotY - holeCY + mo.dy * k);
+      m.group.position.set(m.pivotX - holeCX + mo.dx * k, FLOOR_Y + m.baseZ, m.pivotY - holeCY + mo.dy * k);
     } else if (mo.type === 'blink' && m.mesh) {
       m.mesh.material = moverActive(m.block, t) ? LASER_ON_MAT : LASER_OFF_MAT;
     }
@@ -3437,7 +3497,7 @@ export function drawScene(scene: GolfScene) {
   let myBall: THREE.Vector3 | null = null;
   let myPlayer: GolfPlayer | null = null;
   for (const p of scene.players) {
-    if (p.id === followId) { const bp = toThree(p.x, p.y, 0); bp.y += BALL_R; myBall = bp; myPlayer = p; }
+    if (p.id === followId) { const bp = toThree(p.x, p.y, builtGeom ? groundZ(builtGeom, p.x, p.y, p.z) : 0); bp.y += BALL_R; myBall = bp; myPlayer = p; }
     if (!rigged.has(p.id)) continue;
     let slot = rigByPlayer.get(p.id);
     if (slot === undefined) {
@@ -3454,6 +3514,9 @@ export function drawScene(scene: GolfScene) {
     const character = CHARACTERS[p.characterId] ?? CHARACTERS[0];
     applyCharacter(rig, character);
 
+    // the golfer stands at the ball's level: on its platform, up its ramp
+    const standZ = builtGeom ? groundZ(builtGeom, p.holed ? hole.cup.x : p.x, p.holed ? hole.cup.y : p.y, p.holed ? undefined : p.z) : 0;
+    rig.groundZ = standZ;
     const ballPos = toThree(p.x, p.y, 0);
     // stance: beside the ball, facing across the target line
     const facing = p.holed ? st.lastFacing : p.facing;
@@ -3542,12 +3605,12 @@ export function drawScene(scene: GolfScene) {
     aimArrow.rotation.order = 'YXZ';
     aimArrow.rotation.y = -Math.atan2(sz, sx);
     aimArrow.rotation.x = -Math.PI / 2;
-    aimArrow.position.set(myBall.x + sx * (BALL_R + len / 2), FLOOR_Y + 0.04, myBall.z + sz * (BALL_R + len / 2));
+    aimArrow.position.set(myBall.x + sx * (BALL_R + len / 2), myBall.y - BALL_R + 0.04, myBall.z + sz * (BALL_R + len / 2));
     aimHead.visible = true;
     aimHead.rotation.order = 'YXZ';
     aimHead.rotation.y = -Math.atan2(sz, sx);
     aimHead.rotation.x = -Math.PI / 2;
-    aimHead.position.set(myBall.x + sx * (BALL_R + len + 0.3), FLOOR_Y + 0.045, myBall.z + sz * (BALL_R + len + 0.3));
+    aimHead.position.set(myBall.x + sx * (BALL_R + len + 0.3), myBall.y - BALL_R + 0.045, myBall.z + sz * (BALL_R + len + 0.3));
     const heat = new THREE.Color().setHSL(THREE.MathUtils.lerp(0.25, 0.0, a.power), 1, 0.55).multiplyScalar(1.9);
     (aimArrow.material as THREE.MeshBasicMaterial).color.copy(heat);
     (aimHead.material as THREE.MeshBasicMaterial).color.copy(heat);
