@@ -107,6 +107,7 @@ export const Player = __t.object("Player", {
   emoteSeq: __t.u32(),
   lastChat: __t.u64(),
   characterId: __t.u8(),
+  ready: __t.bool(),
 });
 export type Player = __Infer<typeof Player>;
 

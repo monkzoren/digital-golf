@@ -33,7 +33,7 @@ README.md for architecture and run instructions. Key facts:
   trickle (≈ 92 units of roll on green; BALL_R 0.36): a hole should take
   several shots. Speed and friction scale together — change one, change both.
   Off the course is NOT an instant reset: the ball rolls on across the lawn
-  and is reset once it stops out there. `reset_ball` (R) / `undo_shot` (F)
+  and is reset once it stops out there. `reset_ball` (R) / `undo_shot` (U; F is fullscreen)
   put it back on the tee / where it was last struck from, strokes kept. Cannons LOAD a ball that rolls in; the next
   shot uses `shotFrom` (lofted). The `shoot` reducer takes `atTick` and
   rewinds ≤ 12 ticks (lag compensation).

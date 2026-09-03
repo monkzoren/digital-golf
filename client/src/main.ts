@@ -589,7 +589,12 @@ function renderRoom() {
   $('lobby-code').textContent = lobby.code;
   $('lobby-link').textContent = `${location.origin}${location.pathname}?lobby=${lobby.code}`;
   $('waiting-title').textContent = lobby.isPublic ? 'PUBLIC ROUND' : 'PRIVATE ROUND';
-  $('waiting-sub').textContent = host ? 'SHARE THE CODE, THEN START WHEN EVERYONE IS IN' : 'WAITING FOR THE HOST TO START…';
+  const membersNow = lobbyPlayers(lobby.id);
+  const waitingOn = membersNow.filter(q => q.online && !q.ready);
+  const allReady = waitingOn.length === 0;
+  $('waiting-sub').textContent = allReady
+    ? (host ? 'EVERYONE IS READY — START WHEN YOU LIKE' : 'EVERYONE IS READY — WAITING FOR THE HOST TO START')
+    : `READY UP · WAITING ON ${waitingOn.map(q => (isMe(q.identity) ? 'YOU' : q.name.toUpperCase())).join(', ')}`;
   const pills = [
     ['COURSE', lobby.courseName], ['HOLES', String(lobby.holeCount)], ['PAR', String(course?.totalPar ?? '?')],
     ['BY', course?.authorName ?? '?'], ['MAX', `${lobby.maxStrokes} STROKES`], ['TIME', `${lobby.holeSecs} S / HOLE`],
@@ -628,7 +633,8 @@ function renderRoom() {
   for (const q of players) {
     const chip = document.createElement('div');
     chip.className = 'player-chip' + (q.identity.isEqual(lobby.hostId) ? ' host' : '') + (isMe(q.identity) ? ' me' : '');
-    chip.innerHTML = `<span class="chip-name">${esc(q.name)}${q.online ? '' : ' 💤'}</span><span class="chip-char"><span class="dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${COLORS[q.color]};margin-right:5px"></span>${charOf(q).name}</span>`;
+    chip.classList.toggle('ready', q.ready);
+    chip.innerHTML = `<span class="chip-name">${esc(q.name)}${q.online ? '' : ' 💤'}${q.ready ? ' <span class="ready-tag">✓ READY</span>' : ''}</span><span class="chip-char"><span class="dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${COLORS[q.color]};margin-right:5px"></span>${charOf(q).name}</span>`;
     wp.appendChild(chip);
   }
   for (let i = players.length; i < Math.min(MAX_PLAYERS, players.length + 2); i++) {
@@ -639,10 +645,16 @@ function renderRoom() {
   }
   staggerChildren(wp);
   $('start-btn').classList.toggle('hidden', !host);
+  ($('start-btn') as HTMLButtonElement).disabled = !allReady;
+  $('start-btn').title = allReady ? '' : 'Everyone has to ready up first';
+  $('ready-btn').textContent = p.ready ? '✓ Ready' : 'Ready up';
+  $('ready-btn').classList.toggle('primary', !p.ready);
+  $('ready-btn').classList.toggle('alt', p.ready);
   renderChatFeed('lobby-chat-feed', lobby.id, 60);
 }
 $('change-course-btn').onclick = () => { intent = 'change'; courseTab = 'featured'; showOverlay('select-course'); };
 $('start-btn').onclick = () => { unlockAudio(); rd().startGame({}); };
+$('ready-btn').onclick = () => { unlockAudio(); const p = me(); if (p) { sfx.ui(); rd().setReady({ ready: !p.ready }); } };
 $('leave-btn').onclick = () => { rd().leaveLobby({}); intent = null; resetScene(); showOverlay('menu'); };
 $('waiting-settings-btn').onclick = () => modal('settings-modal', true);
 $('copy-link-btn').onclick = async () => {
@@ -753,7 +765,7 @@ function wireRowEvents() {
   conn.db.player.onDelete(refresh);
   conn.db.player.onUpdate((_c, old, row) => {
     notePlayer(row, old);
-    if (row.lobbyId !== old.lobbyId || row.name !== old.name || row.color !== old.color || row.online !== old.online || row.characterId !== old.characterId) refresh();
+    if (row.lobbyId !== old.lobbyId || row.name !== old.name || row.color !== old.color || row.online !== old.online || row.characterId !== old.characterId || row.ready !== old.ready) refresh();
   });
   conn.db.chat.onInsert((_c, row) => {
     const l = myLobby();
@@ -959,15 +971,15 @@ window.addEventListener('keydown', e => {
   }
   if (inInput) return;
   if (e.key === 'g' || e.key === 'G') { modal('settings-modal', !$('settings-modal').classList.contains('hidden') ? false : true); return; }
-  if ((e.key === 'f' || e.key === 'F') && overlayTarget !== null) { toggleFullscreen(); return; }
+  if (e.key === 'f' || e.key === 'F') { toggleFullscreen(); return; }
   if (e.key === 'm' || e.key === 'M') { setMuted(!isMuted()); notify(isMuted() ? 'MUTED' : 'SOUND ON'); return; }
   if (overlayTarget !== null) return;
   if (e.key === 'Enter') { const ci = $('chat-input'); ci.classList.add('open'); ci.focus(); unreadChat = 0; e.preventDefault(); return; }
   if (e.key === 'Tab') { e.preventDefault(); const open = $('scores-modal').classList.contains('hidden'); modal('scores-modal', open); if (open) renderScorecard('scores-table'); return; }
   if (e.key >= '1' && e.key <= '6') { rd().sendEmote({ index: Number(e.key) - 1 }); return; }
-  // R: back to the tee · F: back to where the last shot was played from
+  // R: back to the tee · U: back to where the last shot was played from
   if (e.key === 'r' || e.key === 'R') { predicted = null; rd().resetBall({}); return; }
-  if (e.key === 'f' || e.key === 'F') { predicted = null; rd().undoShot({}); return; }
+  if (e.key === 'u' || e.key === 'U') { predicted = null; rd().undoShot({}); return; }
   if (e.key === 'c' || e.key === 'C') { camOverview = !camOverview; return; }
   if (e.key === 'Shift') held.fine = true;
   if (!canShoot()) return;
@@ -1133,7 +1145,7 @@ function renderHud(lobby: Lobby, p: Player, players: Player[], hole: Hole | null
   const boardHtml = html + (more > 0 ? `<div class="r"><span class="nm" style="color:var(--dim)">+${more} MORE · TAB</span></div>` : '');
   if (board.innerHTML !== boardHtml) board.innerHTML = boardHtml;
   $('help').textContent = p.holed ? 'IN THE HOLE — WAITING FOR THE OTHERS' : lobby.phase === PH_PLAY
-    ? (p.resting && !predicted ? (p.strokes >= lobby.maxStrokes ? 'OUT OF STROKES' : 'PRESS AND PULL BACK · RELEASE TO PUTT · ←/→ AIM · R TEE · F REDO SHOT · RIGHT-DRAG LOOK · WHEEL ZOOM · C OVERVIEW · TAB SCORECARD · ENTER CHAT · ESC MENU') : 'ROLLING… · DRAG TO LOOK AROUND')
+    ? (p.resting && !predicted ? (p.strokes >= lobby.maxStrokes ? 'OUT OF STROKES' : 'PRESS AND PULL BACK · RELEASE TO PUTT · ←/→ AIM · R TEE · U REDO SHOT · RIGHT-DRAG LOOK · WHEEL ZOOM · C OVERVIEW · TAB SCORECARD · ENTER CHAT · ESC MENU') : 'ROLLING… · DRAG TO LOOK AROUND')
     : '';
   // name tags + emotes above the other balls
   const seen = new Set<string>();

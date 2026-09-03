@@ -125,6 +125,8 @@ const Player = table(
     // NOTE: appended column — the roster character this golfer plays as
     // (client/src/characters.ts order). The ball keeps its own colour.
     characterId: t.u8().default(0),
+    // NOTE: appended column — lobby ready-up (cleared on join / start / play again)
+    ready: t.bool().default(false),
   }
 );
 
@@ -494,6 +496,7 @@ export const onConnect = spacetimedb.clientConnected(ctx => {
       emoteSeq: 0,
       lastChat: 0n,
       characterId: ctx.random.integerInRange(0, 5),
+      ready: false,
     });
     return;
   }
@@ -577,7 +580,7 @@ export const create_lobby = spacetimedb.reducer(
     });
     const fresh = ctx.db.player.identity.find(ctx.sender)!;
     ctx.db.player.identity.update({
-      ...fresh, lobbyId: lobby.id, seat: 0, total: 0, holeScores: [], color: freeColor(ctx, lobby.id, fresh.color),
+      ...fresh, lobbyId: lobby.id, seat: 0, total: 0, holeScores: [], color: freeColor(ctx, lobby.id, fresh.color), ready: false,
     });
   }
 );
@@ -595,7 +598,7 @@ export const join_lobby = spacetimedb.reducer({ code: t.string() }, (ctx, { code
   const fresh = ctx.db.player.identity.find(ctx.sender)!;
   const seat = members.length ? members[members.length - 1].seat + 1 : 0;
   let row: PlayerRow = {
-    ...fresh, lobbyId: lobby.id, seat, total: 0, holeScores: [], color: freeColor(ctx, lobby.id, fresh.color),
+    ...fresh, lobbyId: lobby.id, seat, total: 0, holeScores: [], color: freeColor(ctx, lobby.id, fresh.color), ready: false,
   };
   if (lobby.status === L_RUNNING) {
     // Late joiner mid-round: par + 1 for every hole already played keeps the
@@ -641,14 +644,25 @@ export const set_settings = spacetimedb.reducer(
   }
 );
 
+/** Lobby ready-up: the host can only start once everyone online is ready. */
+export const set_ready = spacetimedb.reducer({ ready: t.bool() }, (ctx, { ready }) => {
+  const p = getPlayer(ctx);
+  const lobby = ctx.db.lobby.id.find(p.lobbyId);
+  if (!lobby || lobby.status !== L_OPEN) return;
+  ctx.db.player.identity.update({ ...p, ready });
+});
+
 export const start_game = spacetimedb.reducer(ctx => {
   const p = getPlayer(ctx);
   const lobby = ctx.db.lobby.id.find(p.lobbyId);
   if (!lobby) throw new SenderError('Not in a room');
   if (!lobby.hostId.isEqual(ctx.sender)) throw new SenderError('Only the host can start');
   if (lobby.status === L_RUNNING) throw new SenderError('Already playing');
-  for (const m of lobbyPlayers(ctx, lobby.id)) {
-    ctx.db.player.identity.update({ ...m, total: 0, holeScores: [], finishedTick: 0 });
+  const members = lobbyPlayers(ctx, lobby.id);
+  const notReady = members.filter(m => m.online && !m.ready);
+  if (notReady.length) throw new SenderError(`Not everyone is ready: ${notReady.map(m => m.name || 'someone').join(', ')}`);
+  for (const m of members) {
+    ctx.db.player.identity.update({ ...m, total: 0, holeScores: [], finishedTick: 0, ready: false });
   }
   const course = playableCourse(ctx, lobby.courseId);
   ctx.db.course.id.update({ ...course, plays: course.plays + 1 });
@@ -748,7 +762,7 @@ export const play_again = spacetimedb.reducer(ctx => {
   if (lobby.status !== L_FINISHED) throw new SenderError('The round is still going');
   ctx.db.lobby.id.update({ ...lobby, status: L_OPEN, phase: PH_LOBBY, holeIndex: 0, holeTick: 0, phaseTicks: 0 });
   for (const m of lobbyPlayers(ctx, lobby.id)) {
-    ctx.db.player.identity.update({ ...m, total: 0, holeScores: [], holed: false, strokes: 0, finishedTick: 0 });
+    ctx.db.player.identity.update({ ...m, total: 0, holeScores: [], holed: false, strokes: 0, finishedTick: 0, ready: false });
   }
 });
 

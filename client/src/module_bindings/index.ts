@@ -48,6 +48,7 @@ import SendEmoteReducer from "./send_emote_reducer";
 import SetCharacterReducer from "./set_character_reducer";
 import SetColorReducer from "./set_color_reducer";
 import SetNameReducer from "./set_name_reducer";
+import SetReadyReducer from "./set_ready_reducer";
 import SetSettingsReducer from "./set_settings_reducer";
 import ShootReducer from "./shoot_reducer";
 import StartGameReducer from "./start_game_reducer";
@@ -163,6 +164,7 @@ const reducersSchema = __reducers(
   __reducerSchema("set_character", SetCharacterReducer),
   __reducerSchema("set_color", SetColorReducer),
   __reducerSchema("set_name", SetNameReducer),
+  __reducerSchema("set_ready", SetReadyReducer),
   __reducerSchema("set_settings", SetSettingsReducer),
   __reducerSchema("shoot", ShootReducer),
   __reducerSchema("start_game", StartGameReducer),

@@ -42,4 +42,5 @@ export default __t.row({
   emoteSeq: __t.u32().name("emote_seq"),
   lastChat: __t.u64().name("last_chat"),
   characterId: __t.u8().name("character_id"),
+  ready: __t.bool(),
 });

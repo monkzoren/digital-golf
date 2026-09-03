@@ -14,8 +14,8 @@ TypeScript three.js game with a built-in course editor.
 
 - **Everyone shoots at once.** Up to 32 players per room, no turns. Press,
   pull back and release to putt (or hold ←/→ to aim, Shift for fine, and
-  hold Space for power; R puts the ball back on the tee, F back where the
-  last shot was played from — the strokes stay). The ball goes the instant
+  hold Space for power; R puts the ball back on the tee, U back where the
+  last shot was played from — the strokes stay; F is fullscreen). The ball goes the instant
   you release: the client
   predicts the shot and the server applies it at the tick you released on,
   so timing a windmill never depends on your ping. The arrow shows direction and power only — no
@@ -40,7 +40,8 @@ TypeScript three.js game with a built-in course editor.
   ball collisions on/off, water penalty (+1 stroke or a free reset), shot
   power (soft / normal / turbo). The host can change them in the lobby.
   Late joiners drop straight onto the tee. Refreshing mid-round keeps your
-  seat for 25 s.
+  seat for 25 s. The host can only start once everyone in the lobby has
+  readied up.
 - **Nine built-in courses, 81 holes.** Sunny Park (the tutorial), Neon
   Orbit and Toy Box (one hole per gadget) show the pieces off; the launch
   library — Bank Shot Alley, Clockwork, Ramp Ridge, Machine Works, Frost &

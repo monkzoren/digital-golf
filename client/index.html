@@ -3633,6 +3633,9 @@
     @media (max-width: 900px) { #editor { grid-template-columns: 150px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; } #ed-props { grid-column: 1 / -1; border-left: none; border-top: 1px solid var(--line); max-height: 30vh; } }
     /* test play steps out of the editor onto the real 3D stage; this bar is
        the only editor UI left on screen */
+    .player-chip .ready-tag { color: #86efac; font-size: 10px; letter-spacing: 2px; margin-left: 6px; }
+    #waiting-players .player-chip.ready { border-color: rgba(134, 239, 172, 0.7); }
+    #start-btn:disabled { opacity: 0.45; cursor: not-allowed; filter: grayscale(0.5); }
     #editor.testing { display: none; }
     /* the menu overlay the editor was opened from must not cover the stage */
     body.ed-testing .overlay { display: none !important; }
@@ -3861,6 +3864,7 @@
         </aside>
       </div>
       <div class="row">
+        <button id="ready-btn" class="primary">Ready up</button>
         <button id="start-btn" class="gold hidden">▶ Start Round</button>
         <button id="waiting-settings-btn" title="Graphics &amp; audio options (G)">⚙ Settings</button>
         <button id="leave-btn" class="alt">Leave</button>
