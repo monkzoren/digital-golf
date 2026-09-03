@@ -70,6 +70,7 @@ export interface Block {
   gen?:
     | { kind: 'windmill'; len: number; width: number; blades: number }
     | { kind: 'rect'; w: number; h: number; rot: number }
+    | { kind: 'tri'; w: number; h: number; rot: number } // a right triangle: pts[0] is the right-angle corner, legs w (along +x) and h (along +y) turned by rot
     | { kind: 'bar'; len: number; width: number }; // a pendulum arm hanging (+y) from its pivot
 }
 

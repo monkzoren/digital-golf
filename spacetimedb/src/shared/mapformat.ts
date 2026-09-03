@@ -136,6 +136,8 @@ export function cleanHole(raw: any): Hole {
           out.gen = { kind: 'windmill', len: r2(clampN(b.gen.len, 0.5, 60)), width: r2(clampN(b.gen.width, 0.2, 10)), blades: clampN(Math.round(b.gen.blades), 2, 6) };
         } else if (b.gen.kind === 'rect' && num(b.gen.w) && num(b.gen.h) && num(b.gen.rot)) {
           out.gen = { kind: 'rect', w: r2(clampN(b.gen.w, 0.2, 400)), h: r2(clampN(b.gen.h, 0.2, 400)), rot: r2(b.gen.rot) };
+        } else if (b.gen.kind === 'tri' && num(b.gen.w) && num(b.gen.h) && num(b.gen.rot)) {
+          out.gen = { kind: 'tri', w: r2(clampN(b.gen.w, 0.2, 400)), h: r2(clampN(b.gen.h, 0.2, 400)), rot: r2(b.gen.rot) };
         } else if (b.gen.kind === 'bar' && num(b.gen.len) && num(b.gen.width)) {
           out.gen = { kind: 'bar', len: r2(clampN(b.gen.len, 0.5, 60)), width: r2(clampN(b.gen.width, 0.2, 10)) };
         }

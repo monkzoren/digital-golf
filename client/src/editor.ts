@@ -8,10 +8,10 @@ import {
 } from '@shared/courses';
 import { cleanHole, LIMITS, THEME_NAMES } from '@shared/mapformat';
 import {
-  type BallState, CANNON_DEFAULT_LIFT, DT, FRICTION, ZONE_DEFAULT_POWER, geomOf, groundZ, invalidateGeom, newEvents, rampRise,
+  type BallState, BALL_R, CANNON_DEFAULT_LIFT, DT, FRICTION, ZONE_DEFAULT_POWER, geomOf, groundZ, invalidateGeom, newEvents, rampRise,
   restingOn, shotFrom, stepBall,
 } from '@shared/physics';
-import { type Camera, drawHole, fitCamera, s2w, THEMES, w2s } from './render';
+import { type Camera, drawAim, drawBall, drawHole, fitCamera, powerToSpeed, s2w, THEMES, w2s } from './render';
 import { type AimBasis, type GolfScene, addShake, burstAt, cameraGroundBasis, canvasCssSize, drawScene, resetScene } from './render3d';
 import { dragAim, smoothAngle } from './aim';
 import { sfx } from './audio';
@@ -32,7 +32,7 @@ export interface EditorOpts {
 }
 
 type Tool =
-  | 'select' | 'pan' | 'floor' | 'block' | 'lowblock' | 'windmill' | 'slider' | 'pendulum' | 'laser' | 'rubber'
+  | 'select' | 'pan' | 'swing' | 'floor' | 'block' | 'lowblock' | 'tri' | 'windmill' | 'slider' | 'pendulum' | 'laser' | 'rubber'
   | 'bumper' | 'post' | 'tee' | 'cup' | ZoneKind;
 
 type Sel =
@@ -42,11 +42,13 @@ type Sel =
 const TOOL_DEFS: { id: Tool; label: string; color: string; group: string; hint: string }[] = [
   { id: 'select', label: 'Select / move', color: '#fff', group: 'Tools', hint: 'Click to select · drag to move · Del removes · arrows nudge' },
   { id: 'pan', label: 'Pan', color: '#9fc2a8', group: 'Tools', hint: 'Drag to pan · wheel zooms (or hold Space with any tool)' },
+  { id: 'swing', label: 'Swing preview', color: '#ffd60a', group: 'Tools', hint: 'Click to drop a ghost ball · drag to aim (arrow length = power) · Shift-drag moves the ball · ←/→ turn · ↑/↓ power · Del clears' },
   { id: 'floor', label: 'Floor', color: '#3fae4f', group: 'Layout', hint: 'Drag a rectangle of green. Touching floors join up; give one a height and it is a platform.' },
   { id: 'tee', label: 'Tee', color: '#ffffff', group: 'Layout', hint: 'Click where the ball starts' },
   { id: 'cup', label: 'Cup', color: '#0b1a10', group: 'Layout', hint: 'Click where the hole is' },
   { id: 'block', label: 'Wall block', color: '#c9a36b', group: 'Obstacles', hint: 'Drag a solid block' },
   { id: 'lowblock', label: 'Low wall (jumpable)', color: '#e0c391', group: 'Obstacles', hint: 'Drag a low wall a jumping ball clears' },
+  { id: 'tri', label: 'Triangle wall', color: '#c9a36b', group: 'Obstacles', hint: 'Drag from the right-angle corner: a triangle fills the box (a corner mirror caroms the ball)' },
   { id: 'windmill', label: 'Windmill', color: '#c9a36b', group: 'Obstacles', hint: 'Click to place a spinning windmill' },
   { id: 'slider', label: 'Sliding block', color: '#c9a36b', group: 'Obstacles', hint: 'Drag a block that slides back and forth' },
   { id: 'pendulum', label: 'Pendulum', color: '#c9a36b', group: 'Obstacles', hint: 'Click to hang a swinging arm from that point' },
@@ -114,8 +116,26 @@ type Drag =
   | { mode: 'move'; sel: Sel; start: { x: number; y: number }; orig: Hole }
   | { mode: 'resize'; sel: Sel; corner: number; orig: Hole }
   | { mode: 'pan'; sx: number; sy: number; cx: number; cy: number }
+  | { mode: 'swingMove' } | { mode: 'swingAim' }
   | null;
 let drag: Drag = null;
+
+// swing preview — a ghost ball, an angle and a power; the shot is simulated
+// with the shared physics and its whole path drawn on the editor canvas so
+// corners, bumpers and cups can be placed to a line. Local; never saved.
+interface SwingSetup { holeIdx: number; x: number; y: number; angleDeg: number; power: number; t0: number }
+interface SwingPt { x: number; y: number; lift: number; air: boolean; tele: boolean }
+interface SwingMark { x: number; y: number; kind: 'wall' | 'bumper' | 'jump' | 'land' | 'tele'; v: number }
+interface SwingPath {
+  key: string; pts: SwingPt[]; marks: SwingMark[];
+  end: 'rest' | 'holed' | 'water' | 'oob' | 'timeout'; secs: number; travel: number; maxSpeed: number; toCup: number; summary: string;
+}
+let swing: SwingSetup | null = null;
+let swingPath: SwingPath | null = null;
+let swingPlay = 0; // playhead, seconds since the swing
+const SWING_MAX_TICKS = 450; // 15 s: the server's roll_clock stops a ball still rolling after this
+const SWING_HOLD = 1.2; // the playhead rests at the end this long before looping
+const SWING_ARROW_MIN = 2, SWING_ARROW_SPAN = 7; // drawAim's arrow length (u) = MIN + power × SPAN: the drag reads it back
 
 // test mode — played on the game's 3D stage (render3d), the editor hidden
 let testing = false;
@@ -152,6 +172,7 @@ export function openEditor(o: EditorOpts) {
   tool = 'select';
   undoStack = []; redoStack = [];
   testing = false;
+  swing = null; swingPath = null;
   ($('ed-title') as HTMLInputElement).value = courseName;
   buildTools();
   renderHoleTabs();
@@ -336,6 +357,14 @@ function onDown(e: PointerEvent) {
     }
     case 'tee': pushUndo(); h.tee = { x: sx, y: sy }; sel = { kind: 'tee' }; renderProps(); return;
     case 'cup': pushUndo(); h.cup = { x: sx, y: sy }; sel = { kind: 'cup' }; renderProps(); return;
+    case 'swing': {
+      const s = swing && swing.holeIdx === cur ? swing : null;
+      const onBall = !!s && Math.hypot(s.x - w.x, s.y - w.y) < BALL_R + 10 / cam.scale;
+      if (!s) { placeSwing(sx, sy); drag = { mode: 'swingMove' }; }
+      else if (e.shiftKey || onBall) drag = { mode: 'swingMove' };
+      else { aimSwing(w); drag = { mode: 'swingAim' }; }
+      return;
+    }
     case 'bumper': case 'post': {
       pushUndo();
       h.bumpers ??= [];
@@ -378,6 +407,10 @@ function onMove(e: PointerEvent) {
     cam.y = drag.cy - (e.clientY - drag.sy) / cam.scale;
   } else if (drag.mode === 'create') {
     drag.x1 = snapV(w.x); drag.y1 = snapV(w.y);
+  } else if (drag.mode === 'swingMove') {
+    if (swing) { swing.x = snapV(w.x); swing.y = snapV(w.y); syncSwingPanel(); }
+  } else if (drag.mode === 'swingAim') {
+    aimSwing(w);
   } else if (drag.mode === 'move') {
     const dx = snapV(w.x - drag.start.x), dy = snapV(w.y - drag.start.y);
     holes[cur] = moved(drag.orig, drag.sel, dx, dy);
@@ -400,6 +433,7 @@ function onUp(e: PointerEvent) {
   if (!drag) return;
   const d = drag;
   drag = null;
+  if (d.mode === 'swingMove' || d.mode === 'swingAim') { renderProps(); return; }
   if (d.mode !== 'create') { if (d.mode !== 'pan') renderProps(); return; }
   const x = Math.min(d.x0, d.x1), y = Math.min(d.y0, d.y1);
   const w = Math.abs(d.x1 - d.x0), hh = Math.abs(d.y1 - d.y0);
@@ -419,6 +453,17 @@ function onUp(e: PointerEvent) {
       if (tool === 'laser') b.motion = { type: 'blink', period: 2.5, duty: 0.5 };
       if (tool === 'rubber') b.bounce = 2;
       h.blocks.push(b); sel = { kind: 'block', i: h.blocks.length - 1 }; break;
+    }
+    case 'tri': {
+      // the right angle sits where the drag started; the legs run toward where it ended
+      h.blocks ??= [];
+      if (h.blocks.length >= LIMITS.blocks) { toast('Too many blocks', true); return; }
+      const dx = d.x1 - d.x0, dy = d.y1 - d.y0;
+      const rot = dx >= 0 && dy >= 0 ? 0 : dx < 0 && dy >= 0 ? 90 : dx < 0 ? 180 : 270;
+      const [lw, lh] = rot === 0 || rot === 180 ? [w, hh] : [hh, w];
+      const gen = { kind: 'tri' as const, w: lw, h: lh, rot };
+      h.blocks.push({ pts: triPts(d.x0, d.y0, lw, lh, rot), gen });
+      sel = { kind: 'block', i: h.blocks.length - 1 }; break;
     }
     default: {
       h.zones ??= [];
@@ -521,15 +566,27 @@ function onKey(e: KeyboardEvent) {
     if (e.key === 'c' || e.key === 'C') toggleTestCam();
     return;
   }
+  if ((e.key === 'Delete' || e.key === 'Backspace') && tool === 'swing' && !sel) { clearSwing(); return; }
   if (e.key === 'Delete' || e.key === 'Backspace') { deleteSel(); return; }
   if (e.key === 'g') { snap = snap === 0.5 ? 1 : snap === 1 ? 0.25 : 0.5; toast(`Grid snap ${snap}`); return; }
   if (e.key === 't') { startTest(); return; }
+  if (e.key === 'p') { tool = 'swing'; sel = null; buildTools(); renderProps(); return; }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd' && sel) { e.preventDefault(); duplicateSel(); return; }
   const nudge: Record<string, [number, number]> = { ArrowLeft: [-snap, 0], ArrowRight: [snap, 0], ArrowUp: [0, -snap], ArrowDown: [0, snap] };
   if (nudge[e.key] && sel) { e.preventDefault(); pushUndo(); holes[cur] = moved(hole(), sel, nudge[e.key][0], nudge[e.key][1]); renderProps(); return; }
-  const t = TOOL_DEFS.find(d => d.label[0].toLowerCase() === e.key.toLowerCase() && !e.ctrlKey && !e.metaKey);
+  if (nudge[e.key] && tool === 'swing' && swing && swing.holeIdx === cur) {
+    // fine-tune the preview shot: ←/→ turn (1°, Shift 0.1°), ↑/↓ power (2%, Shift 0.5%)
+    e.preventDefault();
+    const fine = e.shiftKey;
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') swing.angleDeg = round1(wrapDeg(swing.angleDeg + (e.key === 'ArrowLeft' ? -1 : 1) * (fine ? 0.1 : 1)));
+    else swing.power = Math.round(clamp01(swing.power + (e.key === 'ArrowUp' ? 1 : -1) * (fine ? 0.005 : 0.02)) * 200) / 200;
+    syncSwingPanel();
+    return;
+  }
+  const SHORTCUT_TOOLS: Tool[] = ['floor', 'block', 'bumper', 'sand', 'ice', 'water', 'jump'];
+  const t = TOOL_DEFS.find(d => SHORTCUT_TOOLS.includes(d.id) && d.label[0].toLowerCase() === e.key.toLowerCase() && !e.ctrlKey && !e.metaKey);
   if (e.key === 'v') { tool = 'select'; buildTools(); return; }
-  if (t && ['floor', 'block', 'bumper', 'sand', 'ice', 'water', 'jump'].includes(t.id)) { tool = t.id; sel = null; buildTools(); renderProps(); }
+  if (t) { tool = t.id; sel = null; buildTools(); renderProps(); }
 }
 
 function duplicateSel() {
@@ -560,6 +617,7 @@ function renderProps() {
   const el = $('ed-props');
   const h = hole();
   const s = sel;
+  if (tool === 'swing' && !s) { renderSwingProps(el); return; }
   if (!s) {
     el.innerHTML = `<h3>Hole ${cur + 1} of ${holes.length}</h3>
       ${field('Name', `<input type="text" id="p-name" value="${esc(h.name)}" maxlength="${LIMITS.holeNameLen}" />`)}
@@ -576,7 +634,7 @@ function renderProps() {
       <h3>Stats</h3>
       <div class="tiny">${h.floor.length} floors · ${h.blocks?.length ?? 0} blocks · ${h.zones?.length ?? 0} zones · ${h.bumpers?.length ?? 0} bumpers</div>
       <h3>Shortcuts</h3>
-      <div class="tiny">V select · F floor · B block · S sand · I ice · W water · J jump<br>T test in 3D · G grid snap (${snap}) · Ctrl+Z undo · Ctrl+D duplicate · Del delete<br>Wheel zoom · Space/right-drag pan</div>`;
+      <div class="tiny">V select · F floor · B block · S sand · I ice · W water · J jump<br>P swing preview · T test in 3D · G grid snap (${snap}) · Ctrl+Z undo · Ctrl+D duplicate · Del delete<br>Wheel zoom · Space/right-drag pan</div>`;
     ($('p-name') as HTMLInputElement).onchange = e => { pushUndo(); h.name = (e.target as HTMLInputElement).value.slice(0, LIMITS.holeNameLen) || 'Untitled'; };
     ($('p-tip') as HTMLInputElement).onchange = e => { pushUndo(); h.tip = (e.target as HTMLInputElement).value.slice(0, LIMITS.tipLen); };
     ($('p-theme') as HTMLSelectElement).onchange = e => { pushUndo(); h.theme = (e.target as HTMLSelectElement).value; };
@@ -589,7 +647,7 @@ function renderProps() {
     return;
   }
   let html = '';
-  const delBtn = '<button class="btn small danger" id="p-delete" style="margin-top:8px">Delete (Del)</button>';
+  const delBtn = '<div class="row wrap" style="margin-top:8px"><button class="btn small" id="p-duplicate" title="A copy, offset a little (Ctrl+D)">Duplicate (Ctrl+D)</button><button class="btn small danger" id="p-delete">Delete (Del)</button></div>';
   if (s.kind === 'tee' || s.kind === 'cup') {
     const pt = s.kind === 'tee' ? h.tee : h.cup;
     html = `<h3>${s.kind.toUpperCase()}</h3>${field('X', numIn('p-x', pt.x))}${field('Y', numIn('p-y', pt.y))}`;
@@ -640,7 +698,7 @@ function renderProps() {
       bind('p-lift', v => { z.lift = v; });
       bind('p-tx', v => { z.tx = v; }); bind('p-ty', v => { z.ty = v; });
     }
-    $('p-delete').onclick = deleteSel;
+    $('p-delete').onclick = deleteSel; $('p-duplicate').onclick = duplicateSel;
     return;
   }
   if (s.kind === 'teleExit') {
@@ -653,7 +711,7 @@ function renderProps() {
     const b = h.bumpers![s.i];
     el.innerHTML = `<h3>${b.kick > 0 ? 'BUMPER' : 'POST'}</h3><div class="grid2">${field('X', numIn('p-x', b.x))}${field('Y', numIn('p-y', b.y))}</div>${field('Radius', numIn('p-r', b.r, 0.1, 0.3, 6))}${field('Kick (0 = passive post)', numIn('p-kick', b.kick, 1, 0, 25))}${delBtn}`;
     bind('p-x', v => { b.x = v; }); bind('p-y', v => { b.y = v; }); bind('p-r', v => { b.r = v; }); bind('p-kick', v => { b.kick = v; });
-    $('p-delete').onclick = deleteSel;
+    $('p-delete').onclick = deleteSel; $('p-duplicate').onclick = duplicateSel;
     return;
   }
   if (s.kind === 'block') {
@@ -662,12 +720,13 @@ function renderProps() {
     const gen = b.gen;
     const mt = b.motion?.type;
     const title = mt === 'rotate' ? 'WINDMILL' : mt === 'slide' ? 'SLIDING BLOCK' : mt === 'swing' ? 'PENDULUM' : mt === 'blink' ? 'LASER GATE'
-      : b.bounce && b.bounce > 1 ? 'RUBBER WALL' : b.h !== undefined ? 'LOW WALL' : 'WALL BLOCK';
+      : b.bounce && b.bounce > 1 ? 'RUBBER WALL' : b.h !== undefined ? 'LOW WALL' : gen?.kind === 'tri' ? 'TRIANGLE WALL' : 'WALL BLOCK';
     html = `<h3>${title}</h3>`;
     const pivot = b.motion && (b.motion.type === 'rotate' || b.motion.type === 'swing') ? b.motion : null;
     if (pivot) html += `<div class="grid2">${field('Pivot X', numIn('p-cx', round2(pivot.cx)))}${field('Pivot Y', numIn('p-cy', round2(pivot.cy)))}</div>`;
     else html += `<div class="grid2">${field('Centre X', numIn('p-cx', round2(c.x)))}${field('Centre Y', numIn('p-cy', round2(c.y)))}</div>`;
     if (gen?.kind === 'rect') html += `<div class="grid2">${field('Width', numIn('p-w', gen.w, 0.5, 0.2))}${field('Height', numIn('p-h', gen.h, 0.5, 0.2))}</div>${field('Rotation °', numIn('p-rot', gen.rot, 5))}`;
+    if (gen?.kind === 'tri') html += `<div class="grid2">${field('Leg along X', numIn('p-w', gen.w, 0.5, 0.2))}${field('Leg along Y', numIn('p-h', gen.h, 0.5, 0.2))}</div>${field('Rotation ° (turns about the right-angle corner)', numIn('p-rot', gen.rot, 45))}<div class="tiny">A right triangle: 0° puts the corner top-left, 90° top-right, 180° bottom-right, 270° bottom-left. Equal legs make a 45° mirror that turns a shot a clean 90°.</div>`;
     if (gen?.kind === 'windmill') html += `<div class="grid2">${field('Blade length', numIn('p-len', gen.len, 0.5, 0.5, 60))}${field('Blade width', numIn('p-wid', gen.width, 0.1, 0.2, 10))}</div>${field('Blades', numIn('p-blades', gen.blades, 1, 2, 6))}`;
     if (gen?.kind === 'bar') html += `<div class="grid2">${field('Arm length', numIn('p-len', gen.len, 0.5, 0.5, 60))}${field('Arm width', numIn('p-wid', gen.width, 0.1, 0.2, 10))}</div>`;
     if (b.motion?.type === 'rotate') html += field('Spin (rad/s, − reverses)', numIn('p-speed', b.motion.speed, 0.1, -6, 6));
@@ -681,6 +740,8 @@ function renderProps() {
       if (gen?.kind === 'rect') {
         const cc = centroid(b.pts);
         b.pts = rotRect(cc.x, cc.y, gen.w, gen.h, gen.rot);
+      } else if (gen?.kind === 'tri') {
+        b.pts = triPts(b.pts[0], b.pts[1], gen.w, gen.h, gen.rot);
       } else if (gen?.kind === 'windmill' && b.motion?.type === 'rotate') {
         b.pts = windmillPts(b.motion.cx, b.motion.cy, gen.len, gen.width, gen.blades);
         b.hub = Math.max(0.5, gen.width * 0.9);
@@ -692,7 +753,7 @@ function renderProps() {
     const ox = pivot ? pivot.cx : c.x, oy = pivot ? pivot.cy : c.y;
     bind('p-cx', v => { holes[cur] = moved(h, s, v - ox, 0); });
     bind('p-cy', v => { holes[cur] = moved(h, s, 0, v - oy); });
-    if (gen?.kind === 'rect') { bind('p-w', v => { gen.w = v; regen(); }); bind('p-h', v => { gen.h = v; regen(); }); bind('p-rot', v => { gen.rot = v; regen(); }); }
+    if (gen?.kind === 'rect' || gen?.kind === 'tri') { bind('p-w', v => { gen.w = Math.max(0.2, v); regen(); }); bind('p-h', v => { gen.h = Math.max(0.2, v); regen(); }); bind('p-rot', v => { gen.rot = v; regen(); }); }
     if (gen?.kind === 'windmill') { bind('p-len', v => { gen.len = v; regen(); }); bind('p-wid', v => { gen.width = v; regen(); }); bind('p-blades', v => { gen.blades = Math.round(v); regen(); }); }
     if (gen?.kind === 'bar') { bind('p-len', v => { gen.len = v; regen(); }); bind('p-wid', v => { gen.width = v; regen(); }); }
     if (b.motion?.type === 'rotate') bind('p-speed', v => { (b.motion as any).speed = v; });
@@ -701,10 +762,15 @@ function renderProps() {
     if (b.motion?.type === 'blink') { bind('p-period', v => { (b.motion as any).period = Math.max(0.5, v); }); bind('p-duty', v => { (b.motion as any).duty = Math.max(0.1, Math.min(0.9, v)); }); bind('p-phase', v => { (b.motion as any).phase = v; }); }
     bind('p-bounce', v => { if (v === 1) delete b.bounce; else b.bounce = Math.max(0.2, Math.min(2.5, v)); });
     bind('p-hgt', v => { if (v <= 0) delete b.h; else b.h = v; });
-    $('p-delete').onclick = deleteSel;
+    $('p-delete').onclick = deleteSel; $('p-duplicate').onclick = duplicateSel;
   }
 }
 const round2 = (v: number) => Math.round(v * 100) / 100;
+/** A right triangle: the right angle at (cx, cy), legs w along +x and h along +y, the pair turned by rotDeg. */
+function triPts(cx: number, cy: number, w: number, h: number, rotDeg: number): number[] {
+  const a = (rotDeg * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a);
+  return [round2(cx), round2(cy), round2(cx + w * c), round2(cy + w * s), round2(cx - h * s), round2(cy + h * c)];
+}
 function rotRect(cx: number, cy: number, w: number, h: number, rotDeg: number): number[] {
   const a = (rotDeg * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a);
   const out: number[] = [];
@@ -907,6 +973,221 @@ function drawTest(dt: number) {
 }
 
 // ---------------------------------------------------------------------------
+// Swing preview: a ghost golfer. Place a ball, set an angle and a power, and
+// the editor plays the shot with the shared physics (the exact code the
+// server runs) and draws every tick of it — bounces, flights, the cup or the
+// water — so a corner or a bumper can be nudged until the line is right.
+// The path is recomputed whenever the hole or the swing changes and is
+// drawn under every tool, so moving a block with Select updates it live.
+// ---------------------------------------------------------------------------
+const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
+const wrapDeg = (d: number) => ((d % 360) + 360) % 360;
+const round1 = (v: number) => Math.round(v * 10) / 10;
+
+function placeSwing(x: number, y: number) {
+  const h = hole();
+  const prev = swing && swing.holeIdx === cur ? swing : null;
+  swing = {
+    holeIdx: cur, x, y,
+    angleDeg: prev ? prev.angleDeg : round1(wrapDeg((Math.atan2(h.cup.y - y, h.cup.x - x) * 180) / Math.PI)),
+    power: prev ? prev.power : 0.5, t0: prev ? prev.t0 : 0,
+  };
+  swingPlay = 0;
+}
+function clearSwing() { swing = null; swingPath = null; if (tool === 'swing') renderProps(); }
+/** Drag from the ball: the arrow points at the pointer and its length (as drawAim draws it) is the power. */
+function aimSwing(w: { x: number; y: number }) {
+  if (!swing) return;
+  const dx = w.x - swing.x, dy = w.y - swing.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist < BALL_R) return;
+  swing.angleDeg = round1(wrapDeg((Math.atan2(dy, dx) * 180) / Math.PI));
+  swing.power = Math.round(clamp01((dist - SWING_ARROW_MIN) / SWING_ARROW_SPAN) * 200) / 200;
+  syncSwingPanel();
+}
+
+/** Simulate the swing; the key says which hole + swing this path belongs to. */
+function simulateSwing(h: Hole, s: SwingSetup, key: string): SwingPath {
+  const g = geomOf(h);
+  const angle = (s.angleDeg * Math.PI) / 180;
+  const v = shotFrom(g, s.x, s.y, angle, s.power);
+  const z0 = groundZ(g, s.x, s.y);
+  const b: BallState = { x: s.x, y: s.y, z: v.vz > 0 ? z0 + 0.01 : z0, vx: v.vx, vy: v.vy, vz: v.vz, teleTicks: 0 };
+  const pts: SwingPt[] = [{ x: b.x, y: b.y, lift: 0, air: false, tele: false }];
+  const marks: SwingMark[] = [];
+  let end: SwingPath['end'] = 'timeout';
+  let ticks = SWING_MAX_TICKS, travel = 0, maxSpeed = Math.hypot(b.vx, b.vy);
+  for (let tick = 1; tick <= SWING_MAX_TICKS; tick++) {
+    const ev = newEvents();
+    const px = b.x, py = b.y;
+    stepBall(b, g, s.t0 + tick * DT, ev);
+    const ground = groundZ(g, b.x, b.y, b.z);
+    if (!ev.tele) travel += Math.hypot(b.x - px, b.y - py);
+    maxSpeed = Math.max(maxSpeed, Math.hypot(b.vx, b.vy));
+    if (ev.wall > 2.5) marks.push({ x: b.x, y: b.y, kind: 'wall', v: ev.wall });
+    if (ev.bumper) marks.push({ x: b.x, y: b.y, kind: 'bumper', v: 0 });
+    if (ev.jump) marks.push({ x: b.x, y: b.y, kind: 'jump', v: 0 });
+    if (ev.land) marks.push({ x: b.x, y: b.y, kind: 'land', v: 0 });
+    if (ev.tele) { marks.push({ x: px, y: py, kind: 'tele', v: 0 }); marks.push({ x: b.x, y: b.y, kind: 'tele', v: 1 }); }
+    pts.push({ x: b.x, y: b.y, lift: Math.max(0, b.z - ground), air: b.z > ground + 0.02, tele: ev.tele });
+    if (ev.holed) { end = 'holed'; ticks = tick; break; }
+    if (ev.water) { end = 'water'; ticks = tick; break; }
+    if (ev.oob) { end = 'oob'; ticks = tick; break; }
+    if (restingOn(g, b)) { end = 'rest'; ticks = tick; break; }
+  }
+  const secs = ticks * DT;
+  const toCup = Math.hypot(b.x - h.cup.x, b.y - h.cup.y);
+  const bounces = marks.filter(m => m.kind === 'wall').length;
+  const bumps = marks.filter(m => m.kind === 'bumper').length;
+  const bits = [`${round1(travel)} u travelled`, `top speed ${round1(maxSpeed)} u/s`];
+  if (bounces) bits.push(`${bounces} wall bounce${bounces === 1 ? '' : 's'}`);
+  if (bumps) bits.push(`${bumps} bumper${bumps === 1 ? '' : 's'}`);
+  const headline =
+    end === 'holed' ? `IN THE CUP after ${round1(secs)} s` :
+    end === 'rest' ? `Stops at (${round1(b.x)}, ${round1(b.y)}) after ${round1(secs)} s · ${round1(toCup)} u from the cup` :
+    end === 'water' ? `SPLASH at ${round1(secs)} s · +1, back to the ball` :
+    end === 'oob' ? `${pointInFloor(b.x, b.y, h) ? 'Squeezed into a wall' : 'Off the map'} at ${round1(secs)} s · reset` :
+    'Still rolling at 15 s · the server stops it there';
+  return { key, pts, marks, end, secs, travel, maxSpeed, toCup, summary: `${headline}\n${bits.join(' · ')}` };
+}
+
+/** Recompute the path when the hole or the swing changed; advance the playhead. */
+function updateSwing(h: Hole, dt: number) {
+  if (!swing) { swingPath = null; return; }
+  const key = `${JSON.stringify(h)}|${swing.x},${swing.y},${swing.angleDeg},${swing.power},${swing.t0}`;
+  if (!swingPath || swingPath.key !== key) {
+    swingPath = simulateSwing(h, swing, key);
+    const out = document.getElementById('p-sw-result');
+    if (out) out.textContent = swingPath.summary;
+  }
+  const loop = swingPath.secs + SWING_HOLD;
+  swingPlay = (swingPlay + dt) % loop;
+}
+
+function drawSwing(g: CanvasRenderingContext2D, h: Hole) {
+  const s = swing, path = swingPath;
+  if (!s || !path) return;
+  const sc = cam.scale;
+  const color = '#' + (opts?.myColor ?? 0xffd60a).toString(16).padStart(6, '0');
+  const ptAt = (p: SwingPt) => w2s(cam, W, H, p.x, p.y);
+  // the path: a dark bed, then gold on the felt and cyan dashes in the air
+  g.save();
+  g.lineCap = 'round'; g.lineJoin = 'round';
+  for (const pass of [0, 1]) {
+    let air = path.pts[0].air;
+    const begin = () => { g.beginPath(); g.strokeStyle = pass === 0 ? 'rgba(0,0,0,0.55)' : air ? '#5bd1ff' : '#ffd60a'; g.lineWidth = Math.max(pass === 0 ? 4 : 2, (pass === 0 ? 0.22 : 0.12) * sc); g.setLineDash(pass === 1 && air ? [0.35 * sc, 0.35 * sc] : []); };
+    begin();
+    let q = ptAt(path.pts[0]);
+    g.moveTo(q.x, q.y);
+    for (let i = 1; i < path.pts.length; i++) {
+      const p = path.pts[i];
+      if (p.tele) { g.stroke(); begin(); q = ptAt(p); g.moveTo(q.x, q.y); continue; }
+      if (p.air !== air) { g.stroke(); air = p.air; begin(); g.moveTo(q.x, q.y); }
+      q = ptAt(p);
+      g.lineTo(q.x, q.y);
+    }
+    g.stroke();
+  }
+  g.setLineDash([]);
+  // half-second pips along the line
+  g.fillStyle = 'rgba(255,255,255,0.8)';
+  for (let i = 15; i < path.pts.length; i += 15) { const q = ptAt(path.pts[i]); g.beginPath(); g.arc(q.x, q.y, Math.max(1.5, 0.07 * sc), 0, Math.PI * 2); g.fill(); }
+  // events
+  const MARK: Record<SwingMark['kind'], string> = { wall: '#fff8a0', bumper: '#ff8a8a', jump: '#ffd60a', land: '#c9c9c9', tele: '#c77dff' };
+  g.lineWidth = Math.max(1.5, 0.08 * sc);
+  for (const m of path.marks) {
+    const q = w2s(cam, W, H, m.x, m.y);
+    const r = (m.kind === 'wall' ? 0.3 + Math.min(0.5, m.v / 40) : m.kind === 'bumper' ? 0.6 : 0.35) * sc;
+    g.strokeStyle = MARK[m.kind];
+    g.beginPath(); g.arc(q.x, q.y, r, 0, Math.PI * 2); g.stroke();
+    if (m.kind === 'jump' || m.kind === 'land') { g.beginPath(); g.moveTo(q.x - r, q.y); g.lineTo(q.x + r, q.y); g.moveTo(q.x, q.y - r); g.lineTo(q.x, q.y + r); g.stroke(); }
+  }
+  // where it ends
+  const last = path.pts[path.pts.length - 1];
+  const e = ptAt(last);
+  const endColor = path.end === 'holed' ? '#ffd400' : path.end === 'rest' ? '#a4ff3d' : path.end === 'timeout' ? '#ff9f43' : '#ff4b4b';
+  g.strokeStyle = endColor; g.lineWidth = Math.max(2, 0.12 * sc); g.setLineDash([0.3 * sc, 0.25 * sc]);
+  g.beginPath(); g.arc(e.x, e.y, 0.9 * sc, 0, Math.PI * 2); g.stroke();
+  g.setLineDash([]);
+  if (path.end === 'water' || path.end === 'oob') {
+    const r = 0.5 * sc;
+    g.beginPath(); g.moveTo(e.x - r, e.y - r); g.lineTo(e.x + r, e.y + r); g.moveTo(e.x + r, e.y - r); g.lineTo(e.x - r, e.y + r); g.stroke();
+  }
+  const tag = path.end === 'holed' ? 'IN!' : path.end === 'rest' ? `${round1(path.toCup)} u to cup` : path.end === 'water' ? 'SPLASH' : path.end === 'oob' ? 'RESET' : 'STILL ROLLING';
+  g.font = `700 ${Math.max(10, Math.min(15, sc * 0.5))}px Chakra Petch, sans-serif`;
+  g.textAlign = 'center';
+  const tw = g.measureText(tag).width;
+  g.fillStyle = 'rgba(0,0,0,0.6)';
+  g.fillRect(e.x - tw / 2 - 4, e.y - 1.0 * sc - 18, tw + 8, 14);
+  g.fillStyle = endColor;
+  g.fillText(tag, e.x, e.y - 1.0 * sc - 7);
+  // the ghost ball, its aim, and the playhead running the line
+  drawBall(g, cam, W, H, s.x, s.y, 0, color, { ghost: true, label: 'SWING' });
+  drawAim(g, cam, W, H, s.x, s.y, (s.angleDeg * Math.PI) / 180, s.power, color);
+  const f = swingPlay / DT;
+  const i = Math.min(path.pts.length - 1, Math.floor(f));
+  const a = path.pts[i], bpt = path.pts[Math.min(path.pts.length - 1, i + 1)];
+  const k = bpt.tele ? 0 : f - i;
+  drawBall(g, cam, W, H, a.x + (bpt.x - a.x) * k, a.y + (bpt.y - a.y) * k, a.lift + (bpt.lift - a.lift) * k, color, { me: true });
+  g.restore();
+  void h;
+}
+
+function renderSwingProps(el: HTMLElement) {
+  const h = hole();
+  const s = swing && swing.holeIdx === cur ? swing : null;
+  const movers = !!geomOf(h).movers.length;
+  let html = `<h3>SWING PREVIEW</h3>
+    <div class="tiny">Click the map to drop a ghost ball. Drag from it to aim: the arrow points the shot and its length is the power. Shift-drag (or drag the ball) moves it. ←/→ turn 1° (Shift 0.1°) · ↑/↓ power 2% (Shift 0.5%).</div>`;
+  if (!s) { el.innerHTML = html + `<div class="row wrap" style="margin-top:8px"><button class="btn small" id="p-sw-tee">Ball on the tee</button></div>`; $('p-sw-tee').onclick = () => { placeSwing(h.tee.x, h.tee.y); renderProps(); }; return; }
+  html += `<div class="grid2">${field('Ball X', numIn('p-sw-x', s.x))}${field('Ball Y', numIn('p-sw-y', s.y))}</div>
+    ${field('Angle (° · 0 = right, 90 = down)', `<input type="range" id="p-sw-angle" min="0" max="359.9" step="0.1" value="${s.angleDeg}" />${numIn('p-sw-angle-n', s.angleDeg, 0.1, 0, 359.9)}`)}
+    ${field('Power (%)', `<input type="range" id="p-sw-power" min="0" max="100" step="0.5" value="${round1(s.power * 100)}" />${numIn('p-sw-power-n', round1(s.power * 100), 0.5, 0, 100)}<div class="tiny" id="p-sw-speed">${round1(powerToSpeed(s.power))} u/s off the club</div>`)}`;
+  if (movers) html += field('Swing at (s after the hole starts)', numIn('p-sw-t0', s.t0, 0.1, 0, 120)) + '<div class="tiny">This hole has moving parts: the windmill / pendulum / slider / laser is drawn where it is at the playhead, so scrub this to time the shot.</div>';
+  html += `<div class="row wrap" style="margin-top:8px">
+      <button class="btn small" id="p-sw-cup">Aim at cup</button>
+      <button class="btn small" id="p-sw-tee">Ball on the tee</button>
+      <button class="btn small" id="p-sw-next" title="Move the ball to where this shot stops">Next shot from there</button>
+      <button class="btn small danger" id="p-sw-clear">Clear (Del)</button>
+    </div>
+    <h3>Result</h3>
+    <div class="tiny" id="p-sw-result" style="white-space:pre-line">${swingPath ? esc(swingPath.summary) : '…'}</div>
+    <div class="tiny" style="margin-top:6px">Gold = rolling · cyan dashes = in the air · pips every ½ s · rings mark wall hits (bigger = harder), bumpers, jumps and landings. The path updates live while you move things with any tool.</div>`;
+  el.innerHTML = html;
+  const num = (id: string, fn: (v: number) => void) => { const i = $(id) as HTMLInputElement; i.onchange = () => { const v = Number(i.value); if (Number.isFinite(v)) { fn(v); renderProps(); } }; };
+  num('p-sw-x', v => { s.x = v; });
+  num('p-sw-y', v => { s.y = v; });
+  num('p-sw-angle-n', v => { s.angleDeg = round1(wrapDeg(v)); });
+  num('p-sw-power-n', v => { s.power = clamp01(v / 100); });
+  if (movers) num('p-sw-t0', v => { s.t0 = Math.max(0, v); swingPlay = 0; });
+  const ang = $('p-sw-angle') as HTMLInputElement, pow = $('p-sw-power') as HTMLInputElement;
+  ang.oninput = () => { s.angleDeg = round1(Number(ang.value)); syncSwingPanel(); };
+  pow.oninput = () => { s.power = clamp01(Number(pow.value) / 100); syncSwingPanel(); };
+  $('p-sw-cup').onclick = () => { s.angleDeg = round1(wrapDeg((Math.atan2(h.cup.y - s.y, h.cup.x - s.x) * 180) / Math.PI)); renderProps(); };
+  $('p-sw-tee').onclick = () => { s.x = h.tee.x; s.y = h.tee.y; renderProps(); };
+  $('p-sw-next').onclick = () => {
+    if (!swingPath || swingPath.end !== 'rest') { toast(swingPath?.end === 'holed' ? 'That one is in the cup already' : 'The ball does not come to rest on this shot', true); return; }
+    const last = swingPath.pts[swingPath.pts.length - 1];
+    s.x = round2(last.x); s.y = round2(last.y);
+    s.angleDeg = round1(wrapDeg((Math.atan2(h.cup.y - s.y, h.cup.x - s.x) * 180) / Math.PI));
+    if (movers) s.t0 = round1(s.t0 + swingPath.secs + 1);
+    renderProps();
+  };
+  $('p-sw-clear').onclick = clearSwing;
+}
+/** Push the swing's numbers into the panel without rebuilding it (mid-drag, arrow keys). */
+function syncSwingPanel() {
+  const s = swing;
+  if (!s || tool !== 'swing') return;
+  const set = (id: string, v: number) => { const i = document.getElementById(id) as HTMLInputElement | null; if (i && document.activeElement !== i) i.value = String(v); };
+  set('p-sw-x', s.x); set('p-sw-y', s.y);
+  set('p-sw-angle', s.angleDeg); set('p-sw-angle-n', s.angleDeg);
+  set('p-sw-power', round1(s.power * 100)); set('p-sw-power-n', round1(s.power * 100));
+  const sp = document.getElementById('p-sw-speed');
+  if (sp) sp.textContent = `${round1(powerToSpeed(s.power))} u/s off the club`;
+}
+
+// ---------------------------------------------------------------------------
 // Frame
 // ---------------------------------------------------------------------------
 let lastT = performance.now();
@@ -929,9 +1210,14 @@ function frame(now: number) {
   invalidateGeom(h);
   const theme = THEMES[h.theme ?? 'park'] ?? THEMES.park;
   const selObj = selectedObject();
-  drawHole(g, h, cam, W, H, { t: animT, theme, editor: true, selected: selObj });
+  // a swing preview owns the clock: movers are drawn where they are at the
+  // playhead, so a windmill reads true against the ball running its path
+  if (swing && swing.holeIdx !== cur) clearSwing();
+  updateSwing(h, dt);
+  drawHole(g, h, cam, W, H, { t: swing ? swing.t0 + swingPlay : animT, theme, editor: true, selected: selObj });
 
   // editor overlays
+  drawSwing(g, h);
   drawSelection(g, h);
   if (drag?.mode === 'create') {
     const x = Math.min(drag.x0, drag.x1), y = Math.min(drag.y0, drag.y1);

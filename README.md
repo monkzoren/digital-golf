@@ -84,7 +84,11 @@ TypeScript three.js game with a built-in course editor.
 - **Course editor.** Draw floors, walls, movers, surfaces and hazards on a
   grid, tweak every parameter in a properties panel, undo/redo, duplicate,
   import/export JSON, **test-play on the real 3D stage with the exact
-  physics the server runs**, save drafts, publish to everyone. Built-in courses can be duplicated as a
+  physics the server runs**, save drafts, publish to everyone. The *Swing
+  preview* tool drops a ghost ball, takes an angle and a power (drag, type or
+  arrow keys) and draws the whole simulated path — bounces, flights, where it
+  stops or drops — live while you move walls and bumpers, with movers drawn
+  where they are along the shot. Built-in courses can be duplicated as a
   starting point. Published courses appear under *Community* when creating a
   room, sorted by plays.
 - **The tennis presentation, one to one.** Menu → SELECT A GOLFER (live

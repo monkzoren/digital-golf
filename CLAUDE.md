@@ -67,7 +67,11 @@ README.md for architecture and run instructions. Key facts:
   wipe), room, game loop, HUD. `aim.ts` is the drag-to-putt reading (screen-space
   pull through a camera basis frozen at pointer-down) shared with the
   editor's test mode, which hides `#editor` and plays on the game stage via
-  `render3d.drawScene`. There is deliberately no shot-path preview. Shots are
+  `render3d.drawScene`. There is deliberately no shot-path preview IN THE
+  GAME; the editor's `swing` tool (`simulateSwing`/`drawSwing` in editor.ts)
+  is the map maker's one — it steps the shared physics for a placed ball,
+  angle, power and swing time and draws the path on the 2D canvas, with
+  `drawHole` clocked to the preview's playhead so movers line up. Shots are
   predicted client-side (`predicted` in main.ts steps the shared physics from
   release until the server row with that `shotSeq` arrives) so the swing and
   launch are instant on timing holes. A holed-out player spectates
