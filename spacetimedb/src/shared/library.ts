@@ -69,7 +69,7 @@ export const BANK: Course = {
     },
     {
       name: 'Pinball Bank',
-      par: 3,
+      par: 2,
       tip: 'A bumper field, then a pair of posts, then a sand collar. Banks go around all of it.',
       tee: { x: 4, y: 12 },
       cup: { x: 76, y: 12 },
@@ -279,7 +279,7 @@ export const RIDGE: Course = {
     },
     {
       name: 'Tilted Green',
-      par: 3,
+      par: 4,
       tip: 'The whole green leans toward the water. Aim up the slope, twice.',
       tee: { x: 4, y: 5 },
       cup: { x: 72, y: 3 },
@@ -320,7 +320,7 @@ export const RIDGE: Course = {
     },
     {
       name: 'Trampoline Park',
-      par: 3,
+      par: 2,
       tip: 'Jump, bounce, bounce, bounce. Each pad throws you higher than the last.',
       tee: { x: 4, y: 10 },
       cup: { x: 74, y: 10 },
@@ -372,7 +372,7 @@ export const MACHINE: Course = {
     },
     {
       name: 'Turntable Turns',
-      par: 5,
+      par: 4,
       tip: 'Two discs at two corners hand you round. The first turns clockwise, the second the other way.',
       tee: { x: 4, y: 4 },
       cup: { x: 68, y: 44 },
@@ -382,7 +382,7 @@ export const MACHINE: Course = {
     },
     {
       name: 'Wind Tunnel',
-      par: 3,
+      par: 5,
       tip: 'Fan, water, headwind, fan, water. Time the crossings.',
       tee: { x: 4, y: 6 },
       cup: { x: 86, y: 6 },
@@ -443,7 +443,7 @@ export const MACHINE: Course = {
     },
     {
       name: 'The Machine',
-      par: 3,
+      par: 2,
       tip: 'You start loaded. Cannon over the lava, trampoline, past the repulsor, across the ice, through the belt. In theory.',
       tee: { x: 12, y: 20 },
       cup: { x: 94, y: 8 },
@@ -464,7 +464,7 @@ export const FROST: Course = {
   holes: [
     {
       name: 'Ice Bank',
-      par: 3,
+      par: 4,
       tip: 'All ice, a post field, and a cup in an alcove that only opens off the far wall.',
       tee: { x: 4, y: 11 },
       cup: { x: 76, y: 3 },
@@ -514,7 +514,7 @@ export const FROST: Course = {
     },
     {
       name: 'Firewalk',
-      par: 3,
+      par: 4,
       tip: 'A long ice bridge over lava, with gaps. Stay on the bridge or start again.',
       tee: { x: 3, y: 10 },
       cup: { x: 86, y: 10 },
@@ -572,7 +572,7 @@ export const GRAND: Course = {
   holes: [
     {
       name: 'Opening Drive',
-      par: 3,
+      par: 2,
       tip: 'A long dogleg with a mirror in the elbow and a sand pit on the run-in. Find the carom.',
       tee: { x: 4, y: 5 },
       cup: { x: 70, y: 36 },
@@ -614,7 +614,7 @@ export const GRAND: Course = {
     },
     {
       name: 'Belt and Braces',
-      par: 4,
+      par: 2,
       tip: 'Two belts drag you toward the lava; a rubber wall throws you back. Somewhere in between is the line.',
       tee: { x: 4, y: 6 },
       cup: { x: 86, y: 16 },
@@ -625,7 +625,7 @@ export const GRAND: Course = {
     },
     {
       name: 'Laser Maze',
-      par: 4,
+      par: 5,
       tip: 'Gates at every turn, each on its own clock, down three corridors.',
       tee: { x: 4, y: 4 },
       cup: { x: 28, y: 25 },
@@ -657,7 +657,7 @@ export const GRAND: Course = {
     },
     {
       name: 'The Gauntlet',
-      par: 4,
+      par: 3,
       tip: 'Every trick in the book, and a hundred units of it. Par is a win; the ace is a legend.',
       tee: { x: 4, y: 14 },
       cup: { x: 96, y: 6 },
