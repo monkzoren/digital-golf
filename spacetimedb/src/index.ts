@@ -127,6 +127,8 @@ const Player = table(
     characterId: t.u8().default(0),
     // NOTE: appended column — lobby ready-up (cleared on join / start / play again)
     ready: t.bool().default(false),
+    /** set when the host threw them out (cleared on the next join) */
+    kicked: t.bool().default(false),
   }
 );
 
@@ -497,6 +499,7 @@ export const onConnect = spacetimedb.clientConnected(ctx => {
       lastChat: 0n,
       characterId: ctx.random.integerInRange(0, 5),
       ready: false,
+      kicked: false,
     });
     return;
   }
@@ -580,7 +583,7 @@ export const create_lobby = spacetimedb.reducer(
     });
     const fresh = ctx.db.player.identity.find(ctx.sender)!;
     ctx.db.player.identity.update({
-      ...fresh, lobbyId: lobby.id, seat: 0, total: 0, holeScores: [], color: freeColor(ctx, lobby.id, fresh.color), ready: false,
+      ...fresh, lobbyId: lobby.id, seat: 0, total: 0, holeScores: [], color: freeColor(ctx, lobby.id, fresh.color), ready: false, kicked: false,
     });
   }
 );
@@ -598,7 +601,7 @@ export const join_lobby = spacetimedb.reducer({ code: t.string() }, (ctx, { code
   const fresh = ctx.db.player.identity.find(ctx.sender)!;
   const seat = members.length ? members[members.length - 1].seat + 1 : 0;
   let row: PlayerRow = {
-    ...fresh, lobbyId: lobby.id, seat, total: 0, holeScores: [], color: freeColor(ctx, lobby.id, fresh.color), ready: false,
+    ...fresh, lobbyId: lobby.id, seat, total: 0, holeScores: [], color: freeColor(ctx, lobby.id, fresh.color), ready: false, kicked: false,
   };
   if (lobby.status === L_RUNNING) {
     // Late joiner mid-round: par + 1 for every hole already played keeps the
@@ -622,6 +625,19 @@ export const join_lobby = spacetimedb.reducer({ code: t.string() }, (ctx, { code
 
 export const leave_lobby = spacetimedb.reducer(ctx => {
   leaveCurrentLobby(ctx, getPlayer(ctx));
+});
+
+/** The host throws someone out — in the lobby or mid-round (an AFK seat
+ *  otherwise holds every hole open until the clock runs out). */
+export const kick_player = spacetimedb.reducer({ target: t.identity() }, (ctx, { target }) => {
+  const p = getPlayer(ctx);
+  const lobby = ctx.db.lobby.id.find(p.lobbyId);
+  if (!lobby) throw new SenderError('Not in a room');
+  if (!lobby.hostId.isEqual(ctx.sender)) throw new SenderError('Only the host can remove players');
+  if (target.isEqual(ctx.sender)) throw new SenderError('You cannot remove yourself — leave the room instead');
+  const victim = ctx.db.player.identity.find(target);
+  if (!victim || victim.lobbyId !== lobby.id) throw new SenderError('They are not in this room');
+  leaveCurrentLobby(ctx, { ...victim, kicked: true });
 });
 
 export const set_settings = spacetimedb.reducer(

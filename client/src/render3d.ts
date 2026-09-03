@@ -61,9 +61,11 @@ export interface GolfScene {
    *  `lockCam`: a mouse drag is in progress, so the camera must not swing
    *  under the pointer (it would change the aim it is being read from). */
   aim: { angle: number; power: number; lockCam?: boolean } | null;
-  /** 'play' behind the local ball · 'overview' whole hole · 'cup' slow orbit */
-  cam: 'play' | 'overview' | 'cup';
-  /** the local player's id (camera follows their ball) */
+  /** 'play' behind the local ball · 'overview' whole hole · 'cup' slow orbit
+   *  · 'preview' a slow, wide pan around the hole (the lobby backdrop) */
+  cam: 'play' | 'overview' | 'cup' | 'preview';
+  /** whose ball the camera follows: the local player, or the one they are
+   *  spectating after holing out (null = whoever has `me`) */
   meId: string | null;
 }
 
@@ -2135,7 +2137,20 @@ let spinners: { group: THREE.Group; speed: number }[] = [];
 // conveyor end rollers: faceted drums turning at the belt's speed
 let rollers: { mesh: THREE.Mesh; rate: number }[] = [];
 let fanBlades: THREE.Group[] = [];
-let magnetMats: THREE.MeshBasicMaterial[] = [];
+/** A magnet zone drawn as a black hole (or a white hole when it repels):
+ *  a dark gravity well sunk into the felt, a spinning accretion disc, an
+ *  event-horizon ring, and dust spiralling in (or streaming out). */
+interface BlackHole {
+  group: THREE.Group;
+  arms: THREE.Mesh;
+  ring: THREE.Mesh;
+  ringMat: THREE.MeshBasicMaterial;
+  halo: THREE.Sprite;
+  pts: THREE.Points;
+  r: Float32Array; a: Float32Array; w: Float32Array; h: Float32Array;
+  rmin: number; rmax: number; repel: boolean; spin: number;
+}
+let blackHoles: BlackHole[] = [];
 let cannons: { zone: Zone; group: THREE.Group; restAngle: number }[] = [];
 let flagMesh: THREE.Mesh | null = null;
 const camPos = new THREE.Vector3();
@@ -2565,15 +2580,7 @@ function makeZoneTexture(z: Zone): THREE.CanvasTexture {
       for (let k = 0.25; k <= 1; k += 0.25) { g.beginPath(); g.ellipse(W / 2, H / 2, (W / 2) * k, (H / 2) * k, 0, 0, Math.PI * 2); g.stroke(); }
       break;
     }
-    case 'magnet': {
-      const repel = zonePower(z) < 0;
-      g.fillStyle = '#1a1424'; g.fillRect(0, 0, W, H);
-      g.strokeStyle = repel ? '#ff8a3d' : '#ff5fb8'; g.lineWidth = 3;
-      const rmax = Math.min(W, H) / 2;
-      for (let k = 0.2; k <= 1; k += 0.2) { g.beginPath(); g.arc(W / 2, H / 2, rmax * k, 0, Math.PI * 2); g.stroke(); }
-      g.beginPath(); g.arc(W / 2, H / 2, 6, 0, Math.PI * 2); g.fillStyle = repel ? '#ff8a3d' : '#ff5fb8'; g.fill();
-      break;
-    }
+    case 'magnet': break; // never a flat texture: see blackHoleMesh
     case 'cannon':
       g.fillStyle = '#3a3f4a'; g.fillRect(0, 0, W, H);
       g.strokeStyle = '#ffd60a'; g.lineWidth = 3; g.strokeRect(3, 3, W - 6, H - 6);
@@ -2586,6 +2593,114 @@ function makeZoneTexture(z: Zone): THREE.CanvasTexture {
   tex.anisotropy = 4;
   if (z.kind === 'water' || z.kind === 'boost' || z.kind === 'conveyor' || z.kind === 'fan') { tex.wrapS = tex.wrapT = THREE.RepeatWrapping; }
   return tex;
+}
+
+/** A radial canvas: the gradient runs from the centre out; `paint` adds detail. */
+function radialCanvas(size: number, stops: [number, string][], paint?: (g: CanvasRenderingContext2D, s: number) => void): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const g = c.getContext('2d')!;
+  const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  for (const [k, col] of stops) grad.addColorStop(k, col);
+  g.fillStyle = grad;
+  g.fillRect(0, 0, size, size);
+  paint?.(g, size);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
+
+/** A magnet zone as a black hole: the felt falls away into a dark well, an
+ *  accretion disc spins over it, a hot ring marks the horizon and dust
+ *  streams in. A repelling magnet is the same thing in reverse — a white
+ *  hole in orange, everything flung outward. The zone rect stays the pull
+ *  area (the well's shadow fills it); the disc fills the shorter side. */
+function blackHoleMesh(z: Zone, cx: number, cz: number, i: number): THREE.Group {
+  const repel = zonePower(z) < 0;
+  const d = Math.min(z.w, z.h);
+  const group = new THREE.Group();
+  group.position.set(cx, FLOOR_Y, cz);
+  const tint = repel ? { r: 1, g: 0.55, b: 0.2 } : { r: 1, g: 0.35, b: 0.75 };
+  const rgba = (a: number, k = 1) => `rgba(${Math.round(255 * Math.min(1, tint.r * k))},${Math.round(255 * Math.min(1, tint.g * k))},${Math.round(255 * Math.min(1, tint.b * k))},${a})`;
+  // 1. the well: a dark stain over the whole rect that deepens to black
+  const wellTex = radialCanvas(256, repel
+    ? [[0, 'rgba(255,240,225,0.95)'], [0.18, 'rgba(255,160,90,0.55)'], [0.45, 'rgba(60,20,10,0.55)'], [1, 'rgba(0,0,0,0)']]
+    : [[0, 'rgba(0,0,0,1)'], [0.22, 'rgba(0,0,0,0.98)'], [0.4, 'rgba(24,8,40,0.8)'], [0.7, 'rgba(24,8,40,0.4)'], [1, 'rgba(0,0,0,0)']]);
+  const well = new THREE.Mesh(new THREE.PlaneGeometry(z.w, z.h), new THREE.MeshBasicMaterial({ map: wellTex, transparent: true, depthWrite: false }));
+  well.rotation.x = -Math.PI / 2;
+  well.position.y = 0.012 + i * 0.001;
+  group.add(well);
+  // 2. the accretion disc: three spiral arms, brightest near the middle,
+  //    additive and over-bright so the bloom catches them
+  const armsTex = radialCanvas(512, [[0, 'rgba(0,0,0,0)'], [1, 'rgba(0,0,0,0)']], (g, s) => {
+    const c = s / 2;
+    g.lineCap = 'round';
+    for (let arm = 0; arm < 3; arm++) {
+      const a0 = (arm / 3) * Math.PI * 2;
+      for (let seg = 0; seg < 60; seg++) {
+        const k0 = seg / 60, k1 = (seg + 1) / 60;
+        const rr = (k: number) => 0.12 * c + k * c * 0.86;
+        const th = (k: number) => a0 + k * Math.PI * 2.4;
+        g.strokeStyle = rgba((1 - k0) * 0.9 + 0.08, 1);
+        g.lineWidth = 3 + (1 - k0) * 16;
+        g.beginPath();
+        g.moveTo(c + Math.cos(th(k0)) * rr(k0), c + Math.sin(th(k0)) * rr(k0));
+        g.lineTo(c + Math.cos(th(k1)) * rr(k1), c + Math.sin(th(k1)) * rr(k1));
+        g.stroke();
+      }
+    }
+    // a soft glow around the horizon so the arms read as one disc
+    const halo = g.createRadialGradient(c, c, c * 0.1, c, c, c * 0.55);
+    halo.addColorStop(0, rgba(0.55));
+    halo.addColorStop(1, rgba(0));
+    g.fillStyle = halo;
+    g.fillRect(0, 0, s, s);
+  });
+  const glow = repel ? 1.6 : 1.9;
+  const arms = new THREE.Mesh(new THREE.PlaneGeometry(d, d), new THREE.MeshBasicMaterial({
+    map: armsTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, color: new THREE.Color(glow, glow, glow),
+  }));
+  arms.rotation.x = -Math.PI / 2;
+  arms.position.y = 0.03;
+  group.add(arms);
+  // 3. the horizon: a thin hot ring that breathes
+  const ringMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(tint.r * 2.2, tint.g * 2.2, tint.b * 2.2), transparent: true, opacity: 0.9 });
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(d * 0.14, 0.035, 8, 48), ringMat);
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 0.05;
+  group.add(ring);
+  // 4. the singularity: a black bead sunk in the middle (a hot one for a
+  //    white hole) with a soft halo sprite over it
+  const core = new THREE.Mesh(new THREE.SphereGeometry(d * 0.09, 20, 14), repel
+    ? new THREE.MeshBasicMaterial({ color: new THREE.Color(2.6, 1.8, 1.2) })
+    : new THREE.MeshBasicMaterial({ color: 0x000000 }));
+  core.position.y = 0.02;
+  group.add(core);
+  const haloTex = radialCanvas(128, [[0, rgba(0.9, 1.3)], [0.35, rgba(0.35)], [1, rgba(0)]]);
+  const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: haloTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, color: new THREE.Color(glow, glow, glow) }));
+  halo.scale.set(d * 0.55, d * 0.55, 1);
+  halo.position.y = 0.12;
+  group.add(halo);
+  // 5. dust: bright motes on tightening orbits (or flung out of the core)
+  const N = Math.round(THREE.MathUtils.clamp(d * 14, 40, 110));
+  const rmin = d * 0.1, rmax = d * 0.5;
+  const r = new Float32Array(N), a = new Float32Array(N), w = new Float32Array(N), h = new Float32Array(N);
+  const pos = new Float32Array(N * 3);
+  for (let k = 0; k < N; k++) {
+    r[k] = rmin + Math.random() * (rmax - rmin);
+    a[k] = Math.random() * Math.PI * 2;
+    w[k] = 0.7 + Math.random() * 0.6;
+    h[k] = 0.05 + Math.random() * 0.35;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const pts = new THREE.Points(geo, new THREE.PointsMaterial({
+    color: new THREE.Color(tint.r * 2, tint.g * 2, tint.b * 2), size: 0.13, transparent: true, opacity: 0.95, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true,
+  }));
+  group.add(pts);
+  blackHoles.push({ group, arms, ring, ringMat, halo, pts, r, a, w, h, rmin, rmax, repel, spin: repel ? -0.9 : 1.1 });
+  return group;
 }
 
 /** A slope zone as a real wedge: a tilted felt top over wooden faces. */
@@ -2887,7 +3002,7 @@ function disposeHole() {
   spinners = [];
   rollers = [];
   fanBlades = [];
-  magnetMats = [];
+  blackHoles = [];
   cannons = [];
   flagMesh = null;
   builtGeom = null;
@@ -3002,9 +3117,10 @@ function setHole(hole: Hole) {
   (hole.zones ?? []).forEach((z, i) => {
     const cx = z.x + z.w / 2 - holeCX, cz = z.y + z.h / 2 - holeCY;
     if (z.kind === 'water') { holeGroup.add(pondMesh(z, cx, cz)); return; }
+    if (z.kind === 'magnet') { holeGroup.add(blackHoleMesh(z, cx, cz, i)); return; }
     const tex = makeZoneTexture(z);
-    const flat = z.kind === 'tele' || z.kind === 'magnet';
-    // portals and magnets are emitters (over-bright so they bloom)
+    const flat = z.kind === 'tele';
+    // portals are emitters (over-bright so they bloom)
     const glow = 1.7;
     const mat = flat
       ? new THREE.MeshBasicMaterial({ map: tex, color: new THREE.Color(glow, glow, glow), transparent: true, opacity: 0.85 })
@@ -3061,7 +3177,6 @@ function setHole(hole: Hole) {
       const rate = z.kind === 'conveyor' ? Math.max(1, zonePower(z)) * 0.06 : z.kind === 'fan' ? 0.9 : 0.6;
       boostMats.push({ mat: mat as THREE.MeshStandardMaterial, dx: Math.cos(a) * z.w, dy: Math.sin(a) * z.h, rate });
     }
-    if (z.kind === 'magnet') magnetMats.push(mat as THREE.MeshBasicMaterial);
     if (z.kind === 'fan') {
       // a propeller whirring in a hub at the centre
       const group = new THREE.Group();
@@ -3215,7 +3330,34 @@ export function drawScene(scene: GolfScene) {
     c.group.rotation.y += d * (1 - Math.exp(-10 * dt));
   }
   for (const f of fanBlades) f.rotation.y = -(now / 45) % (Math.PI * 2);
-  for (const mm of magnetMats) mm.opacity = 0.65 + 0.3 * Math.sin(now / 180);
+  for (const bh of blackHoles) {
+    // the disc turns, the horizon breathes, the dust falls in (or pours out)
+    bh.arms.rotation.z += bh.spin * dt;
+    const breath = 0.5 + 0.5 * Math.sin(now / 260);
+    bh.ringMat.opacity = 0.55 + 0.45 * breath;
+    const rs = 1 + 0.08 * breath;
+    bh.ring.scale.set(rs, rs, 1);
+    const hs = 1 + 0.15 * Math.sin(now / 410);
+    bh.halo.scale.set(bh.rmax * 1.1 * hs, bh.rmax * 1.1 * hs, 1);
+    const pos = bh.pts.geometry.attributes.position as THREE.BufferAttribute;
+    const arr = pos.array as Float32Array;
+    const span = bh.rmax - bh.rmin;
+    for (let k = 0; k < bh.r.length; k++) {
+      // Keplerian-ish: faster and tighter the closer to the middle
+      const rr = bh.r[k];
+      const ang = (bh.w[k] * 2.2) / Math.max(0.25, rr / bh.rmax);
+      bh.a[k] += (bh.repel ? -ang : ang) * dt;
+      const radial = span * (0.18 + 0.5 * (1 - (rr - bh.rmin) / span)) * bh.w[k];
+      bh.r[k] += (bh.repel ? radial : -radial) * dt;
+      if (bh.r[k] < bh.rmin) { bh.r[k] = bh.rmax; bh.a[k] = Math.random() * Math.PI * 2; }
+      if (bh.r[k] > bh.rmax) { bh.r[k] = bh.rmin; bh.a[k] = Math.random() * Math.PI * 2; }
+      const lift = bh.h[k] * (bh.repel ? (bh.r[k] - bh.rmin) / span : 1 - (bh.r[k] - bh.rmin) / span);
+      arr[k * 3] = Math.cos(bh.a[k]) * bh.r[k];
+      arr[k * 3 + 1] = 0.06 + lift;
+      arr[k * 3 + 2] = Math.sin(bh.a[k]) * bh.r[k];
+    }
+    pos.needsUpdate = true;
+  }
   for (const w of waterMats) if (w.normalMap) {
     // two drifts at different rates so the ripple never visibly loops
     w.normalMap.offset.x = (now / 7000) % 1;
@@ -3282,7 +3424,10 @@ export function drawScene(scene: GolfScene) {
   // --- golfers ---------------------------------------------------------------
   // Only the nearest few players get a full 3D golfer (a 32-player tee would
   // be a wall of bodies); everyone else is a ball with a name tag.
-  const meP = scene.players.find(p => p.me);
+  // the camera follows scene.meId (the local player, or whoever they are
+  // spectating once they have holed out); rigs go to the players near them
+  const followId = scene.meId ?? scene.players.find(p => p.me)?.id ?? null;
+  const meP = scene.players.find(p => p.id === followId) ?? scene.players.find(p => p.me);
   const rigged = new Set<string>();
   if (meP) {
     const byDist = [...scene.players].sort((a, b) => (a.me ? -1 : b.me ? 1 : 0) || (Math.hypot(a.x - meP.x, a.y - meP.y) - Math.hypot(b.x - meP.x, b.y - meP.y)));
@@ -3292,7 +3437,7 @@ export function drawScene(scene: GolfScene) {
   let myBall: THREE.Vector3 | null = null;
   let myPlayer: GolfPlayer | null = null;
   for (const p of scene.players) {
-    if (p.me) { const bp = toThree(p.x, p.y, 0); bp.y += BALL_R; myBall = bp; myPlayer = p; }
+    if (p.id === followId) { const bp = toThree(p.x, p.y, 0); bp.y += BALL_R; myBall = bp; myPlayer = p; }
     if (!rigged.has(p.id)) continue;
     let slot = rigByPlayer.get(p.id);
     if (slot === undefined) {
@@ -3454,6 +3599,13 @@ export function drawScene(scene: GolfScene) {
     wantPos.set(c.x + Math.cos(ang) * 16, c.y + 7.5, c.z + Math.sin(ang) * 16);
     wantLook.set(c.x, c.y + 0.5, c.z);
     rate = 2;
+  } else if (scene.cam === 'preview' && b) {
+    // a lazy circuit of the whole hole, low enough to feel like a fly-by
+    const R = Math.max(b.w, b.h) * 0.6 + 14;
+    const ang = now / 16000;
+    wantPos.set(Math.cos(ang) * R, R * 0.5 + 4, Math.sin(ang) * R);
+    wantLook.set(0, FLOOR_Y + 0.5, 0);
+    rate = 1.6;
   } else if (b) {
     const H = Math.max(b.w, b.h * 1.4) * 0.72 + 14;
     wantPos.set(0, H, H * 0.62 + 4);

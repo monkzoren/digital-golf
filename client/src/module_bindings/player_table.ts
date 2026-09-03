@@ -43,4 +43,5 @@ export default __t.row({
   lastChat: __t.u64().name("last_chat"),
   characterId: __t.u8().name("character_id"),
   ready: __t.bool(),
+  kicked: __t.bool(),
 });

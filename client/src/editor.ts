@@ -814,12 +814,14 @@ export const editorTestAimable = () => open && testing && testResting();
 /** A second finger turned the pull into a look — no shot. */
 export function editorCancelTestAim() { testAim.active = false; }
 function testDown(e: PointerEvent) {
+  if (e.button === 2 && testAim.active) { testAim.active = false; return; } // right button: never mind
   if (!open || !testing || e.button !== 0 || testAim.active || !testResting()) return;
   gameCanvas().setPointerCapture(e.pointerId);
   testAim = { active: true, angle: testAim.angle, shown: testAim.angle, power: 0, x0: e.clientX, y0: e.clientY, basis: cameraGroundBasis() };
 }
 function testMove(e: PointerEvent) {
   if (!testAim.active) return;
+  if (e.buttons & 2) { testAim.active = false; return; } // right button mid-pull: cancel
   const r = dragAim(e.clientX - testAim.x0, e.clientY - testAim.y0, testAim.basis, canvasCssSize().h, testAim.angle);
   testAim.angle = r.angle;
   testAim.power = r.power;

@@ -1253,6 +1253,20 @@
     #match-menu .row { width: 100%; }
     #match-menu .row > button { width: 100%; }
     #mm-confirm { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+    /* Pause-menu room list: who is in, and the host's ✕ to remove a seat */
+    #mm-room { width: 100%; margin: 6px 0 2px; }
+    #mm-players { display: flex; flex-direction: column; gap: 4px; max-height: 180px; overflow-y: auto; scrollbar-width: thin; }
+    #mm-players .player-chip { flex-direction: row; align-items: center; justify-content: space-between; padding: 5px 10px; font-size: 12px; animation: none; }
+    #mm-players .player-chip .chip-name { display: flex; align-items: center; }
+    .chip-kick {
+      margin-left: auto; padding: 0 8px; min-width: 0; height: 22px; line-height: 22px;
+      font-size: 11px; font-weight: 700; letter-spacing: 0;
+      background: rgba(255, 70, 70, 0.12); border: 1px solid rgba(255, 70, 70, 0.45); border-radius: 999px;
+      color: #ff9a9a; box-shadow: none; transform: none; cursor: pointer;
+    }
+    .chip-kick:hover { background: rgba(255, 70, 70, 0.3); color: #fff; border-color: rgba(255, 70, 70, 0.8); }
+    #waiting-players .player-chip { position: relative; }
+    #waiting-players .player-chip .chip-kick { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); }
     .gfx-foot.warn { color: var(--red); line-height: 1.5; margin: 10px 0 2px; }
     /* System row: quiet, wide utility buttons — Settings / Fullscreen */
     .menu-utility { display: flex; gap: 10px; }
@@ -1480,6 +1494,14 @@
     #waiting > :first-child, #gameover > :first-child { margin-top: auto; }
     #waiting > :last-child, #gameover > :last-child { margin-bottom: auto; }
     #waiting { gap: 10px; }
+    /* The lobby sits over a slow fly-by of the round's holes: a lighter veil
+       and a stronger blur than the other overlays, so the course shows
+       through without competing with the cards. */
+    #waiting {
+      background:
+        radial-gradient(120% 90% at 50% 0%, rgba(23, 32, 105, 0.5), rgba(5, 7, 28, 0.6) 60%, rgba(3, 4, 15, 0.72));
+      backdrop-filter: blur(16px) saturate(1.15);
+    }
     /* the waiting screen packs a lot — a slimmer headline buys a panel */
     #waiting h1 { font-size: 36px; }
     #waiting-body {
@@ -3671,6 +3693,7 @@
         <span class="pmeter"><span class="pmeter-fill" id="hud-time-fill"></span></span>
       </div>
       <div id="board"></div>
+      <div id="spectate-chip" class="hidden"></div>
     </div>
     <div id="banner"></div>
     <div id="countdown"></div>
@@ -3707,6 +3730,7 @@
         <div class="gfx-foot">THE ROUND KEEPS GOING — THIS ONLY COVERS YOUR SCREEN</div>
         <div class="row"><button id="mm-resume" class="primary">Resume ▶</button></div>
         <div class="row"><button id="mm-scores">📋 Scorecard</button><button id="mm-settings">⚙ Settings</button></div>
+        <div id="mm-room"><div id="mm-players"></div><div class="gfx-foot" id="mm-room-foot"></div></div>
         <div class="row"><button id="mm-leave" class="alt">🏳 Leave Round</button></div>
       </div>
     </div>

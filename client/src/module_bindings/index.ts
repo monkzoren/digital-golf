@@ -37,6 +37,7 @@ import {
 import CreateLobbyReducer from "./create_lobby_reducer";
 import DeleteCourseReducer from "./delete_course_reducer";
 import JoinLobbyReducer from "./join_lobby_reducer";
+import KickPlayerReducer from "./kick_player_reducer";
 import LeaveLobbyReducer from "./leave_lobby_reducer";
 import PlayAgainReducer from "./play_again_reducer";
 import PublishCourseReducer from "./publish_course_reducer";
@@ -153,6 +154,7 @@ const reducersSchema = __reducers(
   __reducerSchema("create_lobby", CreateLobbyReducer),
   __reducerSchema("delete_course", DeleteCourseReducer),
   __reducerSchema("join_lobby", JoinLobbyReducer),
+  __reducerSchema("kick_player", KickPlayerReducer),
   __reducerSchema("leave_lobby", LeaveLobbyReducer),
   __reducerSchema("play_again", PlayAgainReducer),
   __reducerSchema("publish_course", PublishCourseReducer),

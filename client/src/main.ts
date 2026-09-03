@@ -13,7 +13,7 @@ import {
   PH_FINAL, PH_INTRO, PH_PLAY, PH_RESULTS, SPACETIMEDB_URI,
 } from './config';
 import {
-  type AimBasis, type GolfPlayer, type GolfScene, addShake, ballScreenPos, burstAt, cameraGroundBasis,
+  type AimBasis, type GolfPlayer, type GolfScene, addShake, ballScreenPos, burstAt, cameraGroundBasis, headScreenPos,
   canvasCssSize, drawScene, initCharacterPreviews, initRenderer, resetScene,
 } from './render3d';
 import { KB_TURN_RATE, KB_TURN_RATE_FINE, dragAim, smoothAngle } from './aim';
@@ -125,6 +125,12 @@ function scheduleReconnect() {
 function connect() {
   const gen = ++connectGen;
   const token = store.get('dg_token') ?? undefined;
+  // a fresh connection has no subscriptions: forget the dead handles, or
+  // subscribeCourse would think the holes are still on their way and the
+  // next hole would say LOADING for the rest of the round
+  holeSubs.clear();
+  gameHoleObj = null; gameHoleKey = '';
+  courseDetailSig = '';
   conn = DbConnection.builder()
     .withUri(SPACETIMEDB_URI)
     .withDatabaseName(DATABASE_NAME)
@@ -635,6 +641,7 @@ function renderRoom() {
     chip.className = 'player-chip' + (q.identity.isEqual(lobby.hostId) ? ' host' : '') + (isMe(q.identity) ? ' me' : '');
     chip.classList.toggle('ready', q.ready);
     chip.innerHTML = `<span class="chip-name">${esc(q.name)}${q.online ? '' : ' 💤'}${q.ready ? ' <span class="ready-tag">✓ READY</span>' : ''}</span><span class="chip-char"><span class="dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${COLORS[q.color]};margin-right:5px"></span>${charOf(q).name}</span>`;
+    if (host && !isMe(q.identity)) chip.appendChild(kickButton(q));
     wp.appendChild(chip);
   }
   for (let i = players.length; i < Math.min(MAX_PLAYERS, players.length + 2); i++) {
@@ -651,6 +658,32 @@ function renderRoom() {
   $('ready-btn').classList.toggle('primary', !p.ready);
   $('ready-btn').classList.toggle('alt', p.ready);
   renderChatFeed('lobby-chat-feed', lobby.id, 60);
+}
+/** The host's ✕ on another player's chip: one click, they are out (they
+ *  can rejoin with the code — this is for the AFK seat holding a hole open). */
+function kickButton(q: Player): HTMLButtonElement {
+  const b = document.createElement('button');
+  b.className = 'chip-kick';
+  b.title = `Remove ${q.name} from the room`;
+  b.textContent = '✕';
+  b.onclick = e => { e.stopPropagation(); sfx.ui(); rd().kickPlayer({ target: q.identity }); };
+  return b;
+}
+/** The pause menu's room list (players + the host's kick buttons). */
+function renderMatchMenu() {
+  const lobby = myLobby(); const p = me();
+  if (!lobby || !p) return;
+  const host = lobby.hostId.isEqual(p.identity);
+  const list = $('mm-players');
+  list.innerHTML = '';
+  for (const q of lobbyPlayers(lobby.id)) {
+    const row = document.createElement('div');
+    row.className = 'player-chip' + (q.identity.isEqual(lobby.hostId) ? ' host' : '') + (isMe(q.identity) ? ' me' : '');
+    row.innerHTML = `<span class="chip-name"><span class="dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${COLORS[q.color]};margin-right:6px"></span>${esc(q.name)}${q.online ? '' : ' 💤'}${q.holed ? ' ⛳' : ''}</span>`;
+    if (host && !isMe(q.identity)) row.appendChild(kickButton(q));
+    list.appendChild(row);
+  }
+  $('mm-room-foot').textContent = host ? 'YOU HOST THIS ROOM · ✕ REMOVES A PLAYER' : `${lobbyPlayers(lobby.id).length} IN THE ROOM`;
 }
 $('change-course-btn').onclick = () => { intent = 'change'; courseTab = 'featured'; showOverlay('select-course'); };
 $('start-btn').onclick = () => { unlockAudio(); rd().startGame({}); };
@@ -765,6 +798,7 @@ function wireRowEvents() {
   conn.db.player.onDelete(refresh);
   conn.db.player.onUpdate((_c, old, row) => {
     notePlayer(row, old);
+    if (isMe(row.identity) && row.kicked && !old.kicked) { notify('THE HOST REMOVED YOU FROM THE ROOM', true); sfx.error(); }
     if (row.lobbyId !== old.lobbyId || row.name !== old.name || row.color !== old.color || row.online !== old.online || row.characterId !== old.characterId || row.ready !== old.ready) refresh();
   });
   conn.db.chat.onInsert((_c, row) => {
@@ -809,6 +843,9 @@ function notePlayer(row: Player, old: Player) {
     d.lastEmoteSeq = row.emoteSeq;
     d.emote = EMOTES[row.emote] ?? '';
     d.emoteUntil = performance.now() + 2500;
+    // a finished player heckling from the cup is usually off screen for the
+    // ones still putting: their emote also lands as a toast
+    if (inMyRoom && row.holed && !isMe(row.identity)) notify(`${row.name} ${d.emote}`);
   }
   if (row.shotSeq !== d.lastShotSeq) {
     const already = isMe(row.identity) && d.lastShotSeq === row.shotSeq; // predicted locally
@@ -905,16 +942,32 @@ function canShoot(): boolean {
   const lobby = myLobby(); const p = me();
   return !!lobby && !!p && lobby.phase === PH_PLAY && p.resting && !p.holed && !predicted && p.strokes < lobby.maxStrokes && overlayTarget === null && $('match-menu').classList.contains('hidden');
 }
+/** Drop the pull in progress: nothing fires, the ball stays put. */
+function cancelDrag() {
+  if (!drag.active) return;
+  drag.active = false;
+  sfx.ui();
+  notify('SHOT CANCELLED');
+}
 canvas.addEventListener('pointerdown', e => {
   unlockAudio();
-  if (editorIsOpen() || !canShoot()) return;
+  if (editorIsOpen()) return;
+  // right button while pulling back: never mind
+  if (e.button === 2 && drag.active) { cancelDrag(); return; }
+  if (!canShoot()) return;
   if (e.button !== 0 || drag.active) return;
   canvas.setPointerCapture(e.pointerId);
   // press anywhere, then pull: the aim starts from wherever it was pointing
   drag = { active: true, angle: kbAim.angle, shown: kbAim.angle, power: 0, x0: e.clientX, y0: e.clientY, basis: cameraGroundBasis() };
   kbAim.active = false;
 });
-canvas.addEventListener('pointermove', e => { if (drag.active) updateDrag(e); });
+canvas.addEventListener('pointermove', e => {
+  if (!drag.active) return;
+  // a mouse already holding the left button reports a right-button press as
+  // a move with the buttons bit set, not as a second pointerdown
+  if (e.buttons & 2) { cancelDrag(); return; }
+  updateDrag(e);
+});
 canvas.addEventListener('pointerup', e => {
   if (!drag.active) return;
   updateDrag(e);
@@ -952,6 +1005,24 @@ bindFreeLook(canvas, {
 });
 /** C swaps the follow camera for the whole-hole view (cleared each hole). */
 let camOverview = false;
+/** Once holed out you ride along with someone still playing: their identity
+ *  (hex), or null when there is nobody left to watch. ←/→ switch player. */
+let spectateId: string | null = null;
+/** The players I could be watching, in seat order. */
+function spectatable(lobby: Lobby, p: Player): Player[] {
+  if (lobby.phase !== PH_PLAY || !p.holed) return [];
+  return lobbyPlayers(lobby.id).filter(q => !q.holed && !isMe(q.identity)).sort((a, b) => a.seat - b.seat);
+}
+function spectateCycle(dir: number) {
+  const lobby = myLobby(); const p = me();
+  if (!lobby || !p) return;
+  const list = spectatable(lobby, p);
+  if (!list.length) return;
+  const i = list.findIndex(q => q.identity.toHexString() === spectateId);
+  const next = list[((i < 0 ? 0 : i + dir) + list.length) % list.length];
+  spectateId = next.identity.toHexString();
+  sfx.ui();
+}
 function updateDrag(e: PointerEvent) {
   const r = dragAim(e.clientX - drag.x0, e.clientY - drag.y0, drag.basis, canvasCssSize().h, drag.angle);
   drag.angle = r.angle;
@@ -965,8 +1036,9 @@ window.addEventListener('keydown', e => {
   const inInput = tag === 'INPUT' || tag === 'TEXTAREA';
   if (e.key === 'Escape') {
     if (inInput) { (e.target as HTMLElement).blur(); $('chat-input').classList.remove('open'); return; }
+    if (drag.active) { cancelDrag(); return; }
     for (const m of ['settings-modal', 'mine-modal', 'scores-modal']) if (!$(m).classList.contains('hidden')) { modal(m, false); return; }
-    if (overlayTarget === null) $('match-menu').classList.toggle('hidden');
+    if (overlayTarget === null) { $('match-menu').classList.toggle('hidden'); renderMatchMenu(); }
     return;
   }
   if (inInput) return;
@@ -982,6 +1054,11 @@ window.addEventListener('keydown', e => {
   if (e.key === 'u' || e.key === 'U') { predicted = null; rd().undoShot({}); return; }
   if (e.key === 'c' || e.key === 'C') { camOverview = !camOverview; return; }
   if (e.key === 'Shift') held.fine = true;
+  if (spectateId) {
+    // holed out: the aim keys pick who to watch instead
+    if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') { spectateCycle(-1); e.preventDefault(); return; }
+    if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') { spectateCycle(1); e.preventDefault(); return; }
+  }
   if (!canShoot()) return;
   // held keys turn the aim at a steady rate (integrated in the frame loop)
   if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') { held.left = true; kbAim.active = true; e.preventDefault(); }
@@ -1027,15 +1104,23 @@ function frame(now: number) {
   const lobby = subscribed ? myLobby() : undefined;
   const p = subscribed ? me() : undefined;
   if (!lobby || !p || lobby.status === L_OPEN) {
-    // the lawn idles behind the menus
-    drawScene(emptyScene);
+    // behind the menus: the lawn idles; behind the lobby the round's holes
+    // drift past under the blur, a slow fly-by that moves on every so often
     for (const el of headAnnos.values()) el.style.visibility = 'hidden';
+    const rows = lobby && lobby.status === L_OPEN ? holeRows(lobby.courseId) : [];
+    if (rows.length) {
+      const row = rows[Math.floor(now / 14000) % rows.length];
+      const hole = parsedHole(row);
+      if (hole) { drawScene({ hole, holeKey: `preview:${row.id}`, t: now / 1000, players: [], aim: null, cam: 'preview', meId: null }); return; }
+    }
+    drawScene(emptyScene);
     return;
   }
   if (lobby.holeId.toString() !== gameHoleKey) {
     gameHoleKey = lobby.holeId.toString();
     gameHoleObj = currentHole(lobby);
     camOverview = false;
+    spectateId = null;
     tLocal = lobby.holeTick / TICK_HZ;
   }
   if (!gameHoleObj) { gameHoleObj = currentHole(lobby); if (!gameHoleObj) subscribeCourse(lobby.courseId); }
@@ -1102,11 +1187,20 @@ function frame(now: number) {
       seat: q.seat,
     });
   }
-  const cam: GolfScene['cam'] = lobby.phase === PH_INTRO ? 'overview' : lobby.phase === PH_RESULTS ? 'cup' : lobby.phase === PH_FINAL ? 'overview' : p.holed ? 'cup' : camOverview ? 'overview' : 'play';
+  // holed out: ride along with someone still playing (a rolling ball first,
+  // then whoever is online) until there is nobody left — then orbit the cup
+  const watchable = spectatable(lobby, p);
+  if (!watchable.length) spectateId = null;
+  else if (!spectateId || !watchable.some(q => q.identity.toHexString() === spectateId)) {
+    const pick = watchable.find(q => !q.resting && q.online) ?? watchable.find(q => q.online) ?? watchable[0];
+    spectateId = pick.identity.toHexString();
+  }
+  const cam: GolfScene['cam'] = lobby.phase === PH_INTRO ? 'overview' : lobby.phase === PH_RESULTS ? 'cup' : lobby.phase === PH_FINAL ? 'overview'
+    : camOverview ? 'overview' : p.holed ? (spectateId ? 'play' : 'cup') : 'play';
   drawScene({
     hole, holeKey: hole ? gameHoleKey : '', t: tLocal, players: scenePlayers,
     aim: aiming && hole ? { angle: aimAngle, power: aimPower, lockCam: drag.active } : null,
-    cam, meId: p.identity.toHexString(),
+    cam, meId: spectateId ?? p.identity.toHexString(),
   });
   if (kbAim.active && !drag.active) kbAim.active = kbAim.charging || kbAim.active; // stays until the shot
   if (overlayTarget === null) renderHud(lobby, p, players, hole, now, aiming, aimPower);
@@ -1144,8 +1238,12 @@ function renderHud(lobby: Lobby, p: Player, players: Player[], hole: Hole | null
   const more = rankedAll.length - ranked.length;
   const boardHtml = html + (more > 0 ? `<div class="r"><span class="nm" style="color:var(--dim)">+${more} MORE · TAB</span></div>` : '');
   if (board.innerHTML !== boardHtml) board.innerHTML = boardHtml;
-  $('help').textContent = p.holed ? 'IN THE HOLE — WAITING FOR THE OTHERS' : lobby.phase === PH_PLAY
-    ? (p.resting && !predicted ? (p.strokes >= lobby.maxStrokes ? 'OUT OF STROKES' : 'PRESS AND PULL BACK · RELEASE TO PUTT · ←/→ AIM · R TEE · U REDO SHOT · RIGHT-DRAG LOOK · WHEEL ZOOM · C OVERVIEW · TAB SCORECARD · ENTER CHAT · ESC MENU') : 'ROLLING… · DRAG TO LOOK AROUND')
+  const watching = spectateId ? players.find(q => q.identity.toHexString() === spectateId) : undefined;
+  const chip = $('spectate-chip');
+  chip.classList.toggle('hidden', !watching);
+  if (watching) { const label = `👁 WATCHING ${watching.name.toUpperCase()}`; if (chip.textContent !== label) chip.textContent = label; }
+  $('help').textContent = !hole ? 'LOADING THE HOLE…' : p.holed ? (watching ? `IN THE HOLE — WATCHING ${watching.name.toUpperCase()} · ←/→ SWITCH PLAYER · 1-6 EMOTE · C OVERVIEW · RIGHT-DRAG LOOK · TAB SCORECARD` : 'IN THE HOLE — WAITING FOR THE OTHERS · 1-6 EMOTE') : lobby.phase === PH_PLAY
+    ? (p.resting && !predicted ? (p.strokes >= lobby.maxStrokes ? 'OUT OF STROKES' : 'PRESS AND PULL BACK · RELEASE TO PUTT · RIGHT-CLICK OR ESC CANCELS · ←/→ AIM · R TEE · U REDO SHOT · RIGHT-DRAG LOOK · WHEEL ZOOM · C OVERVIEW · TAB SCORECARD · ENTER CHAT · ESC MENU') : 'ROLLING… · DRAG TO LOOK AROUND')
     : '';
   // name tags + emotes above the other balls
   const seen = new Set<string>();
@@ -1155,7 +1253,7 @@ function renderHud(lobby: Lobby, p: Player, players: Player[], hole: Hole | null
     let el = headAnnos.get(key);
     if (!el) { el = document.createElement('div'); el.className = 'head-anno'; el.innerHTML = '<span class="name-tag"></span><span class="emote-pop"></span>'; $('head-annos').appendChild(el); headAnnos.set(key, el); }
     const d = dispOf(q);
-    const pos = q.holed ? null : ballScreenPos(key);
+    const pos = q.holed ? headScreenPos(key) : ballScreenPos(key);
     if (!pos) { el.style.visibility = 'hidden'; continue; }
     el.style.visibility = 'visible';
     el.style.left = `${pos.x}px`; el.style.top = `${pos.y}px`;

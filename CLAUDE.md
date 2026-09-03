@@ -23,6 +23,9 @@ README.md for architecture and run instructions. Key facts:
   cannon), block motion (rotate/slide/swing/blink) and block `bounce` must
   be handled in physics.ts, mapformat.ts, render.ts (2D), render3d.ts (3D)
   and editor.ts (tool + props); `TOYBOX` in courses.ts has one hole per piece.
+  In 3D a magnet is a black hole (`blackHoleMesh`: well, spinning accretion
+  disc, horizon ring, dust on tightening orbits; orange and reversed when it
+  repels), animated per frame from `blackHoles`.
 - `spacetimedb/src/shared/library.ts` holds the launch courses (six, all
   designed around hidden holes-in-one); `spacetimedb/scripts/course-check.ts`
   (`npm run check-courses` in spacetimedb/) verifies every built-in hole
@@ -47,7 +50,10 @@ README.md for architecture and run instructions. Key facts:
   `render3d.drawScene`. There is deliberately no shot-path preview. Shots are
   predicted client-side (`predicted` in main.ts steps the shared physics from
   release until the server row with that `shotSeq` arrives) so the swing and
-  launch are instant on timing holes. The course picker is a keyed list
+  launch are instant on timing holes. A holed-out player spectates
+  (`spectateId`: the scene's `meId` is whoever the camera follows; ←/→
+  cycle). `connect()` must clear `holeSubs` — a reconnect has no
+  subscriptions, and stale handles leave the next hole at LOADING. The course picker is a keyed list
   (rows updated in place, thumbnails subscribed as they scroll into view via
   IntersectionObserver) beside a detail pane; it must never rebuild on a
   hole-row insert. `render3d.ts` is the three.js renderer

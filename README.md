@@ -13,13 +13,21 @@ TypeScript three.js game with a built-in course editor.
 ## What it plays like
 
 - **Everyone shoots at once.** Up to 32 players per room, no turns. Press,
-  pull back and release to putt (or hold ←/→ to aim, Shift for fine, and
+  pull back and release to putt — right-click or Esc mid-pull cancels it
+  (or hold ←/→ to aim, Shift for fine, and
   hold Space for power; R puts the ball back on the tee, U back where the
   last shot was played from — the strokes stay; F is fullscreen). The ball goes the instant
   you release: the client
   predicts the shot and the server applies it at the tick you released on,
   so timing a windmill never depends on your ping. The arrow shows direction and power only — no
-  bounce preview, reading the walls is the skill. Balls collide with each
+  bounce preview, reading the walls is the skill. Once you have holed out
+  you ride along with whoever is still playing (←/→ switch player, C for
+  the whole hole) until the last ball drops, and your emotes (1-6) pop over
+  your golfer at the cup and as a toast for everyone still putting. The
+  host can remove a player at any time (✕ on their chip in the lobby, or in
+  the ESC menu mid-round — an AFK seat would otherwise hold every hole open
+  until the clock runs out). The lobby sits over a slow, blurred fly-by of
+  the round's holes. Balls collide with each
   other — bump a rival off the line, or get bumped. A ball a moving block
   squeezes into a wall is reset, never left stuck.
 - **Real hazards.** Bouncy walls, pinball bumpers, posts, sand, ice, water
@@ -191,7 +199,8 @@ makes them pinball bumpers), `tip`, `theme`. Limits and normalisation are in
 - Accounts and persistent stats (the tennis framework's Firebase +
   `profiles` sidecar port over directly).
 - Course ratings and a featured rotation; thumbnails in the picker.
-- Spectating.
+- Spectating a room you are not playing in (holed-out players already
+  follow the others).
 - More obstacle types (ramps with real height, portals with direction,
   fans, conveyor belts) — each is one `Zone`/`Block` kind in the shared
   physics plus a renderer and an editor tool.
