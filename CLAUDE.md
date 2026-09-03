@@ -43,8 +43,11 @@ README.md for architecture and run instructions. Key facts:
   meet a platform. Overlapping rects are fine (a platform laid over a
   floor); the renderers skip cliff segs (the taller slab's side is the face).
   Keep a zone inside one level.
-- `spacetimedb/src/shared/library.ts` holds the launch courses (seven, all
-  designed around hidden holes-in-one; Galaxy Road is the `space` one); `spacetimedb/scripts/course-check.ts`
+- `spacetimedb/src/shared/library.ts` holds the launch courses (nine, all
+  designed around hidden holes-in-one; Galaxy Road is the `space` one;
+  Hairpin Hollow and Neon Labyrinth are the corner courses — `corner()`
+  mirrors sit in every outer corner and the cups sit where a perfect carom
+  dies, found with an angle × power sweep); `spacetimedb/scripts/course-check.ts`
   (`npm run check-courses` in spacetimedb/) verifies every built-in hole
   with the real physics: ace exists, is narrow (< 4.5% of shots) and
   hittable, greedy play finishes within par + 1, a ±3° "decent player"

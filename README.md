@@ -58,10 +58,14 @@ TypeScript three.js game with a built-in course editor.
   Late joiners drop straight onto the tee. Refreshing mid-round keeps your
   seat for 25 s. The host can only start once everyone in the lobby has
   readied up.
-- **Ten built-in courses, 92 holes.** Sunny Park (the tutorial), Neon
+- **Twelve built-in courses, 110 holes.** Sunny Park (the tutorial), Neon
   Orbit and Toy Box (one hole per gadget) show the pieces off; the launch
   library — Bank Shot Alley, Clockwork, Ramp Ridge, Machine Works, Frost &
-  Flame, the championship Grand Tour and **Galaxy Road** — is long (two to
+  Flame, the championship Grand Tour, **Galaxy Road**, and the two corner
+  courses **Hairpin Hollow** and **Neon Labyrinth** (never a straight lane:
+  doglegs, hairpins, switchbacks, loops round an island, a square spiral, a
+  staircase of corner pockets, with a 45° mirror in every outer corner so a
+  drive at the right pace caroms round the bend) — is long (two to
   five stages of hazards, 60–150 units of travel, par 2–5) and built around
   **hidden holes-in-one**: most holes have an ace line, verified with the
   real physics, that is never the obvious one (a carom, a timed gap, a
