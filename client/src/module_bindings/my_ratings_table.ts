@@ -12,17 +12,8 @@ import {
 
 export default __t.row({
   id: __t.u64().primaryKey(),
-  ownerId: __t.identity().name("owner_id"),
-  authorName: __t.string().name("author_name"),
-  name: __t.string(),
-  holeCount: __t.u8().name("hole_count"),
-  totalPar: __t.u16().name("total_par"),
-  published: __t.bool(),
-  builtin: __t.bool(),
-  plays: __t.u32(),
-  rev: __t.u32(),
-  createdAt: __t.timestamp().name("created_at"),
+  courseId: __t.u64().name("course_id"),
+  identity: __t.identity(),
+  stars: __t.u8(),
   updatedAt: __t.timestamp().name("updated_at"),
-  ratingSum: __t.u32().name("rating_sum"),
-  ratingCount: __t.u32().name("rating_count"),
 });

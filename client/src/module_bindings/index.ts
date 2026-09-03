@@ -41,6 +41,7 @@ import KickPlayerReducer from "./kick_player_reducer";
 import LeaveLobbyReducer from "./leave_lobby_reducer";
 import PlayAgainReducer from "./play_again_reducer";
 import PublishCourseReducer from "./publish_course_reducer";
+import RateCourseReducer from "./rate_course_reducer";
 import ResetBallReducer from "./reset_ball_reducer";
 import SaveCourseReducer from "./save_course_reducer";
 import SeedBuiltinsReducer from "./seed_builtins_reducer";
@@ -63,6 +64,7 @@ import CourseRow from "./course_table";
 import HoleRow from "./hole_table";
 import LobbyRow from "./lobby_table";
 import MyCoursesRow from "./my_courses_table";
+import MyRatingsRow from "./my_ratings_table";
 import PlayerRow from "./player_table";
 
 /** Type-only namespace exports for generated type groups. */
@@ -147,6 +149,13 @@ const tablesSchema = __schema({
     constraints: [
     ],
   }, MyCoursesRow),
+  myRatings: __table({
+    name: 'my_ratings',
+    indexes: [
+    ],
+    constraints: [
+    ],
+  }, MyRatingsRow),
 });
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
@@ -158,6 +167,7 @@ const reducersSchema = __reducers(
   __reducerSchema("leave_lobby", LeaveLobbyReducer),
   __reducerSchema("play_again", PlayAgainReducer),
   __reducerSchema("publish_course", PublishCourseReducer),
+  __reducerSchema("rate_course", RateCourseReducer),
   __reducerSchema("reset_ball", ResetBallReducer),
   __reducerSchema("save_course", SaveCourseReducer),
   __reducerSchema("seed_builtins", SeedBuiltinsReducer),
@@ -181,6 +191,8 @@ type __SchemaWithTableAccessorAliases = Omit<typeof tablesSchema.schemaType, "ta
   tables: typeof tablesSchema.schemaType.tables & {
     /** @deprecated Use `myCourses` instead. This alias will be removed in the next major version. */
     readonly "my_courses": Omit<typeof tablesSchema.schemaType.tables["myCourses"], "accessorName"> & { readonly accessorName: "my_courses" };
+    /** @deprecated Use `myRatings` instead. This alias will be removed in the next major version. */
+    readonly "my_ratings": Omit<typeof tablesSchema.schemaType.tables["myRatings"], "accessorName"> & { readonly accessorName: "my_ratings" };
   };
 };
 
@@ -200,6 +212,7 @@ const REMOTE_MODULE = {
 
 const tableAccessorAliases = {
   "my_courses": "myCourses",
+  "my_ratings": "myRatings",
 } as const;
 
 function __withTableAccessorAliases<T extends object>(target: T, freeze = false): T {
@@ -222,12 +235,16 @@ type __DbViewBase = __DbConnectionImpl<typeof REMOTE_MODULE>["db"];
 export type DbView = __DbViewBase & {
   /** @deprecated Use `myCourses` instead. This alias will be removed in the next major version. */
   readonly "my_courses": __DbViewBase["myCourses"];
+  /** @deprecated Use `myRatings` instead. This alias will be removed in the next major version. */
+  readonly "my_ratings": __DbViewBase["myRatings"];
 };
 
 type __TablesBase = __QueryBuilder<typeof tablesSchema.schemaType>;
 export type Tables = __TablesBase & {
   /** @deprecated Use `myCourses` instead. This alias will be removed in the next major version. */
   readonly "my_courses": __TablesBase["myCourses"];
+  /** @deprecated Use `myRatings` instead. This alias will be removed in the next major version. */
+  readonly "my_ratings": __TablesBase["myRatings"];
 };
 
 /** The tables available in this remote SpacetimeDB module. Each table reference doubles as a query builder. */

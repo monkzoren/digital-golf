@@ -34,6 +34,8 @@ export const Course = __t.object("Course", {
   rev: __t.u32(),
   createdAt: __t.timestamp(),
   updatedAt: __t.timestamp(),
+  ratingSum: __t.u32(),
+  ratingCount: __t.u32(),
 });
 export type Course = __Infer<typeof Course>;
 
@@ -75,6 +77,9 @@ export type Lobby = __Infer<typeof Lobby>;
 export const MyCourses = __t.object("MyCourses", {});
 export type MyCourses = __Infer<typeof MyCourses>;
 
+export const MyRatings = __t.object("MyRatings", {});
+export type MyRatings = __Infer<typeof MyRatings>;
+
 export const Player = __t.object("Player", {
   identity: __t.identity(),
   name: __t.string(),
@@ -111,6 +116,15 @@ export const Player = __t.object("Player", {
   kicked: __t.bool(),
 });
 export type Player = __Infer<typeof Player>;
+
+export const Rating = __t.object("Rating", {
+  id: __t.u64(),
+  courseId: __t.u64(),
+  identity: __t.identity(),
+  stars: __t.u8(),
+  updatedAt: __t.timestamp(),
+});
+export type Rating = __Infer<typeof Rating>;
 
 export const RollClock = __t.object("RollClock", {
   identity: __t.identity(),

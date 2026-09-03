@@ -173,8 +173,34 @@ const Course = table(
     rev: t.u32(),
     createdAt: t.timestamp(),
     updatedAt: t.timestamp(),
+    // NOTE: appended columns — player ratings, kept as a running total so the
+    // picker can rank courses without loading every `rating` row. The
+    // average is ratingSum / ratingCount (0 ratings = unrated).
+    ratingSum: t.u32().default(0),
+    ratingCount: t.u32().default(0),
   }
 );
+
+// One row per (course, player): the stars a player gave a course they have
+// played. Private — the client only sees its own through `my_ratings`; the
+// aggregates live on the course row.
+const Rating = table(
+  {
+    name: 'rating',
+    indexes: [
+      { accessor: 'byCourse', algorithm: 'btree', columns: ['courseId'] },
+      { accessor: 'byPlayer', algorithm: 'btree', columns: ['identity'] },
+    ],
+  },
+  {
+    id: t.u64().primaryKey().autoInc(),
+    courseId: t.u64(),
+    identity: t.identity(),
+    stars: t.u8(), // 1..5
+    updatedAt: t.timestamp(),
+  }
+);
+const MAX_STARS = 5;
 
 const HoleTable = table(
   {
@@ -230,6 +256,7 @@ const spacetimedb = schema({
   chat: Chat,
   course: Course,
   hole: HoleTable,
+  rating: Rating,
   session: Session,
   rollClock: RollClock,
   tickTimer: TickTimer,
@@ -241,12 +268,20 @@ type PlayerRow = typeof Player.rowType.type;
 type LobbyRow = typeof Lobby.rowType.type;
 type CourseRow = typeof Course.rowType.type;
 type HoleRow = typeof HoleTable.rowType.type;
+type RatingRow = typeof Rating.rowType.type;
 
 /** Drafts are visible to their author only; published courses to everyone. */
 export const my_courses = spacetimedb.view(
   { name: 'my_courses', public: true },
   t.array(Course.rowType),
   ctx => [...ctx.db.course.byOwner.filter(ctx.sender)]
+);
+
+/** The ratings this player has given (the `rating` table itself is private). */
+export const my_ratings = spacetimedb.view(
+  { name: 'my_ratings', public: true },
+  t.array(Rating.rowType),
+  ctx => [...ctx.db.rating.byPlayer.filter(ctx.sender)]
 );
 
 // ---------------------------------------------------------------------------
@@ -312,7 +347,7 @@ function seedBuiltins(ctx: Ctx) {
       const inserted = ctx.db.course.insert({
         id: 0n, ownerId: ctx.sender, authorName: 'DIGITAL GOLF', name: c.name,
         holeCount: c.holes.length, totalPar: totalPar(c.holes), published: true, builtin: true,
-        plays: 0, rev: 1, createdAt: ctx.timestamp, updatedAt: ctx.timestamp,
+        plays: 0, rev: 1, createdAt: ctx.timestamp, updatedAt: ctx.timestamp, ratingSum: 0, ratingCount: 0,
       });
       writeHoles(ctx, inserted.id, c.holes.map(h => ({ ...h, theme: c.theme })));
     }
@@ -720,7 +755,7 @@ export const save_course = spacetimedb.reducer(
       const inserted = ctx.db.course.insert({
         id: 0n, ownerId: ctx.sender, authorName: p.name || 'ANON', name: cleanName,
         holeCount: holes.length, totalPar: totalPar(holes), published: false, builtin: false,
-        plays: 0, rev: 1, createdAt: ctx.timestamp, updatedAt: ctx.timestamp,
+        plays: 0, rev: 1, createdAt: ctx.timestamp, updatedAt: ctx.timestamp, ratingSum: 0, ratingCount: 0,
       });
       writeHoles(ctx, inserted.id, holes);
       return;
@@ -763,10 +798,42 @@ export const delete_course = spacetimedb.reducer({ courseId: t.u64() }, (ctx, { 
   if (!course.ownerId.isEqual(ctx.sender)) throw new SenderError('Only the author can delete this course');
   if (course.builtin) throw new SenderError('Built-in courses cannot be deleted');
   for (const h of ctx.db.hole.byCourse.filter(courseId)) ctx.db.hole.id.delete(h.id);
+  for (const r of ctx.db.rating.byCourse.filter(courseId)) ctx.db.rating.id.delete(r.id);
   ctx.db.course.id.delete(courseId);
 });
 
 /** Re-sync the built-in courses from code (after a module update). Idempotent. */
+/**
+ * Rate a published course 1–5 stars. Only players who have played it may
+ * rate: the sender is in a room on that course past the lobby (mid-round or
+ * at the final scoreboard), or has rated it before (proof of an earlier
+ * round — a rating can always be revised). Authors cannot rate their own.
+ */
+export const rate_course = spacetimedb.reducer(
+  { courseId: t.u64(), stars: t.u8() },
+  (ctx, { courseId, stars }) => {
+    if (stars < 1 || stars > MAX_STARS) throw new SenderError(`Rate 1 to ${MAX_STARS} stars`);
+    const course = ctx.db.course.id.find(courseId);
+    if (!course || !course.published) throw new SenderError('That course is not published');
+    if (course.ownerId.isEqual(ctx.sender)) throw new SenderError('You cannot rate your own course');
+    let mine: RatingRow | undefined;
+    for (const r of ctx.db.rating.byPlayer.filter(ctx.sender)) if (r.courseId === courseId) { mine = r; break; }
+    if (!mine) {
+      const p = getPlayer(ctx);
+      const lobby = p.lobbyId ? ctx.db.lobby.id.find(p.lobbyId) : undefined;
+      if (!lobby || lobby.courseId !== courseId || lobby.status === L_OPEN) throw new SenderError('Play the course before rating it');
+    }
+    if (mine) {
+      if (mine.stars === stars) return;
+      ctx.db.rating.id.update({ ...mine, stars, updatedAt: ctx.timestamp });
+      ctx.db.course.id.update({ ...course, ratingSum: course.ratingSum - mine.stars + stars });
+    } else {
+      ctx.db.rating.insert({ id: 0n, courseId, identity: ctx.sender, stars, updatedAt: ctx.timestamp });
+      ctx.db.course.id.update({ ...course, ratingSum: course.ratingSum + stars, ratingCount: course.ratingCount + 1 });
+    }
+  }
+);
+
 export const seed_builtins = spacetimedb.reducer(ctx => {
   seedBuiltins(ctx);
 });

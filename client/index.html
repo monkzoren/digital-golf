@@ -3591,6 +3591,19 @@
     .course-row .cmeta { font-size: 9px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .course-row.selected::after { top: 4px; right: 4px; }
     .course-empty { color: var(--dim-2); font-style: italic; letter-spacing: 1px; padding: 20px; font-size: 12px; }
+    /* Star ratings: the rate card on the gameover screen and the revisable
+       row in the course detail pane. Hovering lights every star up to it. */
+    .stars { display: inline-flex; gap: 2px; }
+    .stars.hidden { display: none; }
+    .stars .star { all: unset; cursor: pointer; padding: 0 1px; font-size: 26px; line-height: 1; color: var(--dim-2); transition: color 0.12s, transform 0.12s; }
+    .stars.small .star { font-size: 18px; }
+    .stars .star.lit { color: var(--gold); }
+    .stars:not(.off):hover .star { color: var(--dim-2); }
+    .stars:not(.off) .star:hover, .stars:not(.off) .star:has(~ .star:hover) { color: var(--gold); transform: scale(1.15); }
+    .stars.off .star { cursor: default; }
+    #rate-card { text-align: center; margin: 2px 0; }
+    #rate-card.hidden { display: none; }
+    #rate-card .stars { margin-top: 4px; }
     #course-detail { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 2px 8px 2px 2px; }
     #course-hero { position: relative; flex-shrink: 0; width: 100%; aspect-ratio: 16 / 6; border-radius: var(--r-md); overflow: hidden; background: linear-gradient(135deg, #1e6a2f, #0e3a1a); border: 1px solid var(--line); }
     #course-hero canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
@@ -3827,6 +3840,7 @@
           <div id="course-detail-head">
             <div id="course-detail-name">—</div>
             <div id="course-detail-meta"></div>
+            <div id="course-rate" class="stars small hidden"></div>
           </div>
           <div id="course-holes"></div>
       <div id="mode-options">
@@ -3900,6 +3914,11 @@
       <h1 id="gameover-title">ROUND COMPLETE</h1>
       <div class="subtitle" id="gameover-score"></div>
       <div id="crowns"></div>
+      <div id="rate-card" class="crown-card hidden">
+        <div class="c-label">RATE THIS COURSE</div>
+        <div id="rate-stars" class="stars"></div>
+        <div class="c-sub" id="rate-sub"></div>
+      </div>
       <div id="match-summary"></div>
       <div class="row">
         <button id="again-btn" class="primary">Play Again</button>

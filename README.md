@@ -86,7 +86,14 @@ TypeScript three.js game with a built-in course editor.
   import/export JSON, **test-play on the real 3D stage with the exact
   physics the server runs**, save drafts, publish to everyone. Built-in courses can be duplicated as a
   starting point. Published courses appear under *Community* when creating a
-  room, sorted by plays.
+  room, ranked by player rating (then plays).
+- **Ratings.** After a round, everyone who played rates the course 1–5
+  stars on the final scoreboard (`rate_course`); a rating can be revised
+  later from the course picker. Authors cannot rate their own courses, and
+  nobody can rate a course they have not played. The course row carries the
+  running total (`ratingSum` / `ratingCount`), your own stars come through
+  the `my_ratings` view, and the Community list ranks by a prior-weighted
+  average so one lone 5★ does not outrank a well-loved course.
 - **The tennis presentation, one to one.** Menu → SELECT A GOLFER (live
   animated 3D previews on every card) → SELECT A COURSE → lobby → play,
   with the broadcast wipe between screens, HUD plates, gold toasts for
