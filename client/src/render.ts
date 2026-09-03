@@ -2,7 +2,7 @@
 // surfaces, animated obstacles, balls with height, particles. Shared by the
 // game and the editor.
 import type { Hole, Zone, Block } from '@shared/courses';
-import { WALL_H, blockPtsAt, floorWalls, holeBounds, moverActive, polySegs, rampFrac } from '@shared/courses';
+import { WALL_H, blockPtsAt, floorWalls, holeBounds, moverActive, polySegs, rampFrac, rectPts } from '@shared/courses';
 import { BALL_R, CUP_R, geomOf, MAX_SHOT, MIN_SHOT, rampRise, zonePower } from '@shared/physics';
 
 export interface Camera { x: number; y: number; scale: number }
@@ -141,6 +141,21 @@ export function drawHole(g: CanvasRenderingContext2D, hole: Hole, cam: Camera, W
     const p = w2s(cam, W, H, x, b.minY);
     g.fillRect(p.x, p.y - 2, stripe * s, b.h * s + 4);
   }
+  // raised platforms: lighter the higher they are, a cliff face down their
+  // lower edges (the drop is drawn as a short extrusion), lowest first
+  for (const r of [...hole.floor].filter(r => r.z).sort((a, c) => (a.z ?? 0) - (c.z ?? 0))) {
+    const depth = Math.min(1.2, 0.25 + (r.z ?? 0) * 0.3);
+    extruded(g, rectPts(r), cam, W, H, th.felt, th.wallSide, depth);
+    g.fillStyle = `rgba(255,255,255,${Math.min(0.3, 0.07 + (r.z ?? 0) * 0.05)})`;
+    g.beginPath(); rectPath(g, r, cam, W, H); g.fill();
+    if (o.editor) {
+      const p = w2s(cam, W, H, r.x + r.w / 2, r.y + 1.8);
+      g.fillStyle = '#fff';
+      g.font = `700 ${Math.max(9, s * 0.45)}px Chakra Petch, sans-serif`;
+      g.textAlign = 'center';
+      g.fillText(`▲ ${(r.z ?? 0).toFixed(1)}`, p.x, p.y);
+    }
+  }
   // zones
   for (const z of hole.zones ?? []) drawZone(g, z, cam, W, H, o);
   // cup shadow ring on the felt
@@ -231,7 +246,7 @@ export function drawHole(g: CanvasRenderingContext2D, hole: Hole, cam: Camera, W
   // walls (floor boundary + static blocks) — drawn as extruded strips/polys;
   // blocks with an explicit height are drawn as polys of that height below
   const wallW = 0.5;
-  const rails = floorWalls(hole.floor);
+  const rails = floorWalls(hole.floor).filter(s => s.rail); // cliff faces are drawn with their platforms
   for (const bl of hole.blocks ?? []) if (!bl.motion && bl.h === undefined) rails.push(...polySegs(bl.pts));
   for (const seg of rails) {
     const dx = seg.bx - seg.ax, dy = seg.by - seg.ay;

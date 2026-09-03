@@ -22,6 +22,12 @@ TypeScript three.js game with a built-in course editor.
   bounce preview, reading the walls is the skill. Balls collide with each
   other — bump a rival off the line, or get bumped. A ball a moving block
   squeezes into a wall is reset, never left stuck.
+- **Height.** Floors can be raised: a platform's edges are cliff faces
+  (a wall to the ball below, a drop-off to the ball on top), ramps climb
+  onto it, and everything on it — blocks, bumpers, hazards, the cup, the
+  golfer — sits at its level. Rings of Saturn plays from a high room down
+  into its exit lane; Liftoff and Black Hole end on decks you have to
+  climb; Star Jump and Moon Base fly the void onto a high road.
 - **Real hazards.** Bouncy walls, pinball bumpers, posts, sand, ice, water
   (+1 stroke and back you go), real ramps (a wedge you roll up, drop off the
   top of and bounce off the back of), boost pads, jump pads that launch the
@@ -44,7 +50,7 @@ TypeScript three.js game with a built-in course editor.
   Late joiners drop straight onto the tee. Refreshing mid-round keeps your
   seat for 25 s. The host can only start once everyone in the lobby has
   readied up.
-- **Ten built-in courses, 91 holes.** Sunny Park (the tutorial), Neon
+- **Ten built-in courses, 92 holes.** Sunny Park (the tutorial), Neon
   Orbit and Toy Box (one hole per gadget) show the pieces off; the launch
   library — Bank Shot Alley, Clockwork, Ramp Ridge, Machine Works, Frost &
   Flame, the championship Grand Tour and **Galaxy Road** — is long (two to

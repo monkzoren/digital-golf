@@ -378,9 +378,10 @@ function deleteLobby(ctx: Ctx, lobbyId: bigint) {
 
 /** Put a player's ball on the tee with a clean hole state. */
 function ballAtTee(p: PlayerRow, hole: Hole): PlayerRow {
+  const g = geomOf(hole);
   return {
     ...p,
-    x: hole.tee.x, y: hole.tee.y, z: 0, vx: 0, vy: 0, vz: 0,
+    x: hole.tee.x, y: hole.tee.y, z: groundZ(g, hole.tee.x, hole.tee.y), vx: 0, vy: 0, vz: 0,
     teleTicks: 0, resting: true, holed: false, strokes: 0,
     safeX: hole.tee.x, safeY: hole.tee.y, struck: false, finishedTick: 0,
   };
@@ -985,7 +986,7 @@ function tickPlay(ctx: Ctx, lobby: LobbyRow, players: PlayerRow[]) {
       const penalty = ev.water && row.struck && lobby.waterPenalty ? 1 : 0;
       row = withEvent(
         {
-          ...row, x: row.safeX, y: row.safeY, z: 0, vx: 0, vy: 0, vz: 0, teleTicks: 0,
+          ...row, x: row.safeX, y: row.safeY, z: groundZ(geom, row.safeX, row.safeY), vx: 0, vy: 0, vz: 0, teleTicks: 0,
           resting: true, struck: false, strokes: row.strokes + penalty,
         },
         ev.water ? EV_WATER : EV_RESET

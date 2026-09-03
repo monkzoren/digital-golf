@@ -28,6 +28,18 @@ README.md for architecture and run instructions. Key facts:
   (`fieldRolls`) nothing rests in it — it is `carried` like a rolling
   ramp and the trickle easing is off inside it (a pull that matched the
   eased friction would roll for ever). `polyStar` makes star-shaped blocks.
+  Floor rects may carry `z` (a raised platform). `floorZ(hole, x, y)` is the
+  slab height there (the tallest slab wins); `groundZ` starts from it; every
+  block, bumper and zone stands on the slab under its centre (`baseOf(g,
+  piece)`, computed in `geomOf`) and its height is measured from there.
+  `floorWalls` judges each edge piece by what lies just outside it: nothing
+  → a rail (`rail`, rides the felt); a lower slab → a cliff face (`cliff`,
+  `h` = the platform height, absolute, climbable within STEP_CLIMB so a
+  ramp that meets it a hair low still works, no rail on top so the ball
+  rolls off); level or higher → open. `slopeTo(..., rise)` sizes a ramp to
+  meet a platform. Overlapping rects are fine (a platform laid over a
+  floor); the renderers skip cliff segs (the taller slab's side is the face).
+  Keep a zone inside one level.
 - `spacetimedb/src/shared/library.ts` holds the launch courses (seven, all
   designed around hidden holes-in-one; Galaxy Road is the `space` one); `spacetimedb/scripts/course-check.ts`
   (`npm run check-courses` in spacetimedb/) verifies every built-in hole

@@ -10,8 +10,8 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { CHARACTERS, type Character, type HairStyle } from './characters';
 import { getGraphics, onGraphicsChange, type GraphicsSettings } from './graphics';
 import type { Hole, Zone, Block, Rect } from '@shared/courses';
-import { WALL_H, floorWalls, holeBounds, motionAngle, moverActive, pointInFloor, rampFrac } from '@shared/courses';
-import { BALL_R, CUP_R, geomOf, groundZ, rampRise, zonePower } from '@shared/physics';
+import { WALL_H, floorWalls, floorZ, holeBounds, motionAngle, moverActive, pointInFloor, rampFrac } from '@shared/courses';
+import { BALL_R, CUP_R, baseOf, geomOf, groundZ, rampRise, zonePower } from '@shared/physics';
 import { sceneThemeFor, texHash, type MatSpec, type SceneTheme } from './themes3d';
 
 // ---------------------------------------------------------------------------
@@ -327,6 +327,8 @@ const ZERO_POSE: Pose = {
 
 interface PlayerRig {
   root: THREE.Group;
+  /** the floor height the golfer stands at (a platform, a ramp) */
+  groundZ: number;
   upper: THREE.Group;
   thighL: THREE.Group; calfL: THREE.Group;
   thighR: THREE.Group; calfR: THREE.Group;
@@ -1479,7 +1481,7 @@ function makePlayerRig(side: number, intoScene: THREE.Scene = scene3): PlayerRig
   root.rotation.order = 'YZX'; // yaw first, then dive-roll about the local Z
   intoScene.add(root);
   return {
-    root,
+    root, groundZ: 0,
     upper,
     thighL: legL.thigh, calfL: legL.calf,
     thighR: legR.thigh, calfR: legR.calf,
@@ -1549,7 +1551,7 @@ function applyPose(
   rig.shoulderR.rotation.set(p.shRx + b3, 0, p.shRz);
   rig.elbowR.rotation.x = p.elR;
   rig.root.rotation.y = finalYaw;
-  rig.root.position.y = FLOOR_Y - p.crouch;
+  rig.root.position.y = FLOOR_Y + rig.groundZ - p.crouch;
 }
 
 // --- pose library -----------------------------------------------------------
@@ -2103,7 +2105,7 @@ let aimHead: THREE.Mesh;
 let holeGroup: THREE.Group;
 let builtHoleKey = '';
 let builtGeom: ReturnType<typeof geomOf> | null = null;
-interface MoverProp { block: Block; group: THREE.Group; pivotX: number; pivotY: number; mesh?: THREE.Mesh }
+interface MoverProp { block: Block; group: THREE.Group; pivotX: number; pivotY: number; baseZ: number; mesh?: THREE.Mesh }
 let movers: MoverProp[] = [];
 let waterMats: THREE.MeshPhysicalMaterial[] = [];
 // scrolling surfaces: the texture slides along the zone's own direction
@@ -2590,9 +2592,10 @@ function makeZoneTexture(z: Zone, theme: SceneTheme): THREE.CanvasTexture {
 /** A slope zone as a real wedge: a tilted felt top over wooden faces. */
 function rampMesh(z: Zone, ox: number, oy: number, topMat: THREE.Material): THREE.Group {
   const rise = rampRise(z);
+  const bz = FLOOR_Y + (builtGeom ? baseOf(builtGeom, z) : 0);
   const c = [[z.x, z.y], [z.x + z.w, z.y], [z.x + z.w, z.y + z.h], [z.x, z.y + z.h]];
-  const top = c.map(([x, y]) => new THREE.Vector3(x - ox, FLOOR_Y + rise * (1 - rampFrac(z, x, y)), y - oy));
-  const base = c.map(([x, y]) => new THREE.Vector3(x - ox, FLOOR_Y - 0.02, y - oy));
+  const top = c.map(([x, y]) => new THREE.Vector3(x - ox, bz + rise * (1 - rampFrac(z, x, y)), y - oy));
+  const base = c.map(([x, y]) => new THREE.Vector3(x - ox, bz - 0.02, y - oy));
   const group = new THREE.Group();
   // top: two triangles wound to face up, uv across the rect
   {
@@ -2650,7 +2653,7 @@ const ROLLER_R = 0.11;
 function spinnerMesh(z: Zone, cx: number, cz: number, topMat: THREE.Material): THREE.Group {
   const r = Math.min(z.w, z.h) / 2;
   const root = new THREE.Group();
-  root.position.set(cx, FLOOR_Y, cz);
+  root.position.set(cx, FLOOR_Y + (builtGeom ? baseOf(builtGeom, z) : 0), cz);
   // the collar: a flat steel ring around the disc with a gap it turns in
   const collar = new THREE.Mesh(new THREE.RingGeometry(r + 0.05, r + 0.22, 64), SPINNER_RIM_MAT);
   collar.rotation.x = -Math.PI / 2;
@@ -2692,7 +2695,7 @@ function spinnerMesh(z: Zone, cx: number, cz: number, topMat: THREE.Material): T
  *  that turns at belt speed; a belt set at an odd angle gets a plain frame. */
 function conveyorMesh(z: Zone, cx: number, cz: number, topMat: THREE.MeshStandardMaterial): THREE.Group {
   const root = new THREE.Group();
-  root.position.set(cx, FLOOR_Y + 0.012, cz);
+  root.position.set(cx, FLOOR_Y + (builtGeom ? baseOf(builtGeom, z) : 0) + 0.012, cz);
   const angle = ((z.angle ?? 0) % 360 + 360) % 360;
   const alongX = angle % 180 === 0, alongY = angle % 180 === 90;
   const speed = zonePower(z);
@@ -2815,10 +2818,10 @@ function subtractRect(a: Rect, cut: Rect): Rect[] {
   const x1 = Math.min(a.x + a.w, cut.x + cut.w), y1 = Math.min(a.y + a.h, cut.y + cut.h);
   if (x1 - x0 <= 0.001 || y1 - y0 <= 0.001) return [a];
   const out: Rect[] = [];
-  if (y0 > a.y) out.push({ x: a.x, y: a.y, w: a.w, h: y0 - a.y }); // above
-  if (a.y + a.h > y1) out.push({ x: a.x, y: y1, w: a.w, h: a.y + a.h - y1 }); // below
-  if (x0 > a.x) out.push({ x: a.x, y: y0, w: x0 - a.x, h: y1 - y0 }); // left
-  if (a.x + a.w > x1) out.push({ x: x1, y: y0, w: a.x + a.w - x1, h: y1 - y0 }); // right
+  if (y0 > a.y) out.push({ x: a.x, y: a.y, w: a.w, h: y0 - a.y, z: a.z }); // above
+  if (a.y + a.h > y1) out.push({ x: a.x, y: y1, w: a.w, h: a.y + a.h - y1, z: a.z }); // below
+  if (x0 > a.x) out.push({ x: a.x, y: y0, w: x0 - a.x, h: y1 - y0, z: a.z }); // left
+  if (a.x + a.w > x1) out.push({ x: x1, y: y0, w: a.x + a.w - x1, h: y1 - y0, z: a.z }); // right
   return out;
 }
 
@@ -2868,10 +2871,11 @@ function pondMesh(z: Zone, cx: number, cz: number, theme: SceneTheme, themeName:
     themeOwned.add(bed);
     bedMatByTheme.set(themeName, bed);
   }
+  const bz = FLOOR_Y + (builtGeom ? baseOf(builtGeom, z) : 0);
   const basinGeo = new THREE.BoxGeometry(z.w, POND_DEPTH, z.h);
   scaleUv(basinGeo, Math.max(1, z.w / 4), Math.max(1, z.h / 4));
   const basin = new THREE.Mesh(basinGeo, bed);
-  basin.position.set(cx, FLOOR_Y - POND_DEPTH / 2, cz);
+  basin.position.set(cx, bz - POND_DEPTH / 2, cz);
   basin.receiveShadow = true;
   group.add(basin);
   // the surface, a hair below the felt so the banks show a lip
@@ -2888,7 +2892,7 @@ function pondMesh(z: Zone, cx: number, cz: number, theme: SceneTheme, themeName:
   });
   const surface = new THREE.Mesh(new THREE.PlaneGeometry(z.w, z.h), mat);
   surface.rotation.x = -Math.PI / 2;
-  surface.position.set(cx, FLOOR_Y - 0.07, cz);
+  surface.position.set(cx, bz - 0.07, cz);
   surface.receiveShadow = true;
   surface.renderOrder = 2; // after the bed, so the blend sees it
   group.add(surface);
@@ -2951,24 +2955,36 @@ function setHole(hole: Hole) {
   th.decor?.(holeGroup, Math.hypot(b.w, b.h) / 2);
   holeGroup.traverse(o => { if (o.name === 'decor-spin') decorSpin.push(o); });
 
+  const geom = geomOf(hole);
+  builtGeom = geom;
   // felt: one slab per floor rect (they overlap where rects join — fine),
-  // with the ponds cut out
+  // with the ponds cut out. A raised rect is a platform: a taller slab whose
+  // sides are the cliff faces the physics has, dressed as rails
   for (const r of carvedFloor(hole)) {
-    const geo = new THREE.BoxGeometry(r.w, FLOOR_Y, r.h);
+    const rz = r.z ?? 0;
+    const H = FLOOR_Y + rz;
+    const geo = new THREE.BoxGeometry(r.w, H, r.h);
     const uv = geo.attributes.uv as THREE.BufferAttribute;
-    for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * r.w / 6, uv.getY(i) * r.h / 6);
-    const m = new THREE.Mesh(geo, FELT_MAT);
-    m.position.set(r.x + r.w / 2 - holeCX, FLOOR_Y / 2, r.y + r.h / 2 - holeCY);
+    // faces: +x −x +y −y +z −z, four vertices each — felt on top in world
+    // units, the sides tiled like the rails
+    for (let i = 0; i < uv.count; i++) {
+      const face = Math.floor(i / 4);
+      if (face === 2 || face === 3) uv.setXY(i, uv.getX(i) * r.w / 6, uv.getY(i) * r.h / 6);
+      else uv.setXY(i, uv.getX(i) * (face < 2 ? r.h : r.w) / 4, uv.getY(i) * H / WALL_H);
+    }
+    const side = rz > 0 ? WALL_MAT : FELT_MAT;
+    const m = new THREE.Mesh(geo, [side, side, FELT_MAT, FELT_MAT, side, side]);
+    m.position.set(r.x + r.w / 2 - holeCX, H / 2, r.y + r.h / 2 - holeCY);
     m.receiveShadow = true;
+    m.castShadow = rz > 0;
     holeGroup.add(m);
   }
   // boundary rails (blocks are built as solids below)
-  const geom = geomOf(hole);
-  builtGeom = geom;
   // A rail rides the felt (exactly as the physics has it): where it runs
   // past a wedge it is split at the wedge's edges and each piece is pitched
   // to climb with it.
   for (const seg of floorWalls(hole.floor)) {
+    if (!seg.rail) continue; // a cliff face is the platform slab's own side
     const dx = seg.bx - seg.ax, dy = seg.by - seg.ay;
     const len = Math.hypot(dx, dy);
     if (len < 0.01) continue;
@@ -3010,9 +3026,10 @@ function setHole(hole: Hole) {
     const low = height < WALL_H;
     const rubber = bl.bounce !== undefined && bl.bounce > 1;
     const mat = rubber ? RUBBER_MAT : low ? WALL_LOW_MAT : BLOCK_MAT;
+    const bz = baseOf(geom, bl);
     if (!bl.motion) {
       const m = extrudedBlock(bl.pts, holeCX, holeCY, height, mat);
-      m.position.y = FLOOR_Y;
+      m.position.y = FLOOR_Y + bz;
       holeGroup.add(m);
       continue;
     }
@@ -3020,7 +3037,7 @@ function setHole(hole: Hole) {
     if (bl.motion.type === 'rotate' || bl.motion.type === 'swing') { px = bl.motion.cx; py = bl.motion.cy; }
     else { let sx = 0, sy = 0; const n = bl.pts.length / 2; for (let i = 0; i < bl.pts.length; i += 2) { sx += bl.pts[i]; sy += bl.pts[i + 1]; } px = sx / n; py = sy / n; }
     const group = new THREE.Group();
-    group.position.set(px - holeCX, FLOOR_Y, py - holeCY);
+    group.position.set(px - holeCX, FLOOR_Y + bz, py - holeCY);
     const laser = bl.motion.type === 'blink';
     const body = extrudedBlock(bl.pts, px, py, laser ? height * 1.3 : height, laser ? LASER_ON_MAT : mat);
     if (laser) { body.castShadow = false; body.receiveShadow = false; }
@@ -3032,11 +3049,12 @@ function setHole(hole: Hole) {
       group.add(hub);
     }
     holeGroup.add(group);
-    movers.push({ block: bl, group, pivotX: px, pivotY: py, mesh: laser ? body : undefined });
+    movers.push({ block: bl, group, pivotX: px, pivotY: py, baseZ: bz, mesh: laser ? body : undefined });
   }
   // zones
   (hole.zones ?? []).forEach((z, i) => {
     const cx = z.x + z.w / 2 - holeCX, cz = z.y + z.h / 2 - holeCY;
+    const zy = FLOOR_Y + baseOf(geom, z); // the platform the zone lies on
     if (z.kind === 'water') { holeGroup.add(pondMesh(z, cx, cz, th, themeName)); return; }
     const tex = makeZoneTexture(z, th);
     const flat = z.kind === 'tele' || z.kind === 'magnet';
@@ -3089,7 +3107,7 @@ function setHole(hole: Hole) {
     } else {
       const m = new THREE.Mesh(new THREE.PlaneGeometry(z.w, z.h), mat);
       m.rotation.x = -Math.PI / 2;
-      m.position.set(cx, FLOOR_Y + 0.012 + i * 0.001, cz);
+      m.position.set(cx, zy + 0.012 + i * 0.001, cz);
       m.receiveShadow = true;
       holeGroup.add(m);
     }
@@ -3104,7 +3122,7 @@ function setHole(hole: Hole) {
     if (z.kind === 'fan') {
       // a propeller whirring in a hub at the centre
       const group = new THREE.Group();
-      group.position.set(cx, FLOOR_Y + 0.35, cz);
+      group.position.set(cx, zy + 0.35, cz);
       const r = Math.min(z.w, z.h) * 0.32;
       for (let k = 0; k < 3; k++) {
         const blade = new THREE.Mesh(new THREE.BoxGeometry(r, 0.08, 0.34), FAN_BLADE_MAT);
@@ -3123,7 +3141,7 @@ function setHole(hole: Hole) {
       // aim of whoever is loaded in it (see drawScene)
       const len = Math.max(1.2, Math.min(z.w, z.h) * 0.9);
       const group = new THREE.Group();
-      group.position.set(cx, FLOOR_Y + 0.55, cz);
+      group.position.set(cx, zy + 0.55, cz);
       const dir = new THREE.Vector3(1, 0.55, 0).normalize();
       const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.42, len, 16), CANNON_MAT);
       barrel.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
@@ -3139,7 +3157,7 @@ function setHole(hole: Hole) {
       group.rotation.y = -restAngle;
       holeGroup.add(group);
       const base = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.7, 0.5, 16), CANNON_MAT);
-      base.position.set(cx, FLOOR_Y + 0.25, cz);
+      base.position.set(cx, zy + 0.25, cz);
       base.castShadow = true;
       holeGroup.add(base);
       cannons.push({ zone: z, group, restAngle });
@@ -3149,7 +3167,7 @@ function setHole(hole: Hole) {
       if (z.tx !== undefined && z.ty !== undefined) {
         const ring = new THREE.Mesh(new THREE.TorusGeometry(0.8, 0.09, 8, 24), new THREE.MeshBasicMaterial({ color: new THREE.Color(1.6, 0.9, 2.4) }));
         ring.rotation.x = Math.PI / 2;
-        ring.position.set(z.tx - holeCX, FLOOR_Y + 0.05, z.ty - holeCY);
+        ring.position.set(z.tx - holeCX, FLOOR_Y + floorZ(hole, z.tx, z.ty) + 0.05, z.ty - holeCY);
         holeGroup.add(ring);
       }
     }
@@ -3157,14 +3175,15 @@ function setHole(hole: Hole) {
   // bumpers + posts
   for (const bp of hole.bumpers ?? []) {
     const h = bp.kick > 0 ? 0.9 : 1.1;
+    const by = FLOOR_Y + baseOf(geom, bp);
     const body = new THREE.Mesh(new THREE.CylinderGeometry(bp.r, bp.r * 1.05, h, 20), bp.kick > 0 ? BUMPER_MAT : POST_MAT);
-    body.position.set(bp.x - holeCX, FLOOR_Y + h / 2, bp.y - holeCY);
+    body.position.set(bp.x - holeCX, by + h / 2, bp.y - holeCY);
     body.castShadow = true;
     holeGroup.add(body);
     if (bp.kick > 0) {
       const ring = new THREE.Mesh(new THREE.TorusGeometry(bp.r * 0.8, 0.07, 8, 24), gloss({ color: 0xffffff }));
       ring.rotation.x = Math.PI / 2;
-      ring.position.set(bp.x - holeCX, FLOOR_Y + h + 0.02, bp.y - holeCY);
+      ring.position.set(bp.x - holeCX, by + h + 0.02, bp.y - holeCY);
       holeGroup.add(ring);
     }
   }
@@ -3172,26 +3191,27 @@ function setHole(hole: Hole) {
   {
     const cup = new THREE.Mesh(new THREE.CircleGeometry(CUP_R, 28), CUP_MAT);
     if (!CUP_MAT.map) { CUP_MAT.map = surfaces().cup; CUP_MAT.needsUpdate = true; }
+    const cy = FLOOR_Y + floorZ(hole, hole.cup.x, hole.cup.y);
     cup.rotation.x = -Math.PI / 2;
-    cup.position.set(hole.cup.x - holeCX, FLOOR_Y + 0.02, hole.cup.y - holeCY);
+    cup.position.set(hole.cup.x - holeCX, cy + 0.02, hole.cup.y - holeCY);
     holeGroup.add(cup);
     const rim = new THREE.Mesh(new THREE.RingGeometry(CUP_R, CUP_R + 0.14, 28), gloss({ color: 0xf0f0f0, roughness: 0.4 }));
     rim.rotation.x = -Math.PI / 2;
-    rim.position.set(hole.cup.x - holeCX, FLOOR_Y + 0.021, hole.cup.y - holeCY);
+    rim.position.set(hole.cup.x - holeCX, cy + 0.021, hole.cup.y - holeCY);
     holeGroup.add(rim);
     const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, 5, 8), gloss({ color: 0xf4f4f4, roughness: 0.4 }));
-    stick.position.set(hole.cup.x - holeCX, FLOOR_Y + 2.5, hole.cup.y - holeCY);
+    stick.position.set(hole.cup.x - holeCX, cy + 2.5, hole.cup.y - holeCY);
     stick.castShadow = true;
     holeGroup.add(stick);
     const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 1.0, 12, 4), TM.flag);
-    flag.position.set(hole.cup.x - holeCX + 0.85, FLOOR_Y + 4.4, hole.cup.y - holeCY);
+    flag.position.set(hole.cup.x - holeCX + 0.85, cy + 4.4, hole.cup.y - holeCY);
     flag.castShadow = true;
     holeGroup.add(flag);
     flagMesh = flag;
     // tee marker
     const tee = new THREE.Mesh(new THREE.RingGeometry(0.85, 1.0, 28), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 }));
     tee.rotation.x = -Math.PI / 2;
-    tee.position.set(hole.tee.x - holeCX, FLOOR_Y + 0.012, hole.tee.y - holeCY);
+    tee.position.set(hole.tee.x - holeCX, FLOOR_Y + floorZ(hole, hole.tee.x, hole.tee.y) + 0.012, hole.tee.y - holeCY);
     holeGroup.add(tee);
   }
 }
@@ -3237,7 +3257,7 @@ export function drawScene(scene: GolfScene) {
     if (mo.type === 'rotate' || mo.type === 'swing') m.group.rotation.y = -motionAngle(mo, t);
     else if (mo.type === 'slide') {
       const k = Math.sin(((t / mo.period) + (mo.phase ?? 0)) * Math.PI * 2);
-      m.group.position.set(m.pivotX - holeCX + mo.dx * k, FLOOR_Y, m.pivotY - holeCY + mo.dy * k);
+      m.group.position.set(m.pivotX - holeCX + mo.dx * k, FLOOR_Y + m.baseZ, m.pivotY - holeCY + mo.dy * k);
     } else if (mo.type === 'blink' && m.mesh) {
       m.mesh.material = moverActive(m.block, t) ? LASER_ON_MAT : LASER_OFF_MAT;
     }
@@ -3332,7 +3352,7 @@ export function drawScene(scene: GolfScene) {
   let myBall: THREE.Vector3 | null = null;
   let myPlayer: GolfPlayer | null = null;
   for (const p of scene.players) {
-    if (p.me) { const bp = toThree(p.x, p.y, 0); bp.y += BALL_R; myBall = bp; myPlayer = p; }
+    if (p.me) { const bp = toThree(p.x, p.y, builtGeom ? groundZ(builtGeom, p.x, p.y, p.z) : 0); bp.y += BALL_R; myBall = bp; myPlayer = p; }
     if (!rigged.has(p.id)) continue;
     let slot = rigByPlayer.get(p.id);
     if (slot === undefined) {
@@ -3349,6 +3369,9 @@ export function drawScene(scene: GolfScene) {
     const character = CHARACTERS[p.characterId] ?? CHARACTERS[0];
     applyCharacter(rig, character);
 
+    // the golfer stands at the ball's level: on its platform, up its ramp
+    const standZ = builtGeom ? groundZ(builtGeom, p.holed ? hole.cup.x : p.x, p.holed ? hole.cup.y : p.y, p.holed ? undefined : p.z) : 0;
+    rig.groundZ = standZ;
     const ballPos = toThree(p.x, p.y, 0);
     // stance: beside the ball, facing across the target line
     const facing = p.holed ? st.lastFacing : p.facing;
@@ -3437,12 +3460,12 @@ export function drawScene(scene: GolfScene) {
     aimArrow.rotation.order = 'YXZ';
     aimArrow.rotation.y = -Math.atan2(sz, sx);
     aimArrow.rotation.x = -Math.PI / 2;
-    aimArrow.position.set(myBall.x + sx * (BALL_R + len / 2), FLOOR_Y + 0.04, myBall.z + sz * (BALL_R + len / 2));
+    aimArrow.position.set(myBall.x + sx * (BALL_R + len / 2), myBall.y - BALL_R + 0.04, myBall.z + sz * (BALL_R + len / 2));
     aimHead.visible = true;
     aimHead.rotation.order = 'YXZ';
     aimHead.rotation.y = -Math.atan2(sz, sx);
     aimHead.rotation.x = -Math.PI / 2;
-    aimHead.position.set(myBall.x + sx * (BALL_R + len + 0.3), FLOOR_Y + 0.045, myBall.z + sz * (BALL_R + len + 0.3));
+    aimHead.position.set(myBall.x + sx * (BALL_R + len + 0.3), myBall.y - BALL_R + 0.045, myBall.z + sz * (BALL_R + len + 0.3));
     const heat = new THREE.Color().setHSL(THREE.MathUtils.lerp(0.25, 0.0, a.power), 1, 0.55).multiplyScalar(1.9);
     (aimArrow.material as THREE.MeshBasicMaterial).color.copy(heat);
     (aimHead.material as THREE.MeshBasicMaterial).color.copy(heat);

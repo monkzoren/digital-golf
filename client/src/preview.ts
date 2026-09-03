@@ -6,11 +6,12 @@
 // `course` matches a course name (substring), `hole` is 1-based, `cam` is
 // 'play' (behind the ball on the tee), 'overview' or 'cup'; `look` orbits the
 // free-look camera by that many radians. `?theme=space` overrides the hole's
-// theme; `pitch` tilts it. The page sets `window.previewReady` once the
-// first frames are drawn.
+// theme; `pitch` tilts it. `?mode=2d` draws the editor's top-down view
+// instead. The page sets `window.previewReady` once the first frames are drawn.
 import { COURSES } from '@shared/courses';
 import { LIBRARY } from '@shared/library';
 import { drawScene, initRenderer, orbitLook, type GolfScene } from './render3d';
+import { drawHole, fitCamera, themeFor } from './render';
 
 const q = new URLSearchParams(location.search);
 const all = [...COURSES, ...LIBRARY];
@@ -23,7 +24,20 @@ const look = Number(q.get('look') ?? 0);
 const pitch = Number(q.get('pitch') ?? 0);
 
 const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
-initRenderer(canvas);
+if (q.get('mode') === '2d') {
+  const g = canvas.getContext('2d')!;
+  const t0 = performance.now();
+  const loop = () => {
+    drawHole(g, hole, fitCamera(hole, canvas.width, canvas.height), canvas.width, canvas.height, { t: (performance.now() - t0) / 1000, theme: themeFor(hole, hole.theme), editor: true });
+    (window as any).previewReady = true;
+    requestAnimationFrame(loop);
+  };
+  loop();
+} else {
+  initRenderer(canvas);
+  run3d();
+}
+function run3d() {
 
 const scene: GolfScene = {
   hole, holeKey: `preview:${course.id}:${hole.name}`, t: 0, players: [{
@@ -43,3 +57,4 @@ function frame() {
   requestAnimationFrame(frame);
 }
 frame();
+}

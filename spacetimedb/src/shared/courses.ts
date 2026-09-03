@@ -12,6 +12,12 @@ export interface Rect {
   y: number;
   w: number;
   h: number;
+  /** floor rects only: the height of this slab — a raised platform. Where
+   *  it meets a lower slab its edge is a cliff face (a wall from the lower
+   *  level up to this one, no rail on top) that a ball on the lower side
+   *  hits and a ball on top rolls off. Ramps climb onto it; everything
+   *  placed on it (blocks, bumpers, hazards, the cup) sits at its level. */
+  z?: number;
 }
 
 export type ZoneKind =
@@ -107,6 +113,10 @@ export interface Seg {
   /** a floor rail: it runs along the felt, so `h` is measured from the
    *  ground under the ball (it climbs a wedge with the wedge) */
   rail?: true;
+  /** a platform's cliff face: `h` is the platform's height (absolute) and,
+   *  like a wedge's face, a ball whose centre is within a small step of the
+   *  top climbs onto it (a ramp that meets the platform a hair low still works) */
+  cliff?: true;
   /** restitution override (rubber walls); default WALL_E */
   e?: number;
 }
@@ -115,8 +125,18 @@ export interface Seg {
  *  `h`): drawn this tall AND simulated this tall, so a ball that gets
  *  higher than this flies over it. */
 export const WALL_H = 1.1;
+/** Downward gravity (u/s²) — here, not in physics.ts, so course helpers can size ramps. */
+export const GRAVITY = 32;
 
-export const R = (x: number, y: number, w: number, h: number): Rect => ({ x, y, w, h });
+/** Height of the floor under (x, y): the tallest slab covering the point
+ *  (a platform laid over a lower floor wins), 0 off the floor. */
+export function floorZ(hole: Hole, x: number, y: number): number {
+  let z = 0;
+  for (const r of hole.floor) if (r.z && r.z > z && pointInRect(x, y, r)) z = r.z;
+  return z;
+}
+
+export const R = (x: number, y: number, w: number, h: number, z?: number): Rect => (z ? { x, y, w, h, z } : { x, y, w, h });
 export const rectPts = (r: Rect) => [r.x, r.y, r.x + r.w, r.y, r.x + r.w, r.y + r.h, r.x, r.y + r.h];
 export const polyRect = (x: number, y: number, w: number, h: number): Block => ({ pts: rectPts(R(x, y, w, h)) });
 
@@ -192,57 +212,71 @@ export function pointInPoly(px: number, py: number, pts: number[]): boolean {
   return inside;
 }
 
-/** Boundary of a union of axis-aligned rects as wall segments: each rect
- *  edge minus the parts that lie inside (or on the boundary of) another
- *  rect. Two rects sharing an edge therefore open a doorway between them. */
+/** Walls of a floor: the union's boundary as rails, and every step between
+ *  slabs of different heights as a cliff face. Each rect edge is split at
+ *  the other rects' boundaries and each piece is judged by what lies just
+ *  outside it: nothing — a rail (rides the felt, WALL_H tall); a lower slab
+ *  — a cliff face, a wall as tall as this slab (absolute; the ball on top
+ *  rolls off it, the ball below bounces off it); a slab at least as high —
+ *  a doorway, no wall (a higher one makes its own cliff). A piece buried
+ *  under a higher slab on its inner side belongs to that slab, not this. */
 export function floorWalls(floor: Rect[]): Seg[] {
   const out: Seg[] = [];
-  const EPS = 1e-6;
-  for (let i = 0; i < floor.length; i++) {
-    const r = floor[i];
-    const edges: [number, number, number, number][] = [
-      [r.x, r.y, r.x + r.w, r.y],
-      [r.x + r.w, r.y, r.x + r.w, r.y + r.h],
-      [r.x + r.w, r.y + r.h, r.x, r.y + r.h],
-      [r.x, r.y + r.h, r.x, r.y],
+  const EPS = 1e-6, PROBE = 1e-3;
+  const zAt = (x: number, y: number): number => {
+    let z = -Infinity;
+    for (const o of floor) if (pointInRect(x, y, o)) z = Math.max(z, o.z ?? 0);
+    return z;
+  };
+  for (const r of floor) {
+    const rz = r.z ?? 0;
+    // edges with their outward normals
+    const edges: [number, number, number, number, number, number][] = [
+      [r.x, r.y, r.x + r.w, r.y, 0, -1],
+      [r.x + r.w, r.y, r.x + r.w, r.y + r.h, 1, 0],
+      [r.x + r.w, r.y + r.h, r.x, r.y + r.h, 0, 1],
+      [r.x, r.y + r.h, r.x, r.y, -1, 0],
     ];
-    for (const [ax, ay, bx, by] of edges) {
-      // parametrise the edge 0..1 and cut out covered intervals
-      let pieces: [number, number][] = [[0, 1]];
-      for (let j = 0; j < floor.length; j++) {
-        if (i === j) continue;
-        const o = floor[j];
-        // interval of t where the edge lies within o's closed box
-        let t0: number, t1: number;
-        if (Math.abs(ay - by) < EPS) {
-          // horizontal edge
-          if (ay < o.y - EPS || ay > o.y + o.h + EPS) continue;
-          const lo = Math.max(Math.min(ax, bx), o.x), hi = Math.min(Math.max(ax, bx), o.x + o.w);
-          if (hi - lo <= EPS) continue;
-          t0 = (lo - ax) / (bx - ax); t1 = (hi - ax) / (bx - ax);
-        } else {
-          if (ax < o.x - EPS || ax > o.x + o.w + EPS) continue;
-          const lo = Math.max(Math.min(ay, by), o.y), hi = Math.min(Math.max(ay, by), o.y + o.h);
-          if (hi - lo <= EPS) continue;
-          t0 = (lo - ay) / (by - ay); t1 = (hi - ay) / (by - ay);
+    for (const [ax, ay, bx, by, nx, ny] of edges) {
+      const horizontal = Math.abs(ay - by) < EPS;
+      const len = horizontal ? bx - ax : by - ay; // signed
+      // split the edge where any other rect's boundary crosses it
+      const ts = new Set<number>([0, 1]);
+      for (const o of floor) {
+        if (o === r) continue;
+        for (const v of horizontal ? [o.x, o.x + o.w] : [o.y, o.y + o.h]) {
+          const t = (v - (horizontal ? ax : ay)) / len;
+          if (t > EPS && t < 1 - EPS) ts.add(t);
         }
-        const c0 = Math.min(t0, t1), c1 = Math.max(t0, t1);
-        const next: [number, number][] = [];
-        for (const [p0, p1] of pieces) {
-          if (c1 <= p0 + EPS || c0 >= p1 - EPS) { next.push([p0, p1]); continue; }
-          if (c0 > p0 + EPS) next.push([p0, c0]);
-          if (c1 < p1 - EPS) next.push([c1, p1]);
-        }
-        pieces = next;
       }
-      for (const [p0, p1] of pieces) {
-        out.push({
-          ax: ax + (bx - ax) * p0, ay: ay + (by - ay) * p0,
-          bx: ax + (bx - ax) * p1, by: ay + (by - ay) * p1,
-          h: WALL_H,
-          rail: true,
-        });
+      const sorted = [...ts].sort((a, b) => a - b);
+      let run: { t0: number; t1: number; h: number; rail: boolean } | null = null;
+      const flush = () => {
+        if (!run) return;
+        const seg: Seg = {
+          ax: ax + (bx - ax) * run.t0, ay: ay + (by - ay) * run.t0,
+          bx: ax + (bx - ax) * run.t1, by: ay + (by - ay) * run.t1,
+          h: run.h,
+        };
+        if (run.rail) seg.rail = true; else seg.cliff = true;
+        out.push(seg);
+        run = null;
+      };
+      for (let i = 0; i + 1 < sorted.length; i++) {
+        const t0 = sorted[i], t1 = sorted[i + 1];
+        const tm = (t0 + t1) / 2;
+        const mx = ax + (bx - ax) * tm, my = ay + (by - ay) * tm;
+        const zIn = zAt(mx - nx * PROBE, my - ny * PROBE);
+        const zOut = zAt(mx + nx * PROBE, my + ny * PROBE);
+        let kind: { h: number; rail: boolean } | null = null;
+        if (zIn > rz + EPS) kind = null; // a higher slab covers this side: its edge, not ours
+        else if (zOut === -Infinity) kind = { h: WALL_H, rail: true }; // the outside: a rail
+        else if (zOut < rz - EPS) kind = { h: rz, rail: false }; // a drop: this slab's cliff face
+        // else: level or higher next door — open
+        if (kind && run && run.h === kind.h && run.rail === kind.rail && Math.abs(run.t1 - t0) < EPS) run.t1 = t1;
+        else { flush(); if (kind) run = { t0, t1, ...kind }; }
       }
+      flush();
     }
   }
   return out;
@@ -302,6 +336,15 @@ export function blockPtsAt(b: Block, t: number): number[] {
     }
   }
   return out;
+}
+
+/** A ramp that climbs exactly `rise` units over its run (to meet a platform
+ *  that high): the slope's power is the gravity share that makes the wedge
+ *  that steep. Enter it from the low edge; `angle` points downhill. */
+export function slopeTo(x: number, y: number, w: number, h: number, angle: number, rise: number): Zone {
+  const ext = rampExtent({ kind: 'slope', x, y, w, h, angle });
+  const power = Math.round(GRAVITY * Math.sin(Math.atan(rise / (ext || 1))) * 1000) / 1000;
+  return { kind: 'slope', x, y, w, h, angle, power };
 }
 
 /** Length of a slope zone measured along its downhill direction. */
@@ -704,6 +747,16 @@ export const TOYBOX: Course = {
       floor: [R(0, 0, 44, 16)],
       zones: [gfield(12, 0, 20, 16, 90, 9), sand(34, 12, 10, 4)],
       bumpers: [post(37, 8, 0.6)],
+    },
+    {
+      name: 'Platforms',
+      par: 3,
+      tip: 'A raised green. Climb the ramp onto it — too soft rolls back; the far edge is a drop to the cup.',
+      tee: { x: 4, y: 6 },
+      cup: { x: 46, y: 6 },
+      floor: [R(0, 0, 50, 12), R(18, 0, 18, 12, 1.5)],
+      zones: [slopeTo(12, 0, 6, 12, 180, 1.5), sand(40, 0, 3, 12)],
+      bumpers: [post(27, 3, 0.6), post(27, 9, 0.6)],
     },
   ],
 };
