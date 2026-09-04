@@ -82,7 +82,10 @@ TypeScript three.js game with a built-in course editor.
   Adding a fantastical world is one record in `client/src/themes3d.ts` plus
   a 2D palette (`THEMES` in `render.ts`) and its name in `THEME_NAMES`.
 - **Course editor.** Draw floors, walls, movers, surfaces and hazards on a
-  grid, tweak every parameter in a properties panel, undo/redo, duplicate,
+  grid, then shape them in place: grips on the selection resize, rotate,
+  aim and stretch it (Shift+wheel turns, Alt+wheel raises), and every
+  parameter is a slider beside a value box — drag it, scrub its label or
+  wheel over it and the canvas follows live. Undo/redo, duplicate,
   import/export JSON, **test-play on the real 3D stage with the exact
   physics the server runs**, save drafts, publish to everyone. Built-in courses can be duplicated as a
   starting point. Published courses appear under *Community* when creating a

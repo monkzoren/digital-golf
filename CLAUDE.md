@@ -23,6 +23,12 @@ README.md for architecture and run instructions. Key facts:
   cannon, gravity), block motion (rotate/slide/swing/blink) and block `bounce` must
   be handled in physics.ts, mapformat.ts, render.ts (2D), render3d.ts (3D)
   and editor.ts (tool + props); `TOYBOX` in courses.ts has one hole per piece.
+  In the editor every number is a slider + value box pair (`numIn`) bound
+  LIVE through `bind` — one undo step per gesture (`beginGesture` /
+  `endGesture`; wheel bursts settle via `settleGesture`) — and the
+  on-canvas gizmo is `gripsOf` (where the grips are) + `dragGrip` (what a
+  drag does) + `wheelAdjust` (Shift/Alt+wheel); a new parameter that can
+  be shown on the canvas should get a grip there, not just a field.
   In 3D a magnet is a black hole (`blackHoleMesh`: well, spinning accretion
   disc, horizon ring, dust on tightening orbits; orange and reversed when it
   repels), animated per frame from `blackHoles`.
