@@ -156,3 +156,18 @@ README.md for architecture and run instructions. Key facts:
 - Reducer promises reject with `SenderError` messages on the client; call
   them through `rd()` in `main.ts` so rejections become toasts.
 - Local server is `spacetime start`; DB name `digital-golf`.
+- Accounts: `client/src/auth.ts` is the tennis Firebase module (`dg_` keys):
+  everyone is signed in anonymously on load, sign-in LINKS the guest, and
+  `connect()` takes `getToken()`. The Firebase project is the one SHARED by
+  every Digital game and the championship hub — one project means one
+  identity per player everywhere. There is still no `account` table or
+  `profiles` sidecar here; identity is the whole port so far.
+- Championship hook (digital-championship): `lobby.championshipLeg` (appended
+  u64 hub leg id, 0 = ordinary room) marks a room the hub's relay opened via
+  `create_championship_room` (gated on `RELAY_ISSUER`, a token minted with
+  this server's key; the hub and every sibling game carry the same issuer
+  string). The venue is a course NAME; the championship host is the room
+  host and starts the round as usual. The finishing order is written ONCE
+  to the public `leg_result` table (`recordLegResult`, from the tick's
+  last-hole finish and from `abortRound`); PLAY AGAIN never rescores. The
+  relay carries it to the hub, which scores it.

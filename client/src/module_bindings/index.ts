@@ -34,6 +34,7 @@ import {
 } from "spacetimedb";
 
 // Import all reducer arg schemas
+import CreateChampionshipRoomReducer from "./create_championship_room_reducer";
 import CreateLobbyReducer from "./create_lobby_reducer";
 import DeleteCourseReducer from "./delete_course_reducer";
 import JoinLobbyReducer from "./join_lobby_reducer";
@@ -62,6 +63,7 @@ import UndoShotReducer from "./undo_shot_reducer";
 import ChatRow from "./chat_table";
 import CourseRow from "./course_table";
 import HoleRow from "./hole_table";
+import LegResultRow from "./leg_result_table";
 import LobbyRow from "./lobby_table";
 import MyCoursesRow from "./my_courses_table";
 import MyRatingsRow from "./my_ratings_table";
@@ -113,6 +115,20 @@ const tablesSchema = __schema({
       { name: 'hole_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, HoleRow),
+  legResult: __table({
+    name: 'leg_result',
+    indexes: [
+      { accessor: 'id', name: 'leg_result_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'byLeg', name: 'leg_result_leg_id_idx_btree', algorithm: 'btree', columns: [
+        'legId',
+      ] },
+    ],
+    constraints: [
+      { name: 'leg_result_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, LegResultRow),
   lobby: __table({
     name: 'lobby',
     indexes: [
@@ -160,6 +176,7 @@ const tablesSchema = __schema({
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
+  __reducerSchema("create_championship_room", CreateChampionshipRoomReducer),
   __reducerSchema("create_lobby", CreateLobbyReducer),
   __reducerSchema("delete_course", DeleteCourseReducer),
   __reducerSchema("join_lobby", JoinLobbyReducer),

@@ -44,6 +44,13 @@ const EV_BOOST = 9;
 const EV_RESET = 10;
 
 const MAX_PLAYERS = 32;
+
+// The championship relay (digital-championship/relay) mints a token signed
+// with THIS server's key carrying this issuer — the trick the tennis
+// framework's profile service uses. It may open a room for a championship
+// leg and nothing else; the room reports its result through `leg_result`.
+// Mirrored in the hub and every sibling game — change everywhere.
+const RELAY_ISSUER = 'digital-championship-relay';
 const N_COLORS = 12;
 const N_CHARACTERS = 18; // mirrors client/src/characters.ts
 const INTRO_SECS = 3.5;
@@ -81,6 +88,28 @@ const Lobby = table(
     // NOTE: appended columns — more round options
     waterPenalty: t.bool().default(true), // water = +1 stroke (off: free reset)
     powerMul: t.u8().default(100), // shot power %, 80 soft · 100 normal · 130 turbo
+    // NOTE: appended column — the championship leg this room plays (a hub
+    // `leg` id; 0 = an ordinary room). Set only by create_championship_room.
+    championshipLeg: t.u64().default(0n),
+  }
+);
+
+// The finishing order of a championship room, written exactly once when the
+// round's result is final. The relay reads it into the hub, which does the
+// scoring (and drops non-entrants), so this is everyone on the scorecard,
+// lowest total first.
+const LegResult = table(
+  {
+    name: 'leg_result',
+    public: true,
+    indexes: [{ accessor: 'byLeg', algorithm: 'btree', columns: ['legId'] }],
+  },
+  {
+    id: t.u64().primaryKey().autoInc(),
+    legId: t.u64(),
+    placings: t.array(t.identity()),
+    names: t.array(t.string()),
+    finishedAt: t.timestamp(),
   }
 );
 
@@ -260,6 +289,7 @@ const spacetimedb = schema({
   session: Session,
   rollClock: RollClock,
   tickTimer: TickTimer,
+  legResult: LegResult,
 });
 export default spacetimedb;
 
@@ -472,7 +502,30 @@ function abortRound(ctx: Ctx, lobby: LobbyRow) {
   ctx.db.lobby.id.update({
     ...lobby, status: L_FINISHED, phase: PH_FINAL, phaseTicks: 0, championName: ranked[0]?.name ?? '',
   });
+  recordLegResult(ctx, lobby, ranked);
   stopTicking(ctx, lobby.id);
+}
+
+// ---------------------------------------------------------------------------
+// Championship legs. The hub (digital-championship) asks the relay to open a
+// room here; the room is ordinary in every way except that its result is
+// written to `leg_result` for the relay to carry back.
+// ---------------------------------------------------------------------------
+function requireRelay(ctx: Ctx) {
+  if (ctx.senderAuth.jwt?.issuer !== RELAY_ISSUER) throw new SenderError('Not authorized');
+}
+
+/** Write the round's finishing order for the hub — once; PLAY AGAIN never rescores. */
+function recordLegResult(ctx: Ctx, lobby: LobbyRow, ranked: PlayerRow[]) {
+  if (lobby.championshipLeg === 0n) return;
+  for (const r of ctx.db.legResult.byLeg.filter(lobby.championshipLeg)) if (r) return;
+  ctx.db.legResult.insert({
+    id: 0n,
+    legId: lobby.championshipLeg,
+    placings: ranked.map(p => p.identity),
+    names: ranked.map(p => p.name),
+    finishedAt: ctx.timestamp,
+  });
 }
 
 function finishHoleFor(ctx: Ctx, lobby: LobbyRow, p: PlayerRow, score: number, holedNow: boolean): PlayerRow {
@@ -616,10 +669,65 @@ export const create_lobby = spacetimedb.reducer(
       createdAt: ctx.timestamp,
       waterPenalty,
       powerMul: cleanPowerMul(powerMul),
+      championshipLeg: 0n,
     });
     const fresh = ctx.db.player.identity.find(ctx.sender)!;
     ctx.db.player.identity.update({
       ...fresh, lobbyId: lobby.id, seat: 0, total: 0, holeScores: [], color: freeColor(ctx, lobby.id, fresh.color), ready: false, kicked: false,
+    });
+  }
+);
+
+/**
+ * Open a room for a championship leg. Relay only. The hub picked the code
+ * (six letters, so it can never clash with a five-letter one of ours) and
+ * the championship host becomes the room host — the same identity here as
+ * on the hub, because every game shares one Firebase project. Everyone
+ * joins with the code and the host starts the round as usual. `venue` is a
+ * course NAME (built-in, or any published course).
+ */
+export const create_championship_room = spacetimedb.reducer(
+  { legId: t.u64(), code: t.string(), venue: t.string(), hostId: t.identity(), players: t.u8() },
+  (ctx, { legId, code, venue, hostId, players }) => {
+    requireRelay(ctx);
+    if (legId === 0n) throw new SenderError('Bad leg id');
+    for (const l of ctx.db.lobby.iter()) {
+      if (l.championshipLeg === legId) return; // already open — an earlier ack was lost
+    }
+    const clean = code.trim().toUpperCase();
+    if (!/^[A-Z0-9]{4,8}$/.test(clean)) throw new SenderError('Bad room code');
+    if (ctx.db.lobby.code.find(clean)) throw new SenderError('Room code already in use');
+    const wanted = venue.trim().toLowerCase();
+    let course: CourseRow | null = null;
+    for (const c of ctx.db.course.iter()) {
+      if (!c.published || c.holeCount === 0 || c.name.toLowerCase() !== wanted) continue;
+      if (!course || (c.builtin && !course.builtin)) course = c; // a built-in outranks a namesake
+    }
+    if (!course) throw new SenderError(`No published course called "${venue.trim()}"`);
+    void players; // a round holds up to MAX_PLAYERS; nothing to size
+    ctx.db.lobby.insert({
+      id: 0n,
+      code: clean,
+      hostId,
+      status: L_OPEN,
+      phase: PH_LOBBY,
+      courseId: course.id,
+      courseName: course.name,
+      holeCount: course.holeCount,
+      holeId: 0n,
+      isPublic: false,
+      holeIndex: 0,
+      phaseTicks: 0,
+      holeTick: 0,
+      maxStrokes: DEFAULT_MAX_STROKES,
+      holeSecs: DEFAULT_HOLE_SECS,
+      collisions: true,
+      round: 0,
+      championName: '',
+      createdAt: ctx.timestamp,
+      waterPenalty: true,
+      powerMul: 100,
+      championshipLeg: legId,
     });
   }
 );
@@ -1010,6 +1118,7 @@ export const game_tick = spacetimedb.reducer(
           ctx.db.lobby.id.update({
             ...cur, status: L_FINISHED, phase: PH_FINAL, phaseTicks: 0, championName: ranked[0]?.name ?? '',
           });
+          recordLegResult(ctx, cur, ranked);
           ctx.db.tickTimer.scheduledId.delete(arg.scheduledId);
         }
         return;

@@ -20,6 +20,11 @@ import { KB_TURN_RATE, KB_TURN_RATE_FINE, dragAim, smoothAngle } from './aim';
 import { CHARACTERS, type Character } from './characters';
 import { type GraphicsSettings, type PresetName, applyPreset, getGraphics, onGraphicsChange, presetOf, setGraphics } from './graphics';
 import { isMuted, setMuted, sfx, unlockAudio } from './audio';
+import {
+  initAuth, getToken, localToken, firebaseEnabled, accountKind, accountLabel, authDegraded, onAuthChange,
+  signInWithPassword, signUpWithPassword, sendPasswordReset, signInWithGoogle, sendEmailLink,
+  completeEmailLink, isEmailLinkReturn, signOut, type SignInResult,
+} from './auth';
 import { openEditor, closeEditor, editorIsOpen, editorTesting, editorTestAimable, editorCancelTestAim } from './editor';
 import { bindFreeLook } from './freelook';
 import { drawHole, fitCamera, themeFor } from './render';
@@ -122,9 +127,15 @@ function scheduleReconnect() {
   if (reconnectTimer !== null) return;
   reconnectTimer = window.setTimeout(() => { reconnectTimer = null; connect(); }, 2000);
 }
-function connect() {
+let connectedDegraded = false;
+async function connect() {
   const gen = ++connectGen;
-  const token = store.get('dg_token') ?? undefined;
+  // A fresh Firebase ID token (the SDK refreshes it hourly): the identity
+  // SpacetimeDB derives from it is what the player row is keyed to. Without
+  // Firebase this is the device-local SpacetimeDB token instead.
+  const token = await getToken();
+  connectedDegraded = authDegraded();
+  if (gen !== connectGen) return;
   // a fresh connection has no subscriptions: forget the dead handles, or
   // subscribeCourse would think the holes are still on their way and the
   // next hole would say LOADING for the rest of the round
@@ -146,7 +157,8 @@ function connect() {
       if (gen !== connectGen) return;
       console.log('[dg] connected as', identity.toHexString());
       myIdentity = identity;
-      store.set('dg_token', tok);
+      // Only a local identity is worth remembering: a Firebase one is minted fresh every time.
+      if (!firebaseEnabled || authDegraded()) localToken.set(tok);
       conn.subscriptionBuilder()
         .onApplied(() => { subscribed = true; try { onSubscribed(); } catch (e) { console.error('[dg] onSubscribed threw', e); } })
         .onError(e => { console.error('[dg] subscription error', e); $('connecting-sub').textContent = 'SUBSCRIPTION ERROR — VERSION MISMATCH?'; })
@@ -163,13 +175,24 @@ function connect() {
     .onConnectError((_c, err) => {
       if (gen !== connectGen) return;
       console.error('[dg] connect error', err);
-      if (/verify token|unauthorized|401/i.test(String((err as any)?.message ?? err))) store.del('dg_token');
+      if (/verify token|unauthorized|401/i.test(String((err as any)?.message ?? err))) localToken.clear();
       $('connecting-sub').textContent = 'CONNECTION FAILED — IS THE SERVER RUNNING? RETRYING…';
       showOverlay('connecting');
       scheduleReconnect();
     })
     .build();
   (window as any).__dg = { get conn() { return conn; } };
+}
+
+/** Tear the socket down and come back on whatever identity auth now holds
+ *  (a sign-in changed it, or the account service turned up late). */
+function restartConnection() {
+  connectGen++;
+  subscribed = false;
+  try { conn?.disconnect(); } catch { /* not connected */ }
+  $('connecting-sub').textContent = 'RECONNECTING…';
+  showOverlay('connecting');
+  void connect();
 }
 
 /** Reducer calls that surface a rejection (SenderError) as a toast. */
@@ -350,9 +373,136 @@ function submitName() {
   renderMenu();
 }
 $('name-ok').onclick = submitName;
+// The name gate is the one screen every first-time visitor sees, so it is
+// also where an existing account signs in — same as the other Digital games.
+function refreshNameModal() {
+  const acct = $('name-account');
+  const note = $('name-account-note');
+  if (!firebaseEnabled) { acct.classList.add('hidden'); return; }
+  acct.classList.remove('hidden');
+  const kind = accountKind();
+  $('name-or').classList.toggle('hidden', kind === 'linked');
+  $('name-signin').classList.toggle('hidden', kind === 'linked');
+  note.classList.toggle('linked', kind === 'linked');
+  note.textContent =
+    kind === 'linked' ? `SIGNED IN AS ${accountLabel().toUpperCase()}`
+    : kind === 'offline' ? 'ACCOUNT SERVICE UNREACHABLE — PLAYING ON A DEVICE-LOCAL IDENTITY'
+    : '';
+}
+$('name-signin').onclick = () => { modal('name-modal', false); openSignInModal(); };
 $('name-input').addEventListener('keydown', e => { if (e.key === 'Enter') submitName(); });
 $('name-edit').onclick = () => { ($('name-input') as HTMLInputElement).value = me()?.name ?? ''; modal('name-modal', true); $('name-input').focus(); };
 $('char-chip').onclick = () => { intent = 'setchar'; showOverlay('select-player'); };
+
+// ---------------------------------------------------------------------------
+// Accounts (Firebase). One project is shared by every Digital game and the
+// championship hub, so a signed-in player is the same identity everywhere.
+// ---------------------------------------------------------------------------
+function refreshAccountChip() {
+  const chip = $('account-chip');
+  chip.classList.remove('linked', 'offline');
+  if (!firebaseEnabled) { chip.classList.add('hidden'); return; }
+  chip.classList.remove('hidden');
+  const kind = accountKind();
+  if (kind === 'linked') { chip.classList.add('linked'); chip.textContent = accountLabel().toUpperCase(); }
+  else if (kind === 'offline') { chip.classList.add('offline'); chip.textContent = 'ACCOUNTS OFFLINE'; }
+  else chip.textContent = 'SIGN IN';
+}
+$('account-chip').onclick = async () => {
+  if (accountKind() === 'linked') {
+    if (!confirm('Sign out? You become a guest on this device; sign in again any time to return to your account.')) return;
+    await signOut();
+    refreshAccountChip();
+    restartConnection();
+    return;
+  }
+  openSignInModal();
+};
+
+const siEmail = $('si-email') as HTMLInputElement;
+const siPassword = $('si-password') as HTMLInputElement;
+let siMode: 'signin' | 'create' = 'signin';
+function siMessage(msg: string, kind: '' | 'ok' | 'err' = '') {
+  const el = $('si-msg');
+  el.textContent = msg;
+  el.style.color = kind === 'err' ? 'var(--red)' : kind === 'ok' ? 'var(--green)' : '';
+}
+function setSignInMode(mode: 'signin' | 'create') {
+  siMode = mode;
+  $('si-title').textContent = mode === 'create' ? 'CREATE ACCOUNT' : 'WELCOME BACK';
+  $('si-sub').textContent = mode === 'create'
+    ? 'KEEP THIS GOLFER — AND USE IT IN EVERY DIGITAL GAME'
+    : 'THE SAME ACCOUNT AS THE OTHER DIGITAL GAMES';
+  $('si-submit').textContent = mode === 'create' ? 'Create Account' : 'Sign In';
+  $('si-mode').textContent = mode === 'create' ? 'Already have one? Sign in' : 'New here? Create an account';
+  siPassword.autocomplete = mode === 'create' ? 'new-password' : 'current-password';
+}
+function openSignInModal() {
+  siMessage('');
+  siPassword.value = '';
+  setSignInMode('signin');
+  modal('signin-modal', true);
+  siEmail.focus();
+}
+function closeSignInModal() { modal('signin-modal', false); siPassword.value = ''; }
+function afterSignIn(res: SignInResult) {
+  refreshAccountChip();
+  refreshNameModal();
+  if (!res.ok) { siMessage(res.error, 'err'); return; }
+  closeSignInModal();
+  notify(res.switched ? 'SIGNED IN TO YOUR EXISTING ACCOUNT — THIS DEVICE\'S GUEST STAYS BEHIND' : 'SIGNED IN');
+  restartConnection();
+}
+$('si-close').onclick = () => { closeSignInModal(); if (!me()?.name) modal('name-modal', true); };
+$('si-mode').onclick = () => { setSignInMode(siMode === 'create' ? 'signin' : 'create'); siMessage(''); };
+async function submitPassword() {
+  const btn = $('si-submit') as HTMLButtonElement;
+  btn.disabled = true;
+  siMessage(siMode === 'create' ? 'CREATING…' : 'SIGNING IN…');
+  const res = siMode === 'create'
+    ? await signUpWithPassword(siEmail.value, siPassword.value)
+    : await signInWithPassword(siEmail.value, siPassword.value);
+  btn.disabled = false;
+  if (!res.ok && /already has an account/i.test(res.error)) setSignInMode('signin');
+  afterSignIn(res);
+}
+$('si-submit').onclick = () => void submitPassword();
+for (const input of [siEmail, siPassword]) {
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); void submitPassword(); } });
+}
+$('si-forgot').onclick = async () => {
+  const res = await sendPasswordReset(siEmail.value);
+  if (res.ok) siMessage(`RESET LINK SENT TO ${siEmail.value.trim().toUpperCase()}`, 'ok');
+  else siMessage(res.error, 'err');
+};
+$('si-google').onclick = async () => {
+  const btn = $('si-google') as HTMLButtonElement;
+  btn.disabled = true;
+  siMessage('OPENING GOOGLE…');
+  const res = await signInWithGoogle();
+  btn.disabled = false;
+  afterSignIn(res);
+};
+$('si-link').onclick = async () => {
+  const btn = $('si-link') as HTMLButtonElement;
+  btn.disabled = true;
+  siMessage('SENDING…');
+  const res = await sendEmailLink(siEmail.value);
+  btn.disabled = false;
+  if (res.ok) siMessage(`LINK SENT TO ${siEmail.value.trim().toUpperCase()} — OPEN IT ON THIS DEVICE`, 'ok');
+  else siMessage(res.error, 'err');
+};
+onAuthChange(() => {
+  refreshAccountChip();
+  refreshNameModal();
+  // Auth turned up late: move off the degraded device-local identity onto
+  // the account the player actually owns.
+  if (connectedDegraded && !authDegraded()) {
+    connectedDegraded = false;
+    notify('ACCOUNT SERVICE RECONNECTED');
+    restartConnection();
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Menu
@@ -631,7 +781,8 @@ function renderRoom() {
   const course = courseById(lobby.courseId);
   $('lobby-code').textContent = lobby.code;
   $('lobby-link').textContent = `${location.origin}${location.pathname}?lobby=${lobby.code}`;
-  $('waiting-title').textContent = lobby.isPublic ? 'PUBLIC ROUND' : 'PRIVATE ROUND';
+  const isLeg = (lobby.championshipLeg ?? 0n) !== 0n;
+  $('waiting-title').textContent = isLeg ? 'CHAMPIONSHIP LEG' : lobby.isPublic ? 'PUBLIC ROUND' : 'PRIVATE ROUND';
   const membersNow = lobbyPlayers(lobby.id);
   const waitingOn = membersNow.filter(q => q.online && !q.ready);
   const allReady = waitingOn.length === 0;
@@ -1470,4 +1621,17 @@ buildGfxPanel();
 
 buildCharGrid();
 requestAnimationFrame(frame);
-connect();
+// Auth first: the identity SpacetimeDB derives from the Firebase token is
+// what the player row is keyed to. A returning email link is finished before
+// connecting for the same reason.
+void initAuth()
+  .then(async () => {
+    if (!isEmailLinkReturn()) return;
+    $('connecting-sub').textContent = 'FINISHING SIGN-IN…';
+    const res = await completeEmailLink(async () =>
+      window.prompt('Confirm the email address the sign-in link was sent to:')
+    );
+    if (res && !res.ok) notify(res.error, true);
+    else if (res) notify(res.switched ? 'SIGNED IN TO YOUR EXISTING ACCOUNT' : 'SIGNED IN');
+  })
+  .then(() => { refreshAccountChip(); refreshNameModal(); void connect(); });
