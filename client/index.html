@@ -3591,6 +3591,19 @@
     .course-row .cmeta { font-size: 9px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .course-row.selected::after { top: 4px; right: 4px; }
     .course-empty { color: var(--dim-2); font-style: italic; letter-spacing: 1px; padding: 20px; font-size: 12px; }
+    /* Star ratings: the rate card on the gameover screen and the revisable
+       row in the course detail pane. Hovering lights every star up to it. */
+    .stars { display: inline-flex; gap: 2px; }
+    .stars.hidden { display: none; }
+    .stars .star { all: unset; cursor: pointer; padding: 0 1px; font-size: 26px; line-height: 1; color: var(--dim-2); transition: color 0.12s, transform 0.12s; }
+    .stars.small .star { font-size: 18px; }
+    .stars .star.lit { color: var(--gold); }
+    .stars:not(.off):hover .star { color: var(--dim-2); }
+    .stars:not(.off) .star:hover, .stars:not(.off) .star:has(~ .star:hover) { color: var(--gold); transform: scale(1.15); }
+    .stars.off .star { cursor: default; }
+    #rate-card { text-align: center; margin: 2px 0; }
+    #rate-card.hidden { display: none; }
+    #rate-card .stars { margin-top: 4px; }
     #course-detail { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 2px 8px 2px 2px; }
     #course-hero { position: relative; flex-shrink: 0; width: 100%; aspect-ratio: 16 / 6; border-radius: var(--r-md); overflow: hidden; background: linear-gradient(135deg, #1e6a2f, #0e3a1a); border: 1px solid var(--line); }
     #course-hero canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
@@ -3622,7 +3635,7 @@
     /* ---- course editor: a full-viewport tool in the same broadcast skin ---- */
     #editor {
       position: fixed; inset: 0; z-index: 20; display: grid; align-items: stretch; justify-content: stretch;
-      grid-template-rows: auto minmax(0, 1fr); grid-template-columns: 200px minmax(0, 1fr) 250px;
+      grid-template-rows: auto minmax(0, 1fr); grid-template-columns: 200px minmax(0, 1fr) 272px;
       background: linear-gradient(180deg, #070a26 0%, #04061a 55%, #03040f 100%); color: var(--ink);
     }
     #editor.hidden { display: none; }
@@ -3648,10 +3661,21 @@
     #ed-props input[type=text], #ed-props input[type=number], #ed-props select { width: 100%; padding: 6px 8px; font-size: 13px; font-family: var(--font); border-radius: var(--r-sm); border: 1px solid var(--line-2); background: rgba(0,0,0,0.35); color: var(--ink); }
     #ed-props select option { background: #0a1040; }
     #ed-props input[type=range] { width: 100%; accent-color: var(--gold); }
-    #ed-props .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    /* slider + value box pairs; the label scrubs, the wheel steps */
+    #ed-props .ctl { display: flex; align-items: center; gap: 6px; }
+    #ed-props .ctl input[type=range] { flex: 1; min-width: 0; width: auto; height: 14px; }
+    #ed-props .ctl input[type=range]::-webkit-slider-thumb { width: 12px; height: 12px; margin-top: -4px; }
+    #ed-props .ctl input[type=range]::-moz-range-thumb { width: 11px; height: 11px; }
+    #ed-props .ctl input[type=number] { flex: none; width: 52px; padding: 4px 5px; font-size: 12px; text-align: right; -moz-appearance: textfield; appearance: textfield; }
+    #ed-props .ctl input[type=number]::-webkit-inner-spin-button, #ed-props .ctl input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    #ed-props .field:has(.ctl) > label { cursor: ew-resize; user-select: none; -webkit-user-select: none; }
+    #ed-props .field:has(.ctl) > label:hover { color: var(--gold); }
+    #ed-props .grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px; }
+    #ed-props .grid2 > .field { min-width: 0; }
     #ed-props .row { justify-content: flex-start; gap: 6px; }
     #ed-props button { padding: 6px 10px; font-size: 11px; transform: none; }
     #ed-props .tiny { font-size: 10px; color: var(--dim-2); letter-spacing: 1px; line-height: 1.5; }
+    #ed-props .field + .tiny, #ed-props .grid2 + .tiny { margin: -2px 0 10px; }
     @media (max-width: 900px) { #editor { grid-template-columns: 150px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; } #ed-props { grid-column: 1 / -1; border-left: none; border-top: 1px solid var(--line); max-height: 30vh; } }
     /* test play steps out of the editor onto the real 3D stage; this bar is
        the only editor UI left on screen */
@@ -3827,6 +3851,7 @@
           <div id="course-detail-head">
             <div id="course-detail-name">—</div>
             <div id="course-detail-meta"></div>
+            <div id="course-rate" class="stars small hidden"></div>
           </div>
           <div id="course-holes"></div>
       <div id="mode-options">
@@ -3900,6 +3925,11 @@
       <h1 id="gameover-title">ROUND COMPLETE</h1>
       <div class="subtitle" id="gameover-score"></div>
       <div id="crowns"></div>
+      <div id="rate-card" class="crown-card hidden">
+        <div class="c-label">RATE THIS COURSE</div>
+        <div id="rate-stars" class="stars"></div>
+        <div class="c-sub" id="rate-sub"></div>
+      </div>
       <div id="match-summary"></div>
       <div class="row">
         <button id="again-btn" class="primary">Play Again</button>

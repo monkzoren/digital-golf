@@ -23,4 +23,6 @@ export default __t.row({
   rev: __t.u32(),
   createdAt: __t.timestamp().name("created_at"),
   updatedAt: __t.timestamp().name("updated_at"),
+  ratingSum: __t.u32().name("rating_sum"),
+  ratingCount: __t.u32().name("rating_count"),
 });

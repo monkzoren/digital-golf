@@ -3,7 +3,7 @@
 // select → course select → lobby → play), same broadcast skin, same three.js
 // lawn + character rigs (render3d.ts). The course editor is editor.ts.
 import { DbConnection } from './module_bindings';
-import type { Player, Lobby, Course, Hole as HoleRow, Chat } from './module_bindings/types';
+import type { Player, Lobby, Course, Hole as HoleRow, Chat, Rating } from './module_bindings/types';
 import type { Identity } from 'spacetimedb';
 import type { Hole } from '@shared/courses';
 import { parseHole } from '@shared/mapformat';
@@ -156,6 +156,7 @@ function connect() {
           'SELECT * FROM chat',
           'SELECT * FROM course WHERE published = true',
           'SELECT * FROM my_courses',
+          'SELECT * FROM my_ratings',
         ]);
       try { wireRowEvents(); } catch (e) { console.error('[dg] wireRowEvents threw', e); }
     })
@@ -221,6 +222,34 @@ function courseById(id: bigint): Course | undefined {
   if (c) return c;
   for (const m of conn.db.myCourses.iter()) if (m.id === id) return m as unknown as Course;
   return undefined;
+}
+// Ratings. The course row carries the running total (sum / count); my own
+// stars arrive through the my_ratings view — the rating table is private.
+const RATING_PRIOR_MEAN = 3.5, RATING_PRIOR_N = 3; // shrinks small samples toward "fine"
+const ratingAvg = (c: Course) => (c.ratingCount ? c.ratingSum / c.ratingCount : 0);
+/** Ranking score: a lone 5★ must not outrank a course fifty people loved. */
+const ratingScore = (c: Course) => (c.ratingSum + RATING_PRIOR_MEAN * RATING_PRIOR_N) / (c.ratingCount + RATING_PRIOR_N);
+const ratingText = (c: Course) => (c.ratingCount ? `★ ${ratingAvg(c).toFixed(1)}` : '');
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 'S'}`;
+function myRatingOf(courseId: bigint): Rating | undefined {
+  for (const r of conn.db.myRatings.iter()) if (r.courseId === courseId) return r as unknown as Rating;
+  return undefined;
+}
+/** Published and not mine. (The server also insists on a round played.) */
+const canRate = (c: Course) => c.published && !!myIdentity && !c.ownerId.isEqual(myIdentity);
+/** Five star buttons in `el`; `lit` = the stars currently given (0 = none). */
+function renderStars(el: HTMLElement, lit: number, enabled: boolean, onPick: (stars: number) => void) {
+  el.innerHTML = '';
+  el.classList.toggle('off', !enabled);
+  for (let n = 1; n <= 5; n++) {
+    const b = document.createElement('button');
+    b.className = `star${n <= lit ? ' lit' : ''}`;
+    b.textContent = '★';
+    b.title = enabled ? plural(n, 'STAR') : '';
+    b.disabled = !enabled;
+    b.onclick = () => { if (n !== lit) onPick(n); };
+    el.appendChild(b);
+  }
 }
 function holeRows(courseId: bigint): HoleRow[] {
   const out: HoleRow[] = [];
@@ -423,7 +452,7 @@ function coursesFor(tab: typeof courseTab): Course[] {
   const all: Course[] = [];
   for (const c of conn.db.course.iter()) all.push(c);
   if (tab === 'featured') return all.filter(c => c.builtin).sort((a, b) => (a.id < b.id ? -1 : 1));
-  if (tab === 'community') return all.filter(c => !c.builtin && c.published).sort((a, b) => b.plays - a.plays || (a.id < b.id ? 1 : -1));
+  if (tab === 'community') return all.filter(c => !c.builtin && c.published).sort((a, b) => ratingScore(b) - ratingScore(a) || b.plays - a.plays || (a.id < b.id ? 1 : -1));
   const mine: Course[] = [];
   for (const c of conn.db.myCourses.iter()) mine.push(c as unknown as Course);
   return mine.sort((a, b) => (a.id < b.id ? 1 : -1));
@@ -492,7 +521,7 @@ function renderCourseGrid(force = false) {
     const row = courseRows.get(c.id.toString())!;
     row.classList.toggle('selected', c.id === selectedCourse);
     (row.querySelector('.cname') as HTMLElement).textContent = c.name;
-    (row.querySelector('.cmeta') as HTMLElement).textContent = `${c.holeCount} HOLES · PAR ${c.totalPar}${c.builtin ? ' · ★' : ` · ${c.authorName}`}${c.published ? '' : ' · DRAFT'}`;
+    (row.querySelector('.cmeta') as HTMLElement).textContent = `${c.holeCount} HOLES · PAR ${c.totalPar}${c.ratingCount ? ` · ${ratingText(c)}` : ''}${c.builtin ? ' · FEATURED' : ` · ${c.authorName}`}${c.published ? '' : ' · DRAFT'}`;
     const art = row.querySelector('.course-art') as HTMLElement;
     art.classList.toggle('neon', c.name.toLowerCase().includes('neon'));
     if (!art.classList.contains('has-art')) {
@@ -518,11 +547,19 @@ function renderCourseDetail() {
   }
   subscribeCourse(c.id);
   const rows = holeRows(c.id);
-  const sig = `${c.id}:${c.rev}:${c.plays}:${rows.length}`;
+  const mine = myRatingOf(c.id);
+  const sig = `${c.id}:${c.rev}:${c.plays}:${rows.length}:${c.ratingSum}:${c.ratingCount}:${mine?.stars ?? 0}`;
   if (sig === courseDetailSig) return;
   courseDetailSig = sig;
   $('course-detail-name').textContent = c.name.toUpperCase();
-  $('course-detail-meta').textContent = `${c.holeCount} HOLES · PAR ${c.totalPar} · ${c.builtin ? '★ FEATURED' : `BY ${c.authorName.toUpperCase()} · ${c.plays} PLAYS`}${c.published ? '' : ' · DRAFT'}`;
+  const rated = c.ratingCount ? ` · ${ratingText(c)} FROM ${plural(c.ratingCount, 'PLAYER')}` : '';
+  $('course-detail-meta').textContent = `${c.holeCount} HOLES · PAR ${c.totalPar} · ${c.builtin ? '★ FEATURED' : `BY ${c.authorName.toUpperCase()} · ${c.plays} PLAYS`}${rated}${c.published ? '' : ' · DRAFT'}`;
+  // my stars: revisable here once given (the gameover screen is where a
+  // first rating happens — the server wants a round played)
+  const rate = $('course-rate');
+  rate.classList.toggle('hidden', !canRate(c));
+  renderStars(rate, mine?.stars ?? 0, !!mine, n => { sfx.ui(); rd().rateCourse({ courseId: c.id, stars: n }); });
+  rate.title = mine ? 'YOUR RATING — CLICK TO CHANGE IT' : 'PLAY A ROUND HERE TO RATE IT';
   const first = rows[0] ? parsedHole(rows[0]) : null;
   if (first) { drawThumb($('course-hero-canvas') as HTMLCanvasElement, first, 960, 360, 2.5); hero.classList.add('has-art'); }
   else hero.classList.remove('has-art');
@@ -723,7 +760,7 @@ function renderMine() {
   for (const c of mine) {
     const row = document.createElement('div');
     row.className = 'lobby-row';
-    row.innerHTML = `<div><div class="lobby-mode">${esc(c.name)} ${c.published ? '<span class="live-tag">PUBLISHED</span>' : ''}</div><div class="lobby-meta">${c.holeCount} HOLES · PAR ${c.totalPar} · ${c.plays} PLAYS${c.published ? '' : ' · DRAFT'}</div></div><button class="lobby-join">Edit</button><button class="lobby-join alt" data-del="1">✕</button>`;
+    row.innerHTML = `<div><div class="lobby-mode">${esc(c.name)} ${c.published ? '<span class="live-tag">PUBLISHED</span>' : ''}</div><div class="lobby-meta">${c.holeCount} HOLES · PAR ${c.totalPar} · ${c.plays} PLAYS${c.ratingCount ? ` · ${ratingText(c)} (${c.ratingCount})` : ''}${c.published ? '' : ' · DRAFT'}</div></div><button class="lobby-join">Edit</button><button class="lobby-join alt" data-del="1">✕</button>`;
     row.querySelector('button')!.onclick = () => launchEditor(c);
     (row.querySelector('[data-del]') as HTMLButtonElement).onclick = () => { if (confirm(`Delete "${c.name}"? This cannot be undone.`)) rd().deleteCourse({ courseId: c.id }); };
     list.appendChild(row);
@@ -820,6 +857,7 @@ function wireRowEvents() {
     holeRefresh = window.setTimeout(() => { courseDetailSig = ''; renderCourseGrid(); }, 80);
   });
   conn.db.myCourses.onInsert(refresh); conn.db.myCourses.onUpdate(refresh); conn.db.myCourses.onDelete(refresh);
+  conn.db.myRatings.onInsert(refresh); conn.db.myRatings.onUpdate(refresh); conn.db.myRatings.onDelete(refresh);
 }
 
 function dispOf(p: Player): Disp {
@@ -1334,6 +1372,17 @@ function renderGameOver() {
   const crowns = $('crowns');
   crowns.innerHTML = ranked.slice(0, 3).map((q, i) => `<div class="crown-card"><div class="c-label">${['🥇 CHAMPION', '🥈 SECOND', '🥉 THIRD'][i]}</div><div class="c-name">${esc(q.name)}</div><div class="c-sub">${charOf(q).name} · ${q.total} STROKES</div></div>`).join('');
   crowns.classList.toggle('hidden', !ranked.length);
+  // rate the course you just played (the server checks you were in this round)
+  const course = courseById(lobby.courseId);
+  const card = $('rate-card');
+  if (course && canRate(course)) {
+    const mine = myRatingOf(course.id);
+    renderStars($('rate-stars'), mine?.stars ?? 0, true, n => { sfx.ui(); rd().rateCourse({ courseId: course.id, stars: n }); });
+    $('rate-sub').textContent = mine
+      ? `YOU GAVE IT ${plural(mine.stars, 'STAR')} · ${ratingText(course)} FROM ${plural(course.ratingCount, 'PLAYER')}`
+      : `HOW WAS ${course.name.toUpperCase()}? YOUR STARS RANK IT FOR EVERYONE`;
+    card.classList.remove('hidden');
+  } else card.classList.add('hidden');
   renderScorecard('match-summary');
   $('match-summary').classList.remove('hidden');
   const host = lobby.hostId.isEqual(p.identity);

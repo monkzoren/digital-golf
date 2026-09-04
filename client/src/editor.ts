@@ -39,14 +39,14 @@ type Sel =
   | { kind: 'floor'; i: number } | { kind: 'block'; i: number } | { kind: 'zone'; i: number }
   | { kind: 'bumper'; i: number } | { kind: 'tee' } | { kind: 'cup' } | { kind: 'teleExit'; i: number } | null;
 
-const TOOL_DEFS: { id: Tool; label: string; color: string; group: string; hint: string }[] = [
-  { id: 'select', label: 'Select / move', color: '#fff', group: 'Tools', hint: 'Click to select · drag to move · Del removes · arrows nudge' },
+const TOOL_DEFS: { id: Tool; label: string; color: string; group: string; hint: string; key?: string }[] = [
+  { id: 'select', label: 'Select / move', color: '#fff', group: 'Tools', hint: 'Click to select · drag to move · grips resize, knobs turn · Shift+wheel turns · Alt+wheel raises · Del removes' },
   { id: 'pan', label: 'Pan', color: '#9fc2a8', group: 'Tools', hint: 'Drag to pan · wheel zooms (or hold Space with any tool)' },
-  { id: 'swing', label: 'Swing preview', color: '#ffd60a', group: 'Tools', hint: 'Click to drop a ghost ball · drag to aim (arrow length = power) · Shift-drag moves the ball · ←/→ turn · ↑/↓ power · Del clears' },
-  { id: 'floor', label: 'Floor', color: '#3fae4f', group: 'Layout', hint: 'Drag a rectangle of green. Touching floors join up; give one a height and it is a platform.' },
+  { id: 'swing', key: 'p', label: 'Swing preview', color: '#ffd60a', group: 'Tools', hint: 'Click to drop a ghost ball · drag to aim (arrow length = power) · Shift-drag moves the ball · ←/→ turn · ↑/↓ power · Del clears' },
+  { id: 'floor', key: 'f', label: 'Floor', color: '#3fae4f', group: 'Layout', hint: 'Drag a rectangle of green. Touching floors join up; give one a height and it is a platform.' },
   { id: 'tee', label: 'Tee', color: '#ffffff', group: 'Layout', hint: 'Click where the ball starts' },
   { id: 'cup', label: 'Cup', color: '#0b1a10', group: 'Layout', hint: 'Click where the hole is' },
-  { id: 'block', label: 'Wall block', color: '#c9a36b', group: 'Obstacles', hint: 'Drag a solid block' },
+  { id: 'block', key: 'b', label: 'Wall block', color: '#c9a36b', group: 'Obstacles', hint: 'Drag a solid block' },
   { id: 'lowblock', label: 'Low wall (jumpable)', color: '#e0c391', group: 'Obstacles', hint: 'Drag a low wall a jumping ball clears' },
   { id: 'tri', label: 'Triangle wall', color: '#c9a36b', group: 'Obstacles', hint: 'Drag from the right-angle corner: a triangle fills the box (a corner mirror caroms the ball)' },
   { id: 'windmill', label: 'Windmill', color: '#c9a36b', group: 'Obstacles', hint: 'Click to place a spinning windmill' },
@@ -56,12 +56,12 @@ const TOOL_DEFS: { id: Tool; label: string; color: string; group: string; hint: 
   { id: 'rubber', label: 'Rubber wall', color: '#ff7ad9', group: 'Obstacles', hint: 'Drag a wall that fires the ball back harder' },
   { id: 'bumper', label: 'Bumper', color: '#ff4b4b', group: 'Obstacles', hint: 'Click to place a pinball bumper' },
   { id: 'post', label: 'Post', color: '#8d99b5', group: 'Obstacles', hint: 'Click to place a round post' },
-  { id: 'sand', label: 'Sand', color: '#e9d18c', group: 'Surfaces', hint: 'Drag a sand trap (slow)' },
-  { id: 'ice', label: 'Ice', color: '#cfeeff', group: 'Surfaces', hint: 'Drag an ice patch (slippery)' },
-  { id: 'water', label: 'Water', color: '#2f8fd8', group: 'Surfaces', hint: 'Drag a water hazard (+1 stroke, ball resets)' },
+  { id: 'sand', key: 's', label: 'Sand', color: '#e9d18c', group: 'Surfaces', hint: 'Drag a sand trap (slow)' },
+  { id: 'ice', key: 'i', label: 'Ice', color: '#cfeeff', group: 'Surfaces', hint: 'Drag an ice patch (slippery)' },
+  { id: 'water', key: 'w', label: 'Water', color: '#2f8fd8', group: 'Surfaces', hint: 'Drag a water hazard (+1 stroke, ball resets)' },
   { id: 'slope', label: 'Ramp (slope)', color: '#6b6b6b', group: 'Surfaces', hint: 'Drag a ramp; arrows point downhill, strength sets how steep' },
   { id: 'boost', label: 'Boost pad', color: '#ff8a3d', group: 'Surfaces', hint: 'Drag a booster; set its direction in the panel' },
-  { id: 'jump', label: 'Jump pad', color: '#ffd60a', group: 'Surfaces', hint: 'Drag a jump pad (needs speed to trigger)' },
+  { id: 'jump', key: 'j', label: 'Jump pad', color: '#ffd60a', group: 'Surfaces', hint: 'Drag a jump pad (needs speed to trigger)' },
   { id: 'tele', label: 'Teleporter', color: '#c77dff', group: 'Surfaces', hint: 'Drag a gate, then move its exit ring' },
   { id: 'conveyor', label: 'Conveyor belt', color: '#2a2a33', group: 'Toy box', hint: 'Drag a belt that carries the ball along' },
   { id: 'spinner', label: 'Spinner', color: '#7c5cff', group: 'Toy box', hint: 'Drag a turntable that flings the ball' },
@@ -114,7 +114,7 @@ let spaceHeld = false;
 type Drag =
   | { mode: 'create'; x0: number; y0: number; x1: number; y1: number }
   | { mode: 'move'; sel: Sel; start: { x: number; y: number }; orig: Hole }
-  | { mode: 'resize'; sel: Sel; corner: number; orig: Hole }
+  | { mode: 'grip'; sel: Sel; grip: Handle; orig: Hole } // a gizmo grip (resize / rotate / aim / stretch)
   | { mode: 'pan'; sx: number; sy: number; cx: number; cy: number }
   | { mode: 'swingMove' } | { mode: 'swingAim' }
   | null;
@@ -215,12 +215,14 @@ function wire() {
   c.addEventListener('pointercancel', () => { drag = null; });
   c.addEventListener('wheel', e => {
     e.preventDefault();
+    if (wheelAdjust(e)) return;
     const before = s2w(cam, W, H, e.offsetX, e.offsetY);
     cam.scale = Math.max(4, Math.min(80, cam.scale * (e.deltaY < 0 ? 1.12 : 0.89)));
     const after = s2w(cam, W, H, e.offsetX, e.offsetY);
     cam.x += before.x - after.x; cam.y += before.y - after.y;
   }, { passive: false });
   c.addEventListener('contextmenu', e => e.preventDefault());
+  wireProps();
   // test play happens on the game canvas (main.ts's own handlers on it
   // stand down while the editor is open)
   const gc = gameCanvas();
@@ -312,14 +314,21 @@ function undo() {
   if (!s) return;
   redoStack.push(JSON.stringify(hole()));
   holes[cur] = JSON.parse(s);
-  sel = null; renderProps();
+  keepSel(); renderProps();
 }
 function redo() {
   const s = redoStack.pop();
   if (!s) return;
   undoStack.push(JSON.stringify(hole()));
   holes[cur] = JSON.parse(s);
-  sel = null; renderProps();
+  keepSel(); renderProps();
+}
+/** after a restore, the selection survives if what it points at still exists */
+function keepSel() {
+  const h = hole();
+  if (!sel) return;
+  const n = sel.kind === 'floor' ? h.floor.length : sel.kind === 'zone' || sel.kind === 'teleExit' ? (h.zones?.length ?? 0) : sel.kind === 'bumper' ? (h.bumpers?.length ?? 0) : sel.kind === 'block' ? (h.blocks?.length ?? 0) : 1;
+  if ('i' in sel && sel.i >= n) sel = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -343,12 +352,9 @@ function onDown(e: PointerEvent) {
   const sx = snapV(w.x), sy = snapV(w.y);
   switch (tool) {
     case 'select': {
-      // resize handle on the selected rect?
-      if (sel && (sel.kind === 'floor' || sel.kind === 'zone')) {
-        const r = sel.kind === 'floor' ? h.floor[sel.i] : h.zones![sel.i];
-        const corner = cornerAt(r, w);
-        if (corner >= 0) { drag = { mode: 'resize', sel, corner, orig: clone(h) }; pushUndo(); return; }
-      }
+      // a gizmo grip on the selection?
+      const grip = gripAt(w);
+      if (grip && sel) { drag = { mode: 'grip', sel, grip: grip.h, orig: clone(h) }; pushUndo(); canvas().style.cursor = grip.h.kind === 'rotate' || grip.h.kind === 'angle' ? 'grabbing' : grip.cursor; return; }
       const hit = pick(w);
       sel = hit;
       renderProps();
@@ -396,11 +402,27 @@ function onDown(e: PointerEvent) {
   }
 }
 
+let propsSyncAt = 0;
+/** keep the panel's numbers in step with a canvas drag (throttled — nothing is focused during one) */
+function syncPropsLive() {
+  const now = performance.now();
+  if (now - propsSyncAt < 80) return;
+  propsSyncAt = now;
+  renderProps();
+}
+
 function onMove(e: PointerEvent) {
   if (!open || testing) return;
   const w = worldAt(e);
   hoverWorld = w;
-  if (!drag) return;
+  if (!drag) {
+    // the cursor says what a press would do
+    const c = canvas();
+    if (spaceHeld || tool === 'pan') c.style.cursor = 'grab';
+    else if (tool !== 'select') c.style.cursor = 'crosshair';
+    else { const gp = gripAt(w); c.style.cursor = gp ? gp.cursor : pick(w) ? 'move' : 'default'; }
+    return;
+  }
   const h = hole();
   if (drag.mode === 'pan') {
     cam.x = drag.cx - (e.clientX - drag.sx) / cam.scale;
@@ -414,17 +436,10 @@ function onMove(e: PointerEvent) {
   } else if (drag.mode === 'move') {
     const dx = snapV(w.x - drag.start.x), dy = snapV(w.y - drag.start.y);
     holes[cur] = moved(drag.orig, drag.sel, dx, dy);
-  } else if (drag.mode === 'resize') {
-    const o = drag.orig;
-    const s = drag.sel as { kind: 'floor' | 'zone'; i: number };
-    const r0 = s.kind === 'floor' ? o.floor[s.i] : o.zones![s.i];
-    const nx = snapV(w.x), ny = snapV(w.y);
-    let x0 = r0.x, y0 = r0.y, x1 = r0.x + r0.w, y1 = r0.y + r0.h;
-    if (drag.corner === 0 || drag.corner === 3) x0 = nx; else x1 = nx;
-    if (drag.corner === 0 || drag.corner === 1) y0 = ny; else y1 = ny;
-    const nr = { x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.max(0.5, Math.abs(x1 - x0)), h: Math.max(0.5, Math.abs(y1 - y0)) };
-    const target = s.kind === 'floor' ? h.floor[s.i] : h.zones![s.i];
-    Object.assign(target, nr);
+    syncPropsLive();
+  } else if (drag.mode === 'grip') {
+    dragGrip(h, drag.orig, drag.sel, drag.grip, w, e.altKey);
+    syncPropsLive();
   }
 }
 
@@ -471,7 +486,7 @@ function onUp(e: PointerEvent) {
       const z: Zone = { kind: tool as ZoneKind, x, y, w, h: hh };
       const p = ZONE_DEFAULT_POWER[z.kind];
       if (p) z.power = p;
-      if (z.kind === 'slope' || z.kind === 'boost' || z.kind === 'conveyor' || z.kind === 'fan' || z.kind === 'cannon' || z.kind === 'gravity') z.angle = 0;
+      if (DIRECTIONAL.includes(z.kind)) z.angle = 0;
       if (z.kind === 'cannon') z.lift = CANNON_DEFAULT_LIFT;
       if (z.kind === 'tele') { z.tx = x + w + 3; z.ty = y + hh / 2; }
       h.zones.push(z); sel = { kind: 'zone', i: h.zones.length - 1 };
@@ -483,11 +498,198 @@ function onUp(e: PointerEvent) {
   void e;
 }
 
-function cornerAt(r: Rect, w: { x: number; y: number }): number {
-  const cs = [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]];
-  const tol = 8 / cam.scale;
-  for (let i = 0; i < 4; i++) if (Math.hypot(cs[i][0] - w.x, cs[i][1] - w.y) < tol) return i;
-  return -1;
+// ---------------------------------------------------------------------------
+// Gizmo — grips drawn on the selection that resize, rotate, aim and stretch
+// it in place. Alt while dragging turns the grid snap off.
+// ---------------------------------------------------------------------------
+const DIRECTIONAL: ZoneKind[] = ['slope', 'boost', 'conveyor', 'fan', 'cannon', 'gravity'];
+type Handle =
+  | { kind: 'corner'; i: number } // floor / zone rect corner (0 top-left, clockwise)
+  | { kind: 'edge'; i: number }   // floor / zone rect mid-edge (0 top, 1 right, 2 bottom, 3 left)
+  | { kind: 'angle' }             // directional zone: the arrow tip
+  | { kind: 'radius' }            // bumper / post rim
+  | { kind: 'bcorner'; i: number } // rect block corner in its own rotated frame (opposite corner stays put)
+  | { kind: 'rotate' }            // rect block: the knob above its top edge
+  | { kind: 'len' }               // windmill / pendulum arm tip
+  | { kind: 'travel'; sign: 1 | -1 }; // sliding block: either end of its travel
+interface Grip { h: Handle; x: number; y: number; shape: 'square' | 'knob'; cursor: string }
+const norm360 = (a: number) => ((a % 360) + 360) % 360;
+const norm180 = (a: number) => norm360(a + 180) - 180;
+const rad = (deg: number) => (deg * Math.PI) / 180;
+const pivotOf = (b: Block) => (b.motion && (b.motion.type === 'rotate' || b.motion.type === 'swing') ? b.motion : null);
+/** where the arrow of a directional zone points to (the aim grip) */
+function arrowTip(z: Zone) {
+  const a = rad(z.angle ?? 0);
+  const L = Math.min(z.w, z.h) / 2 + Math.max(1, 18 / cam.scale);
+  return { x: z.x + z.w / 2 + Math.cos(a) * L, y: z.y + z.h / 2 + Math.sin(a) * L };
+}
+function gripsOf(h: Hole, s: Sel): Grip[] {
+  const out: Grip[] = [];
+  if (!s) return out;
+  const reach = Math.max(1, 18 / cam.scale); // how far a knob stands off its object, in world units
+  if (s.kind === 'floor' || s.kind === 'zone') {
+    const r = s.kind === 'floor' ? h.floor[s.i] : h.zones![s.i];
+    const cs = [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]];
+    cs.forEach(([x, y], i) => out.push({ h: { kind: 'corner', i }, x, y, shape: 'square', cursor: i % 2 ? 'nesw-resize' : 'nwse-resize' }));
+    const es = [[r.x + r.w / 2, r.y], [r.x + r.w, r.y + r.h / 2], [r.x + r.w / 2, r.y + r.h], [r.x, r.y + r.h / 2]];
+    es.forEach(([x, y], i) => out.push({ h: { kind: 'edge', i }, x, y, shape: 'square', cursor: i % 2 ? 'ew-resize' : 'ns-resize' }));
+    if (s.kind === 'zone' && DIRECTIONAL.includes((r as Zone).kind)) { const t = arrowTip(r as Zone); out.push({ h: { kind: 'angle' }, x: t.x, y: t.y, shape: 'knob', cursor: 'grab' }); }
+  } else if (s.kind === 'bumper') {
+    const b = h.bumpers![s.i];
+    out.push({ h: { kind: 'radius' }, x: b.x + b.r, y: b.y, shape: 'square', cursor: 'ew-resize' });
+  } else if (s.kind === 'block') {
+    const b = h.blocks![s.i];
+    const g = b.gen;
+    const pv = pivotOf(b);
+    if (g?.kind === 'rect') {
+      const c = centroid(b.pts);
+      const a = rad(g.rot), ux = Math.cos(a), uy = Math.sin(a), vx = -uy, vy = ux;
+      for (let i = 0; i < 4; i++) {
+        const sx = i === 1 || i === 2 ? 1 : -1, sy = i >= 2 ? 1 : -1;
+        out.push({ h: { kind: 'bcorner', i }, x: c.x + ux * sx * g.w / 2 + vx * sy * g.h / 2, y: c.y + uy * sx * g.w / 2 + vy * sy * g.h / 2, shape: 'square', cursor: i % 2 ? 'nesw-resize' : 'nwse-resize' });
+      }
+      out.push({ h: { kind: 'rotate' }, x: c.x - vx * (g.h / 2 + reach), y: c.y - vy * (g.h / 2 + reach), shape: 'knob', cursor: 'grab' });
+    }
+    if (g?.kind === 'tri') {
+      // pts[0] is the right-angle corner; the other two ends resize a leg each
+      const a = rad(g.rot), ux = Math.cos(a), uy = Math.sin(a), vx = -uy, vy = ux;
+      const cx = b.pts[0], cy = b.pts[1];
+      out.push({ h: { kind: 'bcorner', i: 0 }, x: cx + ux * g.w, y: cy + uy * g.w, shape: 'square', cursor: 'move' });
+      out.push({ h: { kind: 'bcorner', i: 1 }, x: cx + vx * g.h, y: cy + vy * g.h, shape: 'square', cursor: 'move' });
+      out.push({ h: { kind: 'rotate' }, x: cx + (ux * g.w + vx * g.h) / 2 + (ux + vx) * reach, y: cy + (uy * g.w + vy * g.h) / 2 + (uy + vy) * reach, shape: 'knob', cursor: 'grab' });
+    }
+    if (pv && g && (g.kind === 'windmill' || g.kind === 'bar')) {
+      const tip = g.kind === 'windmill' ? { x: pv.cx + g.len, y: pv.cy } : { x: pv.cx, y: pv.cy + g.len };
+      out.push({ h: { kind: 'len' }, x: tip.x, y: tip.y, shape: 'square', cursor: 'move' });
+    }
+    if (b.motion?.type === 'slide') {
+      const c = centroid(b.pts);
+      out.push({ h: { kind: 'travel', sign: 1 }, x: c.x + b.motion.dx, y: c.y + b.motion.dy, shape: 'knob', cursor: 'move' });
+      out.push({ h: { kind: 'travel', sign: -1 }, x: c.x - b.motion.dx, y: c.y - b.motion.dy, shape: 'knob', cursor: 'move' });
+    }
+  }
+  return out;
+}
+/** the grip under a world point (knobs win over the squares they may overlap) */
+function gripAt(w: { x: number; y: number }): Grip | null {
+  if (!sel) return null;
+  const tol = 9 / cam.scale;
+  const gs = gripsOf(hole(), sel);
+  for (let i = gs.length - 1; i >= 0; i--) if (Math.hypot(gs[i].x - w.x, gs[i].y - w.y) < tol) return gs[i];
+  return null;
+}
+/** rebuild a generated block's polygon from its `gen` (after a size / rotation change) */
+function regenBlock(b: Block) {
+  const gen = b.gen;
+  const pv = pivotOf(b);
+  if (gen?.kind === 'rect') {
+    const c = centroid(b.pts);
+    b.pts = rotRect(c.x, c.y, gen.w, gen.h, gen.rot);
+  } else if (gen?.kind === 'tri') {
+    // pts[0] is the right-angle corner: the shape turns about it
+    b.pts = triPts(b.pts[0], b.pts[1], gen.w, gen.h, gen.rot);
+  } else if (gen?.kind === 'windmill' && pv) {
+    b.pts = windmillPts(pv.cx, pv.cy, gen.len, gen.width, gen.blades);
+    b.hub = Math.max(0.5, gen.width * 0.9);
+  } else if (gen?.kind === 'bar' && pv) {
+    b.pts = barPts(pv.cx, pv.cy, gen.len, gen.width);
+    b.hub = Math.max(0.4, gen.width * 0.8);
+  }
+}
+function dragGrip(h: Hole, o: Hole, s: Sel, gp: Handle, w: { x: number; y: number }, free: boolean) {
+  if (!s) return;
+  const sn = (v: number) => (free ? round2(v) : snapV(v));
+  const snapDeg = (a: number) => (free ? Math.round(a) : Math.round(a / 5) * 5);
+  if (s.kind === 'floor' || s.kind === 'zone') {
+    const r0 = s.kind === 'floor' ? o.floor[s.i] : o.zones![s.i];
+    const r = s.kind === 'floor' ? h.floor[s.i] : h.zones![s.i];
+    if (gp.kind === 'corner' || gp.kind === 'edge') {
+      let x0 = r0.x, y0 = r0.y, x1 = r0.x + r0.w, y1 = r0.y + r0.h;
+      const nx = sn(w.x), ny = sn(w.y);
+      if (gp.kind === 'corner') { if (gp.i === 0 || gp.i === 3) x0 = nx; else x1 = nx; if (gp.i === 0 || gp.i === 1) y0 = ny; else y1 = ny; }
+      else if (gp.i === 0) y0 = ny; else if (gp.i === 1) x1 = nx; else if (gp.i === 2) y1 = ny; else x0 = nx;
+      Object.assign(r, { x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.max(0.5, Math.abs(x1 - x0)), h: Math.max(0.5, Math.abs(y1 - y0)) });
+    } else if (gp.kind === 'angle') {
+      const z = r as Zone;
+      z.angle = norm360(snapDeg((Math.atan2(w.y - (z.y + z.h / 2), w.x - (z.x + z.w / 2)) * 180) / Math.PI));
+    }
+  } else if (s.kind === 'bumper' && gp.kind === 'radius') {
+    const b = h.bumpers![s.i];
+    b.r = Math.max(0.3, Math.min(6, Math.round(Math.hypot(w.x - b.x, w.y - b.y) * 10) / 10));
+  } else if (s.kind === 'block') {
+    const b = h.blocks![s.i], b0 = o.blocks![s.i];
+    const g = b.gen, g0 = b0.gen;
+    const pv = pivotOf(b);
+    if (gp.kind === 'rotate' && g?.kind === 'rect') {
+      const c = centroid(b0.pts);
+      g.rot = norm180(snapDeg((Math.atan2(w.y - c.y, w.x - c.x) * 180) / Math.PI + 90));
+      b.pts = rotRect(c.x, c.y, g.w, g.h, g.rot);
+    } else if (gp.kind === 'bcorner' && g?.kind === 'rect' && g0?.kind === 'rect') {
+      const c = centroid(b0.pts);
+      const a = rad(g0.rot), ux = Math.cos(a), uy = Math.sin(a), vx = -uy, vy = ux;
+      const sx = gp.i === 1 || gp.i === 2 ? 1 : -1, sy = gp.i >= 2 ? 1 : -1;
+      // the opposite corner is the anchor; the dragged corner follows the pointer in the block's own frame
+      const ax = c.x - (ux * sx * g0.w + vx * sy * g0.h) / 2, ay = c.y - (uy * sx * g0.w + vy * sy * g0.h) / 2;
+      const eu = (w.x - ax) * ux + (w.y - ay) * uy, ev = (w.x - ax) * vx + (w.y - ay) * vy;
+      const nw = Math.max(0.2, sn(Math.abs(eu))), nh = Math.max(0.2, sn(Math.abs(ev)));
+      const du = (eu < 0 ? -1 : 1) * nw, dv = (ev < 0 ? -1 : 1) * nh;
+      g.w = nw; g.h = nh;
+      b.pts = rotRect(ax + (ux * du + vx * dv) / 2, ay + (uy * du + vy * dv) / 2, nw, nh, g.rot);
+    } else if (gp.kind === 'rotate' && g?.kind === 'tri') {
+      // turn about the right-angle corner, which stays put
+      const cx = b0.pts[0], cy = b0.pts[1];
+      g.rot = norm180(snapDeg((Math.atan2(w.y - cy, w.x - cx) * 180) / Math.PI - 45));
+      b.pts = triPts(cx, cy, g.w, g.h, g.rot);
+    } else if (gp.kind === 'bcorner' && g?.kind === 'tri' && g0?.kind === 'tri') {
+      const cx = b0.pts[0], cy = b0.pts[1];
+      const a = rad(g0.rot), ux = Math.cos(a), uy = Math.sin(a), vx = -uy, vy = ux;
+      // project the pointer onto the leg being dragged
+      const leg = gp.i === 0 ? (w.x - cx) * ux + (w.y - cy) * uy : (w.x - cx) * vx + (w.y - cy) * vy;
+      const nv = Math.max(0.2, sn(Math.abs(leg)));
+      if (gp.i === 0) g.w = nv; else g.h = nv;
+      b.pts = triPts(cx, cy, g.w, g.h, g.rot);
+    } else if (gp.kind === 'len' && pv && g && (g.kind === 'windmill' || g.kind === 'bar')) {
+      g.len = Math.max(0.5, Math.min(60, sn(Math.hypot(w.x - pv.cx, w.y - pv.cy))));
+      regenBlock(b);
+    } else if (gp.kind === 'travel' && b.motion?.type === 'slide') {
+      const c = centroid(b0.pts);
+      b.motion.dx = sn((w.x - c.x) * gp.sign);
+      b.motion.dy = sn((w.y - c.y) * gp.sign);
+    }
+  }
+}
+/** Shift+wheel turns the selection, Alt+wheel raises / grows it; true when the wheel was used up */
+function wheelAdjust(e: WheelEvent): boolean {
+  if (!sel || !(e.shiftKey || e.altKey)) return false;
+  const h = hole();
+  const up = (e.deltaY || e.deltaX) < 0;
+  const d = up ? 1 : -1;
+  let did = false;
+  const adjust = (fn: () => void) => { beginGesture(); fn(); did = true; };
+  if (sel.kind === 'block') {
+    const b = h.blocks![sel.i];
+    if (e.shiftKey && (b.gen?.kind === 'rect' || b.gen?.kind === 'tri')) { const g = b.gen; adjust(() => { g.rot = norm180(g.rot + 5 * d); regenBlock(b); }); }
+    else if (e.altKey) adjust(() => { const v = Math.round(((b.h ?? WALL_H) + 0.1 * d) * 100) / 100; setBlockHeight(b, v); });
+  } else if (sel.kind === 'zone') {
+    const z = h.zones![sel.i];
+    if (e.shiftKey && DIRECTIONAL.includes(z.kind)) adjust(() => { z.angle = norm360((z.angle ?? 0) + 5 * d); });
+    else if (e.altKey && POWER_FIELDS[z.kind]) { const pf = POWER_FIELDS[z.kind]!; adjust(() => { z.power = Math.max(pf[2], Math.min(pf[3], round2((z.power ?? ZONE_DEFAULT_POWER[z.kind] ?? 0) + pf[1] * d))); }); }
+  } else if (sel.kind === 'floor' && e.altKey) {
+    const r = h.floor[sel.i];
+    adjust(() => { setFloorZ(r, (r.z ?? 0) + 0.25 * d); });
+  } else if (sel.kind === 'bumper' && e.altKey) {
+    const b = h.bumpers![sel.i];
+    adjust(() => { b.r = Math.max(0.3, Math.min(6, Math.round((b.r + 0.1 * d) * 10) / 10)); });
+  }
+  if (did) settleGesture();
+  return did;
+}
+function setBlockHeight(b: Block, v: number) {
+  if (Math.abs(v - WALL_H) < 1e-6) delete b.h; else b.h = Math.max(0.1, Math.min(50, v));
+}
+function setFloorZ(r: Rect, v: number) {
+  const z = Math.max(0, Math.min(LIMITS.floorZ, Math.round(v * 100) / 100));
+  if (z > 0) r.z = z; else delete r.z;
 }
 
 function pick(w: { x: number; y: number }): Sel {
@@ -583,9 +785,8 @@ function onKey(e: KeyboardEvent) {
     syncSwingPanel();
     return;
   }
-  const SHORTCUT_TOOLS: Tool[] = ['floor', 'block', 'bumper', 'sand', 'ice', 'water', 'jump'];
-  const t = TOOL_DEFS.find(d => SHORTCUT_TOOLS.includes(d.id) && d.label[0].toLowerCase() === e.key.toLowerCase() && !e.ctrlKey && !e.metaKey);
   if (e.key === 'v') { tool = 'select'; buildTools(); return; }
+  const t = TOOL_DEFS.find(d => d.key === e.key.toLowerCase() && !e.ctrlKey && !e.metaKey);
   if (t) { tool = t.id; sel = null; buildTools(); renderProps(); }
 }
 
@@ -602,29 +803,131 @@ function duplicateSel() {
 }
 
 // ---------------------------------------------------------------------------
-// Properties panel
+// Properties panel — every number is a slider beside a value box. Both drive
+// the hole LIVE (the canvas redraws each frame); a label scrubs its value
+// sideways, and the wheel steps any of them (Shift = ×10). One undo step per
+// gesture — a slider drag, a wheel burst, a scrub, a typed edit.
 // ---------------------------------------------------------------------------
 function field(label: string, input: string) { return `<div class="field"><label>${label}</label>${input}</div>`; }
-function numIn(id: string, v: number, step = 0.5, min?: number, max?: number) {
-  return `<input type="number" id="${id}" value="${v}" step="${step}"${min !== undefined ? ` min="${min}"` : ''}${max !== undefined ? ` max="${max}"` : ''} />`;
+/** slider + number: `min`/`max` bound the value, `span` (default: the same) is what the slider spans */
+function numIn(id: string, v: number, step = 0.5, min = -LIMITS.coord, max = LIMITS.coord, span?: [number, number]) {
+  const [lo, hi] = span ?? [min, max];
+  return `<div class="ctl"><input type="range" id="${id}-r" min="${Math.min(lo, v)}" max="${Math.max(hi, v)}" step="${step}" value="${v}" /><input type="number" id="${id}" value="${round2(v)}" step="${step}" min="${min}" max="${max}" /></div>`;
 }
+type Apply = (v: number, final: boolean, from?: HTMLInputElement) => void;
+type NumInput = HTMLInputElement & { __apply?: Apply };
+let gesture: string | null = null; // the hole as it was when the current gesture began
+function beginGesture() { if (gesture === null) gesture = JSON.stringify(hole()); }
+function endGesture() {
+  if (gesture === null) return;
+  const before = gesture;
+  gesture = null;
+  if (before === JSON.stringify(hole())) return;
+  undoStack.push(before);
+  if (undoStack.length > 80) undoStack.shift();
+  redoStack = [];
+  dirty = true;
+}
+let settleTimer = 0;
+/** wheel bursts have no "release": the gesture ends when the wheel goes quiet */
+function settleGesture() {
+  clearTimeout(settleTimer);
+  settleTimer = window.setTimeout(() => { endGesture(); renderProps(); }, 450);
+}
+const clampTo = (num: HTMLInputElement, v: number) => Math.max(num.min === '' ? -Infinity : Number(num.min), Math.min(num.max === '' ? Infinity : Number(num.max), v));
 function bind(id: string, fn: (v: number) => void) {
-  const el = $(id) as HTMLInputElement | null;
-  if (!el) return;
-  el.onchange = () => { const v = Number(el.value); if (Number.isFinite(v)) { pushUndo(); fn(v); renderProps(); } };
+  const num = $(id) as NumInput | null;
+  if (!num) return;
+  const range = $(`${id}-r`) as HTMLInputElement | null;
+  const apply: Apply = (v, final, from) => {
+    if (!Number.isFinite(v)) return;
+    beginGesture();
+    fn(v);
+    dirty = true;
+    if (final) { endGesture(); renderProps(); return; }
+    if (from !== num) num.value = String(round2(v));
+    if (range && from !== range) range.value = String(v);
+  };
+  num.__apply = apply;
+  num.oninput = () => apply(Number(num.value), false, num);
+  num.onchange = () => apply(Number(num.value), true, num);
+  if (range) {
+    range.oninput = () => apply(Number(range.value), false, range);
+    range.onchange = () => apply(Number(range.value), true, range);
+  }
 }
+/** the panel-wide wheel and label-scrub handlers (once) */
+function wireProps() {
+  const el = $('ed-props');
+  el.addEventListener('wheel', e => {
+    const t = e.target as HTMLElement;
+    if (!(t instanceof HTMLInputElement) || (t.type !== 'number' && t.type !== 'range')) return;
+    const num = (t.type === 'number' ? t : $(t.id.slice(0, -2))) as NumInput | null;
+    if (!num?.__apply) return;
+    e.preventDefault();
+    const step = (Number(num.step) || 1) * (e.shiftKey ? 10 : 1);
+    const d = (e.deltaY || e.deltaX) < 0 ? 1 : -1;
+    num.__apply(round2(clampTo(num, Number(num.value) + d * step)), false);
+    settleGesture();
+  }, { passive: false });
+  el.addEventListener('pointerdown', e => {
+    const lab = (e.target as HTMLElement).closest?.('label');
+    if (!lab || e.button !== 0) return;
+    const num = lab.parentElement?.querySelector('input[type=number]') as NumInput | null;
+    if (!num?.__apply) return;
+    e.preventDefault();
+    const v0 = Number(num.value), x0 = e.clientX, step = Number(num.step) || 1;
+    let scrubbed = false;
+    lab.setPointerCapture(e.pointerId);
+    const mv = (ev: PointerEvent) => {
+      const k = Math.round((ev.clientX - x0) / 6) * (ev.shiftKey ? 10 : 1);
+      if (k) scrubbed = true;
+      num.__apply!(round2(clampTo(num, v0 + k * step)), false);
+    };
+    const up = () => {
+      lab.removeEventListener('pointermove', mv); lab.removeEventListener('pointerup', up); lab.removeEventListener('pointercancel', up);
+      if (scrubbed) { endGesture(); renderProps(); }
+      else { gesture = null; num.focus(); num.select(); }
+    };
+    lab.addEventListener('pointermove', mv); lab.addEventListener('pointerup', up); lab.addEventListener('pointercancel', up);
+  });
+}
+/** zone power: label, step, min, max */
+const POWER_FIELDS: Partial<Record<ZoneKind, [string, number, number, number]>> = {
+  slope: ['Steepness (u/s² downhill)', 0.5, 0.5, 30],
+  boost: ['Boost (u/s²)', 0.5, 0, 80],
+  jump: ['Launch (vz)', 0.5, 2, 30],
+  conveyor: ['Belt speed (u/s)', 0.5, 0.5, 30],
+  spinner: ['Spin (rad/s · negative = the other way)', 0.5, -8, 8],
+  fan: ['Blow (u/s²)', 1, 5, 80],
+  trampoline: ['Bounce (vz)', 0.5, 3, 30],
+  magnet: ['Pull (u/s² · negative = push away)', 1, -80, 80],
+  cannon: ['Muzzle speed at full power (u/s)', 1, 5, 46],
+  gravity: ['Pull (u/s²)', 0.5, 0, 80],
+};
 function renderProps() {
   const el = $('ed-props');
+  const top = el.scrollTop;
+  renderPropsInto(el);
+  el.scrollTop = top;
+}
+function renderPropsInto(el: HTMLElement) {
   const h = hole();
   const s = sel;
   if (tool === 'swing' && !s) { renderSwingProps(el); return; }
+  // position sliders span the hole with some lawn either side; the boxes take anything the format allows
+  const bb = holeBounds(h);
+  const spanX: [number, number] = [Math.floor(bb.minX - 16), Math.ceil(bb.maxX + 16)];
+  const spanY: [number, number] = [Math.floor(bb.minY - 16), Math.ceil(bb.maxY + 16)];
+  const posIn = (id: string, v: number, axis: 'x' | 'y') => numIn(id, v, 0.5, -LIMITS.coord, LIMITS.coord, axis === 'x' ? spanX : spanY);
+  const sizeIn = (id: string, v: number, min = 0.5) => numIn(id, v, 0.5, min, LIMITS.size, [min, Math.max(20, Math.ceil(Math.max(bb.w, bb.h)))]);
   if (!s) {
     el.innerHTML = `<h3>Hole ${cur + 1} of ${holes.length}</h3>
       ${field('Name', `<input type="text" id="p-name" value="${esc(h.name)}" maxlength="${LIMITS.holeNameLen}" />`)}
       ${field('Par', numIn('p-par', h.par, 1, 1, LIMITS.par))}
       ${field('Tip (intro card)', `<input type="text" id="p-tip" value="${esc(h.tip ?? '')}" maxlength="${LIMITS.tipLen}" />`)}
       ${field('Theme', `<select id="p-theme">${THEME_NAMES.map(t => `<option value="${t}"${(h.theme ?? 'park') === t ? ' selected' : ''}>${t.toUpperCase()}</option>`).join('')}</select>`)}
-      ${field('Gravity (1 = earth · 0.4 = moon · 2 = heavy)', numIn('p-gravity', h.gravity ?? 1, 0.1, 0.3, 2))}
+      ${field('Gravity (1 = earth · 0.4 = moon · 2 = heavy)', numIn('p-gravity', h.gravity ?? 1, 0.05, 0.3, 2))}
       <div class="row wrap" style="margin-top:8px">
         <button class="btn small" id="p-dup">Duplicate hole</button>
         <button class="btn small" id="p-left" ${cur === 0 ? 'disabled' : ''}>◀ Move</button>
@@ -634,7 +937,7 @@ function renderProps() {
       <h3>Stats</h3>
       <div class="tiny">${h.floor.length} floors · ${h.blocks?.length ?? 0} blocks · ${h.zones?.length ?? 0} zones · ${h.bumpers?.length ?? 0} bumpers</div>
       <h3>Shortcuts</h3>
-      <div class="tiny">V select · F floor · B block · S sand · I ice · W water · J jump<br>P swing preview · T test in 3D · G grid snap (${snap}) · Ctrl+Z undo · Ctrl+D duplicate · Del delete<br>Wheel zoom · Space/right-drag pan</div>`;
+      <div class="tiny">V select · F floor · B block · S sand · I ice · W water · J jump<br>P swing preview · T test in 3D · G grid snap (${snap}) · Ctrl+Z undo · Ctrl+D duplicate · Del delete<br>Wheel zoom · Space/right-drag pan<br>Drag the green grips to resize, the gold knobs to turn or aim · Alt = no snap<br>Shift+wheel turns the selection · Alt+wheel raises / grows it<br>Drag a label sideways to scrub its value · wheel over any number steps it</div>`;
     ($('p-name') as HTMLInputElement).onchange = e => { pushUndo(); h.name = (e.target as HTMLInputElement).value.slice(0, LIMITS.holeNameLen) || 'Untitled'; };
     ($('p-tip') as HTMLInputElement).onchange = e => { pushUndo(); h.tip = (e.target as HTMLInputElement).value.slice(0, LIMITS.tipLen); };
     ($('p-theme') as HTMLSelectElement).onchange = e => { pushUndo(); h.theme = (e.target as HTMLSelectElement).value; };
@@ -650,7 +953,7 @@ function renderProps() {
   const delBtn = '<div class="row wrap" style="margin-top:8px"><button class="btn small" id="p-duplicate" title="A copy, offset a little (Ctrl+D)">Duplicate (Ctrl+D)</button><button class="btn small danger" id="p-delete">Delete (Del)</button></div>';
   if (s.kind === 'tee' || s.kind === 'cup') {
     const pt = s.kind === 'tee' ? h.tee : h.cup;
-    html = `<h3>${s.kind.toUpperCase()}</h3>${field('X', numIn('p-x', pt.x))}${field('Y', numIn('p-y', pt.y))}`;
+    html = `<h3>${s.kind.toUpperCase()}</h3><div class="grid2">${field('X', posIn('p-x', pt.x, 'x'))}${field('Y', posIn('p-y', pt.y, 'y'))}</div><div class="tiny">Or just drag it on the canvas.</div>`;
     el.innerHTML = html;
     bind('p-x', v => { pt.x = v; }); bind('p-y', v => { pt.y = v; });
     return;
@@ -659,26 +962,13 @@ function renderProps() {
     const r: Rect | Zone = s.kind === 'floor' ? h.floor[s.i] : h.zones![s.i];
     const z = s.kind === 'zone' ? (r as Zone) : null;
     html = `<h3>${z ? z.kind.toUpperCase() : (r as Rect).z ? 'PLATFORM' : 'FLOOR'}</h3>
-      <div class="grid2">${field('X', numIn('p-x', r.x))}${field('Y', numIn('p-y', r.y))}${field('W', numIn('p-w', r.w, 0.5, 0.5))}${field('H', numIn('p-h', r.h, 0.5, 0.5))}</div>`;
-    if (!z) html += field('Height (0 = ground level; raised = a platform)', numIn('p-z', (r as Rect).z ?? 0, 0.25, 0, LIMITS.floorZ)) + `<div class="tiny">A platform's edges are cliff faces: a ball below bounces off them, a ball on top rolls off. Ramps climb onto it (a ramp of steepness ${'`'}power${'`'} rises ${'`'}rampRise${'`'}: match the height). Blocks, hazards and the cup on it sit at its level.</div>`;
+      <div class="grid2">${field('X', posIn('p-x', r.x, 'x'))}${field('Y', posIn('p-y', r.y, 'y'))}${field('W', sizeIn('p-w', r.w))}${field('H', sizeIn('p-h', r.h))}</div>`;
+    if (!z) html += field('Height (0 = ground level; raised = a platform)', numIn('p-z', (r as Rect).z ?? 0, 0.25, 0, LIMITS.floorZ, [0, 8])) + `<div class="tiny">A platform's edges are cliff faces: a ball below bounces off them, a ball on top rolls off. Ramps climb onto it (a ramp of steepness ${'`'}power${'`'} rises ${'`'}rampRise${'`'}: match the height). Blocks, hazards and the cup on it sit at its level. Alt+wheel over the canvas raises it too.</div>`;
     if (z) {
-      const directional = ['slope', 'boost', 'conveyor', 'fan', 'cannon', 'gravity'].includes(z.kind);
       const dirLabel = z.kind === 'slope' ? 'Downhill direction (° · 0 = right, 90 = down)' : z.kind === 'cannon' ? 'Barrel rests pointing (° · the player aims it)' : z.kind === 'gravity' ? 'Pulls toward (° · 0 = right, 90 = down)' : 'Direction (° · 0 = right, 90 = down)';
-      if (directional) html += field(dirLabel, `<input type="range" id="p-angle" min="0" max="359" step="1" value="${z.angle ?? 0}" /><div class="tiny" id="p-angle-v">${z.angle ?? 0}°</div>`);
+      if (DIRECTIONAL.includes(z.kind)) html += field(dirLabel, numIn('p-angle', z.angle ?? 0, 1, 0, 359)) + '<div class="tiny">Or drag the gold arrow tip on the canvas · Shift+wheel turns it.</div>';
       const power = z.power ?? ZONE_DEFAULT_POWER[z.kind];
-      const powerField: Partial<Record<ZoneKind, [string, number, number, number]>> = {
-        slope: ['Steepness (u/s² downhill)', 0.5, 0.5, 30],
-        boost: ['Boost (u/s²)', 0.5, 0, 80],
-        jump: ['Launch (vz)', 0.5, 2, 30],
-        conveyor: ['Belt speed (u/s)', 0.5, 0.5, 30],
-        spinner: ['Spin (rad/s · negative = the other way)', 0.5, -8, 8],
-        fan: ['Blow (u/s²)', 1, 5, 80],
-        trampoline: ['Bounce (vz)', 0.5, 3, 30],
-        magnet: ['Pull (u/s² · negative = push away)', 1, -80, 80],
-        cannon: ['Muzzle speed at full power (u/s)', 1, 5, 46],
-        gravity: ['Pull (u/s²)', 0.5, 0, 80],
-      };
-      const pf = powerField[z.kind];
+      const pf = POWER_FIELDS[z.kind];
       if (pf) html += field(pf[0], numIn('p-power', power, pf[1], pf[2], pf[3]));
       if (z.kind === 'slope') html += `<div class="tiny">Ramp rises ${rampRise(z).toFixed(2)} u from its bottom edge to its top edge. The ball climbs it, drops off the top and bounces off the back and sides.</div>`;
       if (z.kind === 'cannon') html += field('Loft (launch vz)', numIn('p-lift', z.lift ?? CANNON_DEFAULT_LIFT, 0.5, 0, 30)) + '<div class="tiny">Roll in and the cannon loads the ball; the next shot is aimed and powered by the player and flies with this loft.</div>';
@@ -686,14 +976,13 @@ function renderProps() {
       if (z.kind === 'fan') html += '<div class="tiny">Works on the ground and in the air: floats the ball ~2 u up and shoves it along.</div>';
       if (z.kind === 'trampoline') html += '<div class="tiny">Only a FALLING ball bounces — pair it with a ramp, jump pad or cannon.</div>';
       if (z.kind === 'gravity') html += `<div class="tiny">Sideways gravity: pulls the ball on the ground and in the air. Above ${FRICTION} (the felt's grip) nothing rests in it — the ball rolls until a wall holds it.</div>`;
-      if (z.kind === 'tele') html += `<div class="grid2">${field('Exit X', numIn('p-tx', z.tx ?? 0))}${field('Exit Y', numIn('p-ty', z.ty ?? 0))}</div><div class="tiny">Drag the dashed ring to move the exit.</div>`;
+      if (z.kind === 'tele') html += `<div class="grid2">${field('Exit X', posIn('p-tx', z.tx ?? 0, 'x'))}${field('Exit Y', posIn('p-ty', z.ty ?? 0, 'y'))}</div><div class="tiny">Drag the dashed ring to move the exit.</div>`;
     }
     el.innerHTML = html + delBtn;
     bind('p-x', v => { r.x = v; }); bind('p-y', v => { r.y = v; }); bind('p-w', v => { r.w = Math.max(0.5, v); }); bind('p-h', v => { r.h = Math.max(0.5, v); });
-    if (!z) bind('p-z', v => { const zz = Math.max(0, Math.min(LIMITS.floorZ, v)); if (zz > 0) (r as Rect).z = zz; else delete (r as Rect).z; });
+    if (!z) bind('p-z', v => { setFloorZ(r as Rect, v); });
     if (z) {
-      const ang = $('p-angle') as HTMLInputElement | null;
-      if (ang) ang.oninput = () => { z.angle = Number(ang.value); $('p-angle-v').textContent = `${z.angle}°`; dirty = true; };
+      bind('p-angle', v => { z.angle = norm360(Math.round(v)); });
       bind('p-power', v => { z.power = v; });
       bind('p-lift', v => { z.lift = v; });
       bind('p-tx', v => { z.tx = v; }); bind('p-ty', v => { z.ty = v; });
@@ -703,14 +992,14 @@ function renderProps() {
   }
   if (s.kind === 'teleExit') {
     const z = h.zones![s.i];
-    el.innerHTML = `<h3>TELEPORTER EXIT</h3><div class="grid2">${field('X', numIn('p-tx', z.tx ?? 0))}${field('Y', numIn('p-ty', z.ty ?? 0))}</div>`;
+    el.innerHTML = `<h3>TELEPORTER EXIT</h3><div class="grid2">${field('X', posIn('p-tx', z.tx ?? 0, 'x'))}${field('Y', posIn('p-ty', z.ty ?? 0, 'y'))}</div>`;
     bind('p-tx', v => { z.tx = v; }); bind('p-ty', v => { z.ty = v; });
     return;
   }
   if (s.kind === 'bumper') {
     const b = h.bumpers![s.i];
-    el.innerHTML = `<h3>${b.kick > 0 ? 'BUMPER' : 'POST'}</h3><div class="grid2">${field('X', numIn('p-x', b.x))}${field('Y', numIn('p-y', b.y))}</div>${field('Radius', numIn('p-r', b.r, 0.1, 0.3, 6))}${field('Kick (0 = passive post)', numIn('p-kick', b.kick, 1, 0, 25))}${delBtn}`;
-    bind('p-x', v => { b.x = v; }); bind('p-y', v => { b.y = v; }); bind('p-r', v => { b.r = v; }); bind('p-kick', v => { b.kick = v; });
+    el.innerHTML = `<h3>${b.kick > 0 ? 'BUMPER' : 'POST'}</h3><div class="grid2">${field('X', posIn('p-x', b.x, 'x'))}${field('Y', posIn('p-y', b.y, 'y'))}</div>${field('Radius', numIn('p-r', b.r, 0.1, 0.3, 6))}${field('Kick (0 = passive post)', numIn('p-kick', b.kick, 1, 0, 25))}<div class="tiny">Drag the grip on its rim to resize · Alt+wheel too.</div>${delBtn}`;
+    bind('p-x', v => { b.x = v; }); bind('p-y', v => { b.y = v; }); bind('p-r', v => { b.r = Math.max(0.3, Math.min(6, v)); }); bind('p-kick', v => { b.kick = Math.max(0, v); });
     $('p-delete').onclick = deleteSel; $('p-duplicate').onclick = duplicateSel;
     return;
   }
@@ -720,48 +1009,34 @@ function renderProps() {
     const gen = b.gen;
     const mt = b.motion?.type;
     const title = mt === 'rotate' ? 'WINDMILL' : mt === 'slide' ? 'SLIDING BLOCK' : mt === 'swing' ? 'PENDULUM' : mt === 'blink' ? 'LASER GATE'
-      : b.bounce && b.bounce > 1 ? 'RUBBER WALL' : b.h !== undefined ? 'LOW WALL' : gen?.kind === 'tri' ? 'TRIANGLE WALL' : 'WALL BLOCK';
+      : b.bounce && b.bounce > 1 ? 'RUBBER WALL' : b.h !== undefined && b.h < WALL_H ? 'LOW WALL' : gen?.kind === 'tri' ? 'TRIANGLE WALL' : 'WALL BLOCK';
     html = `<h3>${title}</h3>`;
-    const pivot = b.motion && (b.motion.type === 'rotate' || b.motion.type === 'swing') ? b.motion : null;
-    if (pivot) html += `<div class="grid2">${field('Pivot X', numIn('p-cx', round2(pivot.cx)))}${field('Pivot Y', numIn('p-cy', round2(pivot.cy)))}</div>`;
-    else html += `<div class="grid2">${field('Centre X', numIn('p-cx', round2(c.x)))}${field('Centre Y', numIn('p-cy', round2(c.y)))}</div>`;
-    if (gen?.kind === 'rect') html += `<div class="grid2">${field('Width', numIn('p-w', gen.w, 0.5, 0.2))}${field('Height', numIn('p-h', gen.h, 0.5, 0.2))}</div>${field('Rotation °', numIn('p-rot', gen.rot, 5))}`;
-    if (gen?.kind === 'tri') html += `<div class="grid2">${field('Leg along X', numIn('p-w', gen.w, 0.5, 0.2))}${field('Leg along Y', numIn('p-h', gen.h, 0.5, 0.2))}</div>${field('Rotation ° (turns about the right-angle corner)', numIn('p-rot', gen.rot, 45))}<div class="tiny">A right triangle: 0° puts the corner top-left, 90° top-right, 180° bottom-right, 270° bottom-left. Equal legs make a 45° mirror that turns a shot a clean 90°.</div>`;
-    if (gen?.kind === 'windmill') html += `<div class="grid2">${field('Blade length', numIn('p-len', gen.len, 0.5, 0.5, 60))}${field('Blade width', numIn('p-wid', gen.width, 0.1, 0.2, 10))}</div>${field('Blades', numIn('p-blades', gen.blades, 1, 2, 6))}`;
-    if (gen?.kind === 'bar') html += `<div class="grid2">${field('Arm length', numIn('p-len', gen.len, 0.5, 0.5, 60))}${field('Arm width', numIn('p-wid', gen.width, 0.1, 0.2, 10))}</div>`;
+    const pivot = pivotOf(b);
+    if (pivot) html += `<div class="grid2">${field('Pivot X', posIn('p-cx', round2(pivot.cx), 'x'))}${field('Pivot Y', posIn('p-cy', round2(pivot.cy), 'y'))}</div>`;
+    else html += `<div class="grid2">${field('Centre X', posIn('p-cx', round2(c.x), 'x'))}${field('Centre Y', posIn('p-cy', round2(c.y), 'y'))}</div>`;
+    if (gen?.kind === 'rect') html += `<div class="grid2">${field('Width', sizeIn('p-w', gen.w, 0.2))}${field('Height', sizeIn('p-h', gen.h, 0.2))}</div>${field('Rotation °', numIn('p-rot', norm180(gen.rot), 5, -180, 180))}<div class="tiny">Drag the corner grips to resize, the gold knob to turn (Shift+wheel too) · Alt = no snap.</div>`;
+    if (gen?.kind === 'tri') html += `<div class="grid2">${field('Leg along X', sizeIn('p-w', gen.w, 0.2))}${field('Leg along Y', sizeIn('p-h', gen.h, 0.2))}</div>${field('Rotation °', numIn('p-rot', norm180(gen.rot), 5, -180, 180))}<div class="tiny">A right triangle, turned about its right-angle corner. Equal legs make a 45° mirror that turns a shot a clean 90°. Drag the gold knob to turn it (Shift+wheel too).</div>`;
+    if (gen?.kind === 'windmill') html += `<div class="grid2">${field('Blade length', numIn('p-len', gen.len, 0.5, 0.5, 60, [0.5, 20]))}${field('Blade width', numIn('p-wid', gen.width, 0.1, 0.2, 10, [0.2, 4]))}</div>${field('Blades', numIn('p-blades', gen.blades, 1, 2, 6))}<div class="tiny">Drag the grip at the blade tip to set the length.</div>`;
+    if (gen?.kind === 'bar') html += `<div class="grid2">${field('Arm length', numIn('p-len', gen.len, 0.5, 0.5, 60, [0.5, 20]))}${field('Arm width', numIn('p-wid', gen.width, 0.1, 0.2, 10, [0.2, 4]))}</div><div class="tiny">Drag the grip at the arm tip to set the length.</div>`;
     if (b.motion?.type === 'rotate') html += field('Spin (rad/s, − reverses)', numIn('p-speed', b.motion.speed, 0.1, -6, 6));
-    if (b.motion?.type === 'swing') html += `<div class="grid2">${field('Swing ± °', numIn('p-amp', b.motion.amp, 5, 5, 180))}${field('Period (s)', numIn('p-period', b.motion.period, 0.5, 0.5, 30))}</div>${field('Phase (0–1)', numIn('p-phase', b.motion.phase ?? 0, 0.25, 0, 1))}<div class="tiny">The arm hangs down (+y) from its pivot and swings side to side.</div>`;
-    if (b.motion?.type === 'slide') html += `<div class="grid2">${field('Travel X', numIn('p-dx', b.motion.dx, 0.5, -60, 60))}${field('Travel Y', numIn('p-dy', b.motion.dy, 0.5, -60, 60))}</div><div class="grid2">${field('Period (s)', numIn('p-period', b.motion.period, 0.5, 0.5, 30))}${field('Phase (0–1)', numIn('p-phase', b.motion.phase ?? 0, 0.25, 0, 1))}</div>`;
-    if (b.motion?.type === 'blink') html += `<div class="grid2">${field('Period (s)', numIn('p-period', b.motion.period, 0.5, 0.5, 30))}${field('On for (0–1 of period)', numIn('p-duty', b.motion.duty, 0.1, 0.1, 0.9))}</div>${field('Phase (0–1)', numIn('p-phase', b.motion.phase ?? 0, 0.25, 0, 1))}<div class="tiny">Solid while lit. A ball caught inside when it lights up is reset.</div>`;
-    html += field('Bounce (1 = wall · 2 = rubber · 0.5 = dead)', numIn('p-bounce', b.bounce ?? 1, 0.25, 0.2, 2.5));
-    html += field(`Height (blank = standard wall, ${WALL_H}; a ball higher than this flies over)`, numIn('p-hgt', b.h ?? 0, 0.5, 0, 50));
+    if (b.motion?.type === 'swing') html += `<div class="grid2">${field('Swing ± °', numIn('p-amp', b.motion.amp, 5, 5, 180))}${field('Period (s)', numIn('p-period', b.motion.period, 0.5, 0.5, 30, [0.5, 12]))}</div>${field('Phase (0–1)', numIn('p-phase', b.motion.phase ?? 0, 0.05, 0, 1))}<div class="tiny">The arm hangs down (+y) from its pivot and swings side to side.</div>`;
+    if (b.motion?.type === 'slide') html += `<div class="grid2">${field('Travel X', numIn('p-dx', b.motion.dx, 0.5, -60, 60, [-20, 20]))}${field('Travel Y', numIn('p-dy', b.motion.dy, 0.5, -60, 60, [-20, 20]))}</div><div class="grid2">${field('Period (s)', numIn('p-period', b.motion.period, 0.5, 0.5, 30, [0.5, 12]))}${field('Phase (0–1)', numIn('p-phase', b.motion.phase ?? 0, 0.05, 0, 1))}</div><div class="tiny">The block slides between the two gold knobs — drag either to set its travel.</div>`;
+    if (b.motion?.type === 'blink') html += `<div class="grid2">${field('Period (s)', numIn('p-period', b.motion.period, 0.5, 0.5, 30, [0.5, 12]))}${field('On for (0–1 of period)', numIn('p-duty', b.motion.duty, 0.05, 0.1, 0.9))}</div>${field('Phase (0–1)', numIn('p-phase', b.motion.phase ?? 0, 0.05, 0, 1))}<div class="tiny">Solid while lit. A ball caught inside when it lights up is reset.</div>`;
+    html += field('Bounce (1 = wall · 2 = rubber · 0.5 = dead)', numIn('p-bounce', b.bounce ?? 1, 0.05, 0.2, 2.5));
+    html += field(`Height (${WALL_H} = a standard wall; a ball higher than this flies over)`, numIn('p-hgt', b.h ?? WALL_H, 0.1, 0.1, 50, [0.1, 6]));
     el.innerHTML = html + delBtn;
-    const regen = () => {
-      if (gen?.kind === 'rect') {
-        const cc = centroid(b.pts);
-        b.pts = rotRect(cc.x, cc.y, gen.w, gen.h, gen.rot);
-      } else if (gen?.kind === 'tri') {
-        b.pts = triPts(b.pts[0], b.pts[1], gen.w, gen.h, gen.rot);
-      } else if (gen?.kind === 'windmill' && b.motion?.type === 'rotate') {
-        b.pts = windmillPts(b.motion.cx, b.motion.cy, gen.len, gen.width, gen.blades);
-        b.hub = Math.max(0.5, gen.width * 0.9);
-      } else if (gen?.kind === 'bar' && b.motion?.type === 'swing') {
-        b.pts = barPts(b.motion.cx, b.motion.cy, gen.len, gen.width);
-        b.hub = Math.max(0.4, gen.width * 0.8);
-      }
-    };
     const ox = pivot ? pivot.cx : c.x, oy = pivot ? pivot.cy : c.y;
     bind('p-cx', v => { holes[cur] = moved(h, s, v - ox, 0); });
     bind('p-cy', v => { holes[cur] = moved(h, s, 0, v - oy); });
-    if (gen?.kind === 'rect' || gen?.kind === 'tri') { bind('p-w', v => { gen.w = Math.max(0.2, v); regen(); }); bind('p-h', v => { gen.h = Math.max(0.2, v); regen(); }); bind('p-rot', v => { gen.rot = v; regen(); }); }
-    if (gen?.kind === 'windmill') { bind('p-len', v => { gen.len = v; regen(); }); bind('p-wid', v => { gen.width = v; regen(); }); bind('p-blades', v => { gen.blades = Math.round(v); regen(); }); }
-    if (gen?.kind === 'bar') { bind('p-len', v => { gen.len = v; regen(); }); bind('p-wid', v => { gen.width = v; regen(); }); }
+    if (gen?.kind === 'rect' || gen?.kind === 'tri') { bind('p-w', v => { gen.w = Math.max(0.2, v); regenBlock(b); }); bind('p-h', v => { gen.h = Math.max(0.2, v); regenBlock(b); }); bind('p-rot', v => { gen.rot = norm180(v); regenBlock(b); }); }
+    if (gen?.kind === 'windmill') { bind('p-len', v => { gen.len = Math.max(0.5, v); regenBlock(b); }); bind('p-wid', v => { gen.width = Math.max(0.2, v); regenBlock(b); }); bind('p-blades', v => { gen.blades = Math.max(2, Math.min(6, Math.round(v))); regenBlock(b); }); }
+    if (gen?.kind === 'bar') { bind('p-len', v => { gen.len = Math.max(0.5, v); regenBlock(b); }); bind('p-wid', v => { gen.width = Math.max(0.2, v); regenBlock(b); }); }
     if (b.motion?.type === 'rotate') bind('p-speed', v => { (b.motion as any).speed = v; });
     if (b.motion?.type === 'swing') { bind('p-amp', v => { (b.motion as any).amp = v; }); bind('p-period', v => { (b.motion as any).period = Math.max(0.5, v); }); bind('p-phase', v => { (b.motion as any).phase = v; }); }
     if (b.motion?.type === 'slide') { bind('p-dx', v => { (b.motion as any).dx = v; }); bind('p-dy', v => { (b.motion as any).dy = v; }); bind('p-period', v => { (b.motion as any).period = Math.max(0.5, v); }); bind('p-phase', v => { (b.motion as any).phase = v; }); }
     if (b.motion?.type === 'blink') { bind('p-period', v => { (b.motion as any).period = Math.max(0.5, v); }); bind('p-duty', v => { (b.motion as any).duty = Math.max(0.1, Math.min(0.9, v)); }); bind('p-phase', v => { (b.motion as any).phase = v; }); }
     bind('p-bounce', v => { if (v === 1) delete b.bounce; else b.bounce = Math.max(0.2, Math.min(2.5, v)); });
-    bind('p-hgt', v => { if (v <= 0) delete b.h; else b.h = v; });
+    bind('p-hgt', v => { setBlockHeight(b, v); });
     $('p-delete').onclick = deleteSel; $('p-duplicate').onclick = duplicateSel;
   }
 }
@@ -1140,9 +1415,10 @@ function renderSwingProps(el: HTMLElement) {
   let html = `<h3>SWING PREVIEW</h3>
     <div class="tiny">Click the map to drop a ghost ball. Drag from it to aim: the arrow points the shot and its length is the power. Shift-drag (or drag the ball) moves it. ←/→ turn 1° (Shift 0.1°) · ↑/↓ power 2% (Shift 0.5%).</div>`;
   if (!s) { el.innerHTML = html + `<div class="row wrap" style="margin-top:8px"><button class="btn small" id="p-sw-tee">Ball on the tee</button></div>`; $('p-sw-tee').onclick = () => { placeSwing(h.tee.x, h.tee.y); renderProps(); }; return; }
-  html += `<div class="grid2">${field('Ball X', numIn('p-sw-x', s.x))}${field('Ball Y', numIn('p-sw-y', s.y))}</div>
-    ${field('Angle (° · 0 = right, 90 = down)', `<input type="range" id="p-sw-angle" min="0" max="359.9" step="0.1" value="${s.angleDeg}" />${numIn('p-sw-angle-n', s.angleDeg, 0.1, 0, 359.9)}`)}
-    ${field('Power (%)', `<input type="range" id="p-sw-power" min="0" max="100" step="0.5" value="${round1(s.power * 100)}" />${numIn('p-sw-power-n', round1(s.power * 100), 0.5, 0, 100)}<div class="tiny" id="p-sw-speed">${round1(powerToSpeed(s.power))} u/s off the club</div>`)}`;
+  const bb = holeBounds(h);
+  html += `<div class="grid2">${field('Ball X', numIn('p-sw-x', s.x, 0.5, -LIMITS.coord, LIMITS.coord, [Math.floor(bb.minX - 16), Math.ceil(bb.maxX + 16)]))}${field('Ball Y', numIn('p-sw-y', s.y, 0.5, -LIMITS.coord, LIMITS.coord, [Math.floor(bb.minY - 16), Math.ceil(bb.maxY + 16)]))}</div>
+    ${field('Angle (° · 0 = right, 90 = down)', numIn('p-sw-angle', s.angleDeg, 0.1, 0, 359.9))}
+    ${field('Power (%)', numIn('p-sw-power', round1(s.power * 100), 0.5, 0, 100) + `<div class="tiny" id="p-sw-speed">${round1(powerToSpeed(s.power))} u/s off the club</div>`)}`;
   if (movers) html += field('Swing at (s after the hole starts)', numIn('p-sw-t0', s.t0, 0.1, 0, 120)) + '<div class="tiny">This hole has moving parts: the windmill / pendulum / slider / laser is drawn where it is at the playhead, so scrub this to time the shot.</div>';
   html += `<div class="row wrap" style="margin-top:8px">
       <button class="btn small" id="p-sw-cup">Aim at cup</button>
@@ -1154,15 +1430,19 @@ function renderSwingProps(el: HTMLElement) {
     <div class="tiny" id="p-sw-result" style="white-space:pre-line">${swingPath ? esc(swingPath.summary) : '…'}</div>
     <div class="tiny" style="margin-top:6px">Gold = rolling · cyan dashes = in the air · pips every ½ s · rings mark wall hits (bigger = harder), bumpers, jumps and landings. The path updates live while you move things with any tool.</div>`;
   el.innerHTML = html;
-  const num = (id: string, fn: (v: number) => void) => { const i = $(id) as HTMLInputElement; i.onchange = () => { const v = Number(i.value); if (Number.isFinite(v)) { fn(v); renderProps(); } }; };
+  // the swing is not part of the hole, so these never touch undo or the dirty
+  // flag — they drive both halves of the slider+box control live
+  const num = (id: string, fn: (v: number) => void) => {
+    const box = $(id) as HTMLInputElement | null, range = document.getElementById(`${id}-r`) as HTMLInputElement | null;
+    const apply = (raw: string, from: HTMLInputElement) => { const v = Number(raw); if (Number.isFinite(v)) { fn(v); syncSwingPanel(from); } };
+    if (box) { box.oninput = () => apply(box.value, box); box.onchange = () => apply(box.value, box); }
+    if (range) { range.oninput = () => apply(range.value, range); range.onchange = () => apply(range.value, range); }
+  };
   num('p-sw-x', v => { s.x = v; });
   num('p-sw-y', v => { s.y = v; });
-  num('p-sw-angle-n', v => { s.angleDeg = round1(wrapDeg(v)); });
-  num('p-sw-power-n', v => { s.power = clamp01(v / 100); });
+  num('p-sw-angle', v => { s.angleDeg = round1(wrapDeg(v)); });
+  num('p-sw-power', v => { s.power = clamp01(v / 100); });
   if (movers) num('p-sw-t0', v => { s.t0 = Math.max(0, v); swingPlay = 0; });
-  const ang = $('p-sw-angle') as HTMLInputElement, pow = $('p-sw-power') as HTMLInputElement;
-  ang.oninput = () => { s.angleDeg = round1(Number(ang.value)); syncSwingPanel(); };
-  pow.oninput = () => { s.power = clamp01(Number(pow.value) / 100); syncSwingPanel(); };
   $('p-sw-cup').onclick = () => { s.angleDeg = round1(wrapDeg((Math.atan2(h.cup.y - s.y, h.cup.x - s.x) * 180) / Math.PI)); renderProps(); };
   $('p-sw-tee').onclick = () => { s.x = h.tee.x; s.y = h.tee.y; renderProps(); };
   $('p-sw-next').onclick = () => {
@@ -1176,13 +1456,20 @@ function renderSwingProps(el: HTMLElement) {
   $('p-sw-clear').onclick = clearSwing;
 }
 /** Push the swing's numbers into the panel without rebuilding it (mid-drag, arrow keys). */
-function syncSwingPanel() {
+function syncSwingPanel(from?: HTMLInputElement) {
   const s = swing;
   if (!s || tool !== 'swing') return;
-  const set = (id: string, v: number) => { const i = document.getElementById(id) as HTMLInputElement | null; if (i && document.activeElement !== i) i.value = String(v); };
+  // both halves of each control (slider `id-r` + value box `id`) — skipping only
+  // the one the value came from, so typing in a box is not clobbered but the box
+  // still follows when its slider moves
+  const set = (id: string, v: number) => {
+    for (const el of [document.getElementById(id), document.getElementById(`${id}-r`)]) {
+      if (el && el !== from) (el as HTMLInputElement).value = String(v);
+    }
+  };
   set('p-sw-x', s.x); set('p-sw-y', s.y);
-  set('p-sw-angle', s.angleDeg); set('p-sw-angle-n', s.angleDeg);
-  set('p-sw-power', round1(s.power * 100)); set('p-sw-power-n', round1(s.power * 100));
+  set('p-sw-angle', s.angleDeg);
+  set('p-sw-power', round1(s.power * 100));
   const sp = document.getElementById('p-sw-speed');
   if (sp) sp.textContent = `${round1(powerToSpeed(s.power))} u/s off the club`;
 }
@@ -1244,27 +1531,65 @@ function selectedObject(): unknown {
 
 function drawSelection(g: CanvasRenderingContext2D, h: Hole) {
   if (!sel) return;
+  const P = (x: number, y: number) => w2s(cam, W, H, x, y);
   g.strokeStyle = '#a4ff3d'; g.lineWidth = 2; g.setLineDash([6, 4]);
-  const ring = (x: number, y: number, r: number) => { const p = w2s(cam, W, H, x, y); g.beginPath(); g.arc(p.x, p.y, r * cam.scale, 0, Math.PI * 2); g.stroke(); };
-  const handles = (r: Rect) => {
-    const p = w2s(cam, W, H, r.x, r.y);
-    g.strokeRect(p.x, p.y, r.w * cam.scale, r.h * cam.scale);
-    g.setLineDash([]);
-    g.fillStyle = '#a4ff3d';
-    for (const [x, y] of [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]]) { const q = w2s(cam, W, H, x, y); g.fillRect(q.x - 4, q.y - 4, 8, 8); }
-  };
+  const ring = (x: number, y: number, r: number) => { const p = P(x, y); g.beginPath(); g.arc(p.x, p.y, r * cam.scale, 0, Math.PI * 2); g.stroke(); };
+  const line = (x0: number, y0: number, x1: number, y1: number) => { const a = P(x0, y0), b = P(x1, y1); g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke(); };
   switch (sel.kind) {
     case 'tee': ring(h.tee.x, h.tee.y, 1.2); break;
     case 'cup': ring(h.cup.x, h.cup.y, 1.1); break;
     case 'bumper': { const b: Bumper = h.bumpers![sel.i]; ring(b.x, b.y, b.r + 0.3); break; }
-    case 'floor': handles(h.floor[sel.i]); break;
-    case 'zone': handles(h.zones![sel.i]); break;
+    case 'floor': { const r = h.floor[sel.i]; const p = P(r.x, r.y); g.strokeRect(p.x, p.y, r.w * cam.scale, r.h * cam.scale); break; }
+    case 'zone': {
+      const z = h.zones![sel.i]; const p = P(z.x, z.y); g.strokeRect(p.x, p.y, z.w * cam.scale, z.h * cam.scale);
+      if (DIRECTIONAL.includes(z.kind)) {
+        // the aim arrow, centre → grip
+        const t = arrowTip(z); const c = P(z.x + z.w / 2, z.y + z.h / 2), q = P(t.x, t.y);
+        g.setLineDash([]); g.strokeStyle = '#ffd60a'; g.lineWidth = 2;
+        g.beginPath(); g.moveTo(c.x, c.y); g.lineTo(q.x, q.y); g.stroke();
+        const a = Math.atan2(q.y - c.y, q.x - c.x);
+        g.beginPath(); g.moveTo(q.x, q.y); g.lineTo(q.x - 10 * Math.cos(a - 0.5), q.y - 10 * Math.sin(a - 0.5)); g.lineTo(q.x - 10 * Math.cos(a + 0.5), q.y - 10 * Math.sin(a + 0.5)); g.closePath(); g.fillStyle = '#ffd60a'; g.fill();
+      }
+      break;
+    }
     case 'teleExit': { const z = h.zones![sel.i]; ring(z.tx!, z.ty!, 1.0); break; }
     case 'block': {
       const b = h.blocks![sel.i];
-      if (b.motion?.type === 'rotate' || b.motion?.type === 'swing') ring(b.motion.cx, b.motion.cy, (b.gen?.kind === 'windmill' || b.gen?.kind === 'bar' ? b.gen.len : 4) + 0.3);
+      const pv = pivotOf(b);
+      if (pv) ring(pv.cx, pv.cy, (b.gen?.kind === 'windmill' || b.gen?.kind === 'bar' ? b.gen.len : 4) + 0.3);
+      if (b.gen?.kind === 'rect') {
+        // stalk from the top edge to the rotation knob
+        const c = centroid(b.pts); const a = rad(b.gen.rot); const vx = -Math.sin(a), vy = Math.cos(a);
+        const reach = Math.max(1, 18 / cam.scale);
+        g.setLineDash([]); g.strokeStyle = '#ffd60a'; g.lineWidth = 1.5;
+        line(c.x - vx * b.gen.h / 2, c.y - vy * b.gen.h / 2, c.x - vx * (b.gen.h / 2 + reach), c.y - vy * (b.gen.h / 2 + reach));
+      }
+      if (b.motion?.type === 'slide') {
+        // the two ends of the travel and ghosts of the block there
+        const c = centroid(b.pts); const m = b.motion;
+        g.setLineDash([4, 4]); g.strokeStyle = '#ffd60a'; g.lineWidth = 1.5;
+        line(c.x - m.dx, c.y - m.dy, c.x + m.dx, c.y + m.dy);
+        g.globalAlpha = 0.35;
+        for (const k of [1, -1]) {
+          g.beginPath();
+          for (let i = 0; i < b.pts.length; i += 2) { const p = P(b.pts[i] + m.dx * k, b.pts[i + 1] + m.dy * k); if (i === 0) g.moveTo(p.x, p.y); else g.lineTo(p.x, p.y); }
+          g.closePath(); g.stroke();
+        }
+        g.globalAlpha = 1;
+      }
       break;
     }
   }
   g.setLineDash([]);
+  // the grips: green squares resize, gold knobs turn / aim / stretch
+  for (const gp of gripsOf(h, sel)) {
+    const p = P(gp.x, gp.y);
+    if (gp.shape === 'square') {
+      g.fillStyle = '#a4ff3d'; g.strokeStyle = '#0b1a10'; g.lineWidth = 1.5;
+      g.fillRect(p.x - 4.5, p.y - 4.5, 9, 9); g.strokeRect(p.x - 4.5, p.y - 4.5, 9, 9);
+    } else {
+      g.beginPath(); g.arc(p.x, p.y, 6.5, 0, Math.PI * 2);
+      g.fillStyle = '#ffd60a'; g.fill(); g.strokeStyle = '#fff'; g.lineWidth = 1.5; g.stroke();
+    }
+  }
 }

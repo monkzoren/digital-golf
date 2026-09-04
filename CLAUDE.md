@@ -23,6 +23,12 @@ README.md for architecture and run instructions. Key facts:
   cannon, gravity), block motion (rotate/slide/swing/blink) and block `bounce` must
   be handled in physics.ts, mapformat.ts, render.ts (2D), render3d.ts (3D)
   and editor.ts (tool + props); `TOYBOX` in courses.ts has one hole per piece.
+  In the editor every number is a slider + value box pair (`numIn`) bound
+  LIVE through `bind` — one undo step per gesture (`beginGesture` /
+  `endGesture`; wheel bursts settle via `settleGesture`) — and the
+  on-canvas gizmo is `gripsOf` (where the grips are) + `dragGrip` (what a
+  drag does) + `wheelAdjust` (Shift/Alt+wheel); a new parameter that can
+  be shown on the canvas should get a grip there, not just a field.
   In 3D a magnet is a black hole (`blackHoleMesh`: well, spinning accretion
   disc, horizon ring, dust on tightening orbits; orange and reversed when it
   repels), animated per frame from `blackHoles`.
@@ -131,7 +137,12 @@ README.md for architecture and run instructions. Key facts:
   hole). Clients subscribe per course (`SELECT * FROM hole WHERE course_id =
   N`); drafts are visible through the `my_courses` view. Built-ins are
   seeded from `shared/courses.ts` in `init` and re-synced by the
-  `seed_builtins` reducer (publish.sh calls it).
+  `seed_builtins` reducer (publish.sh calls it). Ratings: `rate_course`
+  (1–5 stars, published courses only, not your own, and only after a round
+  on it — in a room on that course past the lobby, or already rated) upserts
+  a private `rating` row and keeps `ratingSum` / `ratingCount` on the course
+  row; the client sees its own stars via the `my_ratings` view and ranks
+  Community by a prior-weighted average (`ratingScore` in main.ts).
 - Hole rows are immutable (a save replaces them), so the module caches
   parsed holes by row id; the client caches by row id too. `geomOf(hole)` is
   a WeakMap on the Hole object — the editor mutates holes in place and must

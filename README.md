@@ -82,7 +82,10 @@ TypeScript three.js game with a built-in course editor.
   Adding a fantastical world is one record in `client/src/themes3d.ts` plus
   a 2D palette (`THEMES` in `render.ts`) and its name in `THEME_NAMES`.
 - **Course editor.** Draw floors, walls, movers, surfaces and hazards on a
-  grid, tweak every parameter in a properties panel, undo/redo, duplicate,
+  grid, then shape them in place: grips on the selection resize, rotate,
+  aim and stretch it (Shift+wheel turns, Alt+wheel raises), and every
+  parameter is a slider beside a value box — drag it, scrub its label or
+  wheel over it and the canvas follows live. Undo/redo, duplicate,
   import/export JSON, **test-play on the real 3D stage with the exact
   physics the server runs**, save drafts, publish to everyone. The *Swing
   preview* tool drops a ghost ball, takes an angle and a power (drag, type or
@@ -90,7 +93,14 @@ TypeScript three.js game with a built-in course editor.
   stops or drops — live while you move walls and bumpers, with movers drawn
   where they are along the shot. Built-in courses can be duplicated as a
   starting point. Published courses appear under *Community* when creating a
-  room, sorted by plays.
+  room, ranked by player rating (then plays).
+- **Ratings.** After a round, everyone who played rates the course 1–5
+  stars on the final scoreboard (`rate_course`); a rating can be revised
+  later from the course picker. Authors cannot rate their own courses, and
+  nobody can rate a course they have not played. The course row carries the
+  running total (`ratingSum` / `ratingCount`), your own stars come through
+  the `my_ratings` view, and the Community list ranks by a prior-weighted
+  average so one lone 5★ does not outrank a well-loved course.
 - **The tennis presentation, one to one.** Menu → SELECT A GOLFER (live
   animated 3D previews on every card) → SELECT A COURSE → lobby → play,
   with the broadcast wipe between screens, HUD plates, gold toasts for
