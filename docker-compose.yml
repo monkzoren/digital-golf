@@ -49,6 +49,12 @@ services:
       dockerfile: client/Dockerfile
       args:
         VITE_DATABASE_NAME: ${DATABASE_NAME:-digital-golf}
+        # Firebase web config — the project SHARED by every Digital game
+        # (see .env.example). Empty = no accounts, device-local identities.
+        VITE_FIREBASE_API_KEY: ${FIREBASE_API_KEY:-}
+        VITE_FIREBASE_AUTH_DOMAIN: ${FIREBASE_AUTH_DOMAIN:-}
+        VITE_FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
+        VITE_FIREBASE_APP_ID: ${FIREBASE_APP_ID:-}
     depends_on:
       - spacetimedb
     ports:

@@ -3778,6 +3778,7 @@
             <span class="field-label">PLAYING AS</span>
             <button id="name-edit" class="name-chip">GUEST</button>
             <button id="char-chip" class="account-chip">BLAZE</button>
+            <button id="account-chip" class="account-chip hidden">SIGN IN</button>
           </div>
           <div class="divider">PLAY</div>
           <button id="create-btn" class="mode-btn gold tour-hero"><span class="mode-ico">⛳</span><span class="mode-name">Select a Course</span><span class="desc">up to 32 golfers · everyone putts at once · solo, public or invite</span></button>
@@ -3943,6 +3944,42 @@
         <input id="name-input" type="text" maxlength="16" placeholder="YOUR NAME" autocomplete="off" />
         <div class="gfx-foot">PICK A NAME — YOUR GOLFER IS NEXT</div>
         <div class="row"><button id="name-ok" class="primary">Let's Go ▶</button></div>
+        <div id="name-account" class="hidden">
+          <div class="si-or" id="name-or">OR</div>
+          <div class="si-alt">
+            <button id="name-signin" class="si-alt-btn" title="Sign in with the account you use across the Digital games">
+              <span class="si-alt-ico">↩</span><span>I have an account</span>
+            </button>
+          </div>
+          <div class="gfx-foot" id="name-account-note"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sign-in (Firebase). The same account as the other Digital games —
+         one identity everywhere is what a cross-game championship keys on. -->
+    <div id="signin-modal" class="hidden">
+      <div class="gfx-card">
+        <div class="gfx-head"><span class="gfx-title" id="si-title">WELCOME BACK</span></div>
+        <div class="gfx-foot" id="si-sub">THE SAME ACCOUNT AS THE OTHER DIGITAL GAMES</div>
+        <input id="si-email" type="email" placeholder="YOU@EXAMPLE.COM" autocomplete="email" />
+        <input id="si-password" type="password" placeholder="PASSWORD" autocomplete="current-password" />
+        <div class="row"><button id="si-submit" class="primary">Sign In</button></div>
+        <div class="si-links">
+          <button id="si-mode" class="linkbtn">New here? Create an account</button>
+          <button id="si-forgot" class="linkbtn">Forgot password?</button>
+        </div>
+        <div id="si-msg" class="gfx-foot"></div>
+        <div id="si-or" class="si-or">OR</div>
+        <div class="si-alt">
+          <button id="si-google" class="si-alt-btn" title="Continue with Google">
+            <span class="si-alt-ico">G</span><span>Google</span>
+          </button>
+          <button id="si-link" class="si-alt-btn" title="Email me a one-time sign-in link — no password needed">
+            <span class="si-alt-ico">✉</span><span>Email link</span>
+          </button>
+        </div>
+        <button id="si-close" class="linkbtn">Not now</button>
       </div>
     </div>
 

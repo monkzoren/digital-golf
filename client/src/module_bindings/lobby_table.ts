@@ -32,4 +32,5 @@ export default __t.row({
   createdAt: __t.timestamp().name("created_at"),
   waterPenalty: __t.bool().name("water_penalty"),
   powerMul: __t.u8().name("power_mul"),
+  championshipLeg: __t.u64().name("championship_leg"),
 });
