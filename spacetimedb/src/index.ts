@@ -268,7 +268,7 @@ const RollClock = table(
     ticks: t.u32(),
   }
 );
-const ROLL_LIMIT_SECS = 15;
+const ROLL_LIMIT_SECS = 30; // a full-power shot on open felt rolls for ~17 s before it stops
 
 const TickTimer = table(
   { name: 'tick_timer' },

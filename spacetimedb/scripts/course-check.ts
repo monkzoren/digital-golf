@@ -25,7 +25,7 @@ const filter = process.argv[2]?.toLowerCase() ?? '';
 const holeFilter = process.argv[3]?.toLowerCase() ?? '';
 const VERBOSE = !!process.env.VERBOSE;
 
-const MAX_TICKS = 450; // 15 s: the server stops a ball still rolling after this (ROLL_LIMIT_SECS)
+const MAX_TICKS = 900; // 30 s: the server stops a ball still rolling after this (ROLL_LIMIT_SECS)
 const COARSE_ANGLE = 3; // degrees
 const COARSE_POWER = 0.1;
 const TIMED_SAMPLES = 12; // shot times spread over 6 s when the hole has movers

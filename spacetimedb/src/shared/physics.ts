@@ -13,7 +13,7 @@ export const DT = 1 / TICK_HZ;
 
 export const BALL_R = 0.36;
 export const WALL_E = 0.78; // wall restitution
-export const FRICTION = 6.3; // green: rolling deceleration, u/s² (scaled with shot speed: a full swing still rolls ~92 u)
+export const FRICTION = 6.3; // green: rolling deceleration, u/s² (NOT scaled with MAX_SHOT any more: a full swing is a yeet that rolls ~800 u)
 export const TRICKLE_SPEED = 7.5; // below this the felt lets go a little: the ball trickles to a stop
 export const TRICKLE_MUL = 0.6; // …with this much of the deceleration
 export const FRICTION_SAND = 34;
@@ -21,8 +21,11 @@ export const FRICTION_ICE = 1.8;
 export const AIR_DRAG = 0.12; // per second, airborne only
 export const REST_SPEED = 0.3;
 export const MIN_SHOT = 4;
-export const MAX_SHOT = 34;
-export const MAX_SPEED = 52;
+export const MAX_SHOT = 102; // 3× the old 34: a full swing flies, it does not putt
+export const MAX_SPEED = 156;
+/** How heavy the ball is: the share of the world's gravity that pulls it down in flight.
+ *  Below 1 it hangs in the air longer (more flying); a hole's own `gravity` multiplies this. */
+export const BALL_WEIGHT = 0.6;
 export const CUP_R = 0.78; // capture radius (ball centre)
 export const CUP_PULL_R = 2.1; // the cup gently pulls slow balls in
 export const CUP_PULL = 4.5;
@@ -151,7 +154,7 @@ export function geomOf(hole: Hole): HoleGeom {
   }
   g = {
     hole, staticSegs, solids, movers, bumpers: hole.bumpers ?? [], zones, ramps, rampFaces,
-    gravity: GRAVITY * (hole.gravity ?? 1), base,
+    gravity: GRAVITY * BALL_WEIGHT * (hole.gravity ?? 1), base,
   };
   geomCache.set(hole, g);
   return g;
@@ -497,7 +500,7 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
     }
   }
   const sp = Math.hypot(b.vx, b.vy, b.vz);
-  const n = Math.max(1, Math.min(14, Math.ceil((sp * DT) / (BALL_R * 0.45))));
+  const n = Math.max(1, Math.min(42, Math.ceil((sp * DT) / (BALL_R * 0.45)))); // 42: a top-speed ball still steps < half a radius
   const h = DT / n;
   const cup = g.hole.cup;
   const x0 = b.x, y0 = b.y;

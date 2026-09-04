@@ -58,16 +58,21 @@ README.md for architecture and run instructions. Key facts:
   with the real physics: ace exists, is narrow (< 4.5% of shots) and
   hittable, greedy play finishes within par + 1, a ±3° "decent player"
   averages about par, the ball travels ≥ 55/75/95 units for par 3/4/5, no
-  shot rolls for ever. MAX_SHOT is 34 and FRICTION 6.3 with a low-speed
-  trickle (≈ 92 units of roll on green; BALL_R 0.36): a hole should take
-  several shots. Speed and friction scale together — change one, change both.
+  shot rolls for ever. MAX_SHOT is 102 (a yeet: 3× the original 34) and
+  FRICTION 6.3 with a low-speed trickle — a full swing rolls ≈ 800 units on
+  open green (BALL_R 0.36), so holes should be made of walls, drops, flights
+  and hazards, not of distance. `BALL_WEIGHT` (0.6) is the share of GRAVITY
+  that pulls the ball down in flight (a hole's `gravity` multiplies it):
+  ramps and wedges still use the full GRAVITY, so stored slope powers keep
+  their geometry. Raise MAX_SHOT → raise MAX_SPEED, the substep cap in
+  `stepBall` and ROLL_LIMIT_SECS with it.
   Off the course is NOT an instant reset: the ball rolls on across the lawn
   and is reset once it stops out there. `reset_ball` (R) / `undo_shot` (U; F is fullscreen)
   put it back on the tee / where it was last struck from, strokes kept. Cannons LOAD a ball that rolls in; the next
   shot uses `shotFrom` (lofted). The `shoot` reducer takes `atTick` and
   rewinds ≤ 12 ticks (lag compensation).
   Run it after touching physics or courses. The module's private
-  `roll_clock` table stops any ball still rolling after 15 s (pinball
+  `roll_clock` table stops any ball still rolling after 30 s (pinball
   loops) — a safety net, not a design tool.
 - `client/src/main.ts` owns connection, screens (tennis-style overlays +
   wipe), room, game loop, HUD. `aim.ts` is the drag-to-putt reading (screen-space
