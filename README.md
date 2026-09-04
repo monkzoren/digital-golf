@@ -228,8 +228,9 @@ makes them pinball bumpers), `tip`, `theme`. Limits and normalisation are in
 
 ## Next steps
 
-- Accounts and persistent stats (the tennis framework's Firebase +
-  `profiles` sidecar port over directly).
+- Persistent stats (the tennis framework's `profiles` sidecar ports over
+  directly; Firebase sign-in is already here — set `FIREBASE_*` in `.env`
+  to the project shared by every Digital game).
 - Course ratings and a featured rotation; thumbnails in the picker.
 - Spectating a room you are not playing in (holed-out players already
   follow the others).

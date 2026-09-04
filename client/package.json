@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "firebase": "^12.18.0",
     "spacetimedb": "^2.8.3",
     "three": "^0.185.1"
   },

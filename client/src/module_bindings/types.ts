@@ -49,6 +49,15 @@ export const Hole = __t.object("Hole", {
 });
 export type Hole = __Infer<typeof Hole>;
 
+export const LegResult = __t.object("LegResult", {
+  id: __t.u64(),
+  legId: __t.u64(),
+  placings: __t.array(__t.identity()),
+  names: __t.array(__t.string()),
+  finishedAt: __t.timestamp(),
+});
+export type LegResult = __Infer<typeof LegResult>;
+
 export const Lobby = __t.object("Lobby", {
   id: __t.u64(),
   code: __t.string(),
@@ -71,6 +80,7 @@ export const Lobby = __t.object("Lobby", {
   createdAt: __t.timestamp(),
   waterPenalty: __t.bool(),
   powerMul: __t.u8(),
+  championshipLeg: __t.u64(),
 });
 export type Lobby = __Infer<typeof Lobby>;
 

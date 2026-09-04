@@ -6,6 +6,7 @@
 import { type Infer as __Infer } from "spacetimedb";
 
 // Import all reducer arg schemas
+import CreateChampionshipRoomReducer from "../create_championship_room_reducer";
 import CreateLobbyReducer from "../create_lobby_reducer";
 import DeleteCourseReducer from "../delete_course_reducer";
 import JoinLobbyReducer from "../join_lobby_reducer";
@@ -28,6 +29,7 @@ import ShootReducer from "../shoot_reducer";
 import StartGameReducer from "../start_game_reducer";
 import UndoShotReducer from "../undo_shot_reducer";
 
+export type CreateChampionshipRoomParams = __Infer<typeof CreateChampionshipRoomReducer>;
 export type CreateLobbyParams = __Infer<typeof CreateLobbyReducer>;
 export type DeleteCourseParams = __Infer<typeof DeleteCourseReducer>;
 export type JoinLobbyParams = __Infer<typeof JoinLobbyReducer>;
