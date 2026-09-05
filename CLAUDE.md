@@ -37,7 +37,8 @@ README.md for architecture and run instructions. Key facts:
   (`fieldRolls`) nothing rests in it — it is `carried` like a rolling
   ramp and the trickle easing is off inside it (a pull that matched the
   eased friction would roll for ever). `polyStar` makes star-shaped blocks.
-  Floor rects may carry `z` (a raised platform). `floorZ(hole, x, y)` is the
+  Floor rects may carry `wall` (their rails' height: lower is a jumpable
+  low rail, 0 is an open edge with no rail) and `z` (a raised platform). `floorZ(hole, x, y)` is the
   slab height there (the tallest slab wins); `groundZ` starts from it; every
   block, bumper and zone stands on the slab under its centre (`baseOf(g,
   piece)`, computed in `geomOf`) and its height is measured from there.

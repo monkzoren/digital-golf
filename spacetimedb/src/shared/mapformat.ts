@@ -3,7 +3,7 @@
 // (before it lets you publish) validate through here, so a map that passes
 // in the browser passes on the server.
 import type { Block, Bumper, Hole, Motion, Rect, Zone, ZoneKind } from './courses';
-import { pointInFloor } from './courses';
+import { WALL_H, pointInFloor } from './courses';
 
 export const LIMITS = {
   holesPerCourse: 18,
@@ -20,6 +20,7 @@ export const LIMITS = {
   size: 400,
   par: 12,
   floorZ: 20, // tallest platform
+  wallH: 6, // tallest floor rail
 };
 
 export const THEME_NAMES = ['park', 'neon', 'space'];
@@ -41,6 +42,11 @@ function cleanRect(v: any, what: string, floor = false): Rect {
     if (!num(v.z)) throw new Error(`${what}: bad height`);
     const z = r2(clampN(v.z, 0, LIMITS.floorZ));
     if (z > 0) out.z = z;
+  }
+  if (floor && v.wall != null) {
+    if (!num(v.wall)) throw new Error(`${what}: bad wall height`);
+    const wall = r2(clampN(v.wall, 0, LIMITS.wallH));
+    if (Math.abs(wall - WALL_H) > 1e-6) out.wall = wall;
   }
   return out;
 }

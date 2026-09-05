@@ -18,6 +18,11 @@ export interface Rect {
    *  hits and a ball on top rolls off. Ramps climb onto it; everything
    *  placed on it (blocks, bumpers, hazards, the cup) sits at its level. */
   z?: number;
+  /** floor rects only: the height of the rails along this rect's outer
+   *  edges (default WALL_H). Lower rails are drawn and simulated lower —
+   *  a ball can fly over them — and 0 is no rail at all: an open edge the
+   *  ball rolls off (and is reset once it stops out on the lawn). */
+  wall?: number;
 }
 
 export type ZoneKind =
@@ -406,7 +411,7 @@ export function floorWalls(floor: Rect[]): Seg[] {
         const zOut = zAt(mx + nx * PROBE, my + ny * PROBE);
         let kind: { h: number; rail: boolean } | null = null;
         if (zIn > rz + EPS) kind = null; // a higher slab covers this side: its edge, not ours
-        else if (zOut === -Infinity) kind = { h: WALL_H, rail: true }; // the outside: a rail
+        else if (zOut === -Infinity) kind = (r.wall ?? WALL_H) > 0 ? { h: r.wall ?? WALL_H, rail: true } : null; // the outside: a rail (none when the rect is open-edged)
         else if (zOut < rz - EPS) kind = { h: rz, rail: false }; // a drop: this slab's cliff face
         // else: level or higher next door — open
         if (kind && run && run.h === kind.h && run.rail === kind.rail && Math.abs(run.t1 - t0) < EPS) run.t1 = t1;

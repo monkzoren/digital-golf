@@ -3160,10 +3160,11 @@ function setHole(hole: Hole) {
       const run = len * (t1 - t0);
       const pitch = Math.atan2(zb - za, run);
       const L = Math.hypot(run, zb - za) + 0.5;
-      const wgeo = new RoundedBoxGeometry(L, WALL_H, 0.5, 2, 0.07);
-      scaleUv(wgeo, L / 4, 1);
-      const m = new THREE.Mesh(wgeo, WALL_MAT);
-      m.position.set(mx - holeCX, FLOOR_Y + (za + zb) / 2 + WALL_H / 2, my - holeCY);
+      // exactly as tall as the physics has it (a rect's own rail height)
+      const wgeo = new RoundedBoxGeometry(L, seg.h, 0.5, 2, Math.min(0.07, seg.h * 0.3));
+      scaleUv(wgeo, L / 4, seg.h / WALL_H);
+      const m = new THREE.Mesh(wgeo, seg.h < WALL_H - 1e-6 ? WALL_LOW_MAT : WALL_MAT);
+      m.position.set(mx - holeCX, FLOOR_Y + (za + zb) / 2 + seg.h / 2, my - holeCY);
       m.rotation.set(0, -Math.atan2(dy, dx), pitch, 'YZX');
       m.castShadow = true;
       m.receiveShadow = true;

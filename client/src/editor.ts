@@ -689,6 +689,10 @@ function wheelAdjust(e: WheelEvent): boolean {
 function setBlockHeight(b: Block, v: number) {
   if (Math.abs(v - WALL_H) < 1e-6) delete b.h; else b.h = Math.max(0.1, Math.min(50, v));
 }
+function setFloorWall(r: Rect, v: number) {
+  const w = Math.max(0, Math.min(LIMITS.wallH, Math.round(v * 100) / 100));
+  if (Math.abs(w - WALL_H) < 1e-6) delete r.wall; else r.wall = w;
+}
 function setFloorZ(r: Rect, v: number) {
   const z = Math.max(0, Math.min(LIMITS.floorZ, Math.round(v * 100) / 100));
   if (z > 0) r.z = z; else delete r.z;
@@ -965,7 +969,8 @@ function renderPropsInto(el: HTMLElement) {
     const z = s.kind === 'zone' ? (r as Zone) : null;
     html = `<h3>${z ? z.kind.toUpperCase() : (r as Rect).z ? 'PLATFORM' : 'FLOOR'}</h3>
       <div class="grid2">${field('X', posIn('p-x', r.x, 'x'))}${field('Y', posIn('p-y', r.y, 'y'))}${field('W', sizeIn('p-w', r.w))}${field('H', sizeIn('p-h', r.h))}</div>`;
-    if (!z) html += field('Height (0 = ground level; raised = a platform)', numIn('p-z', (r as Rect).z ?? 0, 0.25, 0, LIMITS.floorZ, [0, 8])) + `<div class="tiny">A platform's edges are cliff faces: a ball below bounces off them, a ball on top rolls off. Ramps climb onto it (a ramp of steepness ${'`'}power${'`'} rises ${'`'}rampRise${'`'}: match the height). Blocks, hazards and the cup on it sit at its level. Alt+wheel over the canvas raises it too.</div>`;
+    if (!z) html += field('Height (0 = ground level; raised = a platform)', numIn('p-z', (r as Rect).z ?? 0, 0.25, 0, LIMITS.floorZ, [0, 8])) + `<div class="tiny">A platform's edges are cliff faces: a ball below bounces off them, a ball on top rolls off. Ramps climb onto it (a ramp of steepness ${'`'}power${'`'} rises ${'`'}rampRise${'`'}: match the height). Blocks, hazards and the cup on it sit at its level. Alt+wheel over the canvas raises it too.</div>`
+      + field(`Wall height (${WALL_H} = standard · 0 = no walls)`, numIn('p-wall', (r as Rect).wall ?? WALL_H, 0.1, 0, LIMITS.wallH, [0, 3])) + '<div class="tiny">The rails along this piece\'s outer edges. A low rail is a low wall (a jumping ball clears it); 0 leaves the edge open — the ball rolls off the course and comes back to where it was struck once it stops.</div>';
     if (z) {
       const dirLabel = z.kind === 'slope' ? 'Downhill direction (° · 0 = right, 90 = down)' : z.kind === 'cannon' ? 'Barrel rests pointing (° · the player aims it)' : z.kind === 'gravity' ? 'Pulls toward (° · 0 = right, 90 = down)' : 'Direction (° · 0 = right, 90 = down)';
       if (DIRECTIONAL.includes(z.kind)) html += field(dirLabel, numIn('p-angle', z.angle ?? 0, 1, 0, 359)) + '<div class="tiny">Or drag the gold arrow tip on the canvas · Shift+wheel turns it.</div>';
@@ -988,7 +993,7 @@ function renderPropsInto(el: HTMLElement) {
     }
     el.innerHTML = html + delBtn;
     bind('p-x', v => { r.x = v; }); bind('p-y', v => { r.y = v; }); bind('p-w', v => { r.w = Math.max(0.5, v); }); bind('p-h', v => { r.h = Math.max(0.5, v); });
-    if (!z) bind('p-z', v => { setFloorZ(r as Rect, v); });
+    if (!z) { bind('p-z', v => { setFloorZ(r as Rect, v); }); bind('p-wall', v => { setFloorWall(r as Rect, v); }); }
     if (z) {
       bind('p-angle', v => { z.angle = norm360(Math.round(v)); });
       bind('p-power', v => { z.power = v; });

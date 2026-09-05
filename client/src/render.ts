@@ -274,7 +274,8 @@ export function drawHole(g: CanvasRenderingContext2D, hole: Hole, cam: Camera, W
     const len = Math.hypot(dx, dy) || 1;
     const nx = (-dy / len) * wallW * 0.5, ny = (dx / len) * wallW * 0.5;
     const pts = [seg.ax + nx, seg.ay + ny, seg.bx + nx, seg.by + ny, seg.bx - nx, seg.by - ny, seg.ax - nx, seg.ay - ny];
-    extruded(g, pts, cam, W, H, th.wallTop, th.wallSide, 0.45);
+    // a rail lower than standard is drawn lower (and paler, like a low wall)
+    extruded(g, pts, cam, W, H, seg.h < WALL_H - 1e-6 ? th.wallLow : th.wallTop, th.wallSide, Math.min(0.45, 0.45 * seg.h / WALL_H));
   }
   for (const bl of hole.blocks ?? []) {
     if (bl.motion) continue;
@@ -283,8 +284,8 @@ export function drawHole(g: CanvasRenderingContext2D, hole: Hole, cam: Camera, W
     if (o.editor && o.selected === bl) highlightPoly(g, bl.pts, cam, W, H);
   }
   // the rounded caps hide the seams between wall strips
-  g.fillStyle = th.wallTop;
   for (const seg of rails) {
+    g.fillStyle = seg.h < WALL_H - 1e-6 ? th.wallLow : th.wallTop;
     for (const [x, y] of [[seg.ax, seg.ay], [seg.bx, seg.by]]) {
       const p = w2s(cam, W, H, x, y);
       g.beginPath();
