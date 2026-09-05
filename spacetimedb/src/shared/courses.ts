@@ -391,33 +391,38 @@ export function floorWalls(floor: Rect[]): Seg[] {
         }
       }
       const sorted = [...ts].sort((a, b) => a - b);
-      let run: { t0: number; t1: number; h: number; rail: boolean } | null = null;
-      const flush = () => {
-        if (!run) return;
-        const seg: Seg = {
-          ax: ax + (bx - ax) * run.t0, ay: ay + (by - ay) * run.t0,
-          bx: ax + (bx - ax) * run.t1, by: ay + (by - ay) * run.t1,
-          h: run.h,
+      // two passes: the rails along the top, then the slab's side faces —
+      // an edge over the lawn has both (a raised rect's side is a cliff to
+      // a ball flying below its top, whatever its rail says)
+      for (const rails of [true, false]) {
+        let run: { t0: number; t1: number; h: number } | null = null;
+        const flush = () => {
+          if (!run) return;
+          const seg: Seg = {
+            ax: ax + (bx - ax) * run.t0, ay: ay + (by - ay) * run.t0,
+            bx: ax + (bx - ax) * run.t1, by: ay + (by - ay) * run.t1,
+            h: run.h,
+          };
+          if (rails) seg.rail = true; else seg.cliff = true;
+          out.push(seg);
+          run = null;
         };
-        if (run.rail) seg.rail = true; else seg.cliff = true;
-        out.push(seg);
-        run = null;
-      };
-      for (let i = 0; i + 1 < sorted.length; i++) {
-        const t0 = sorted[i], t1 = sorted[i + 1];
-        const tm = (t0 + t1) / 2;
-        const mx = ax + (bx - ax) * tm, my = ay + (by - ay) * tm;
-        const zIn = zAt(mx - nx * PROBE, my - ny * PROBE);
-        const zOut = zAt(mx + nx * PROBE, my + ny * PROBE);
-        let kind: { h: number; rail: boolean } | null = null;
-        if (zIn > rz + EPS) kind = null; // a higher slab covers this side: its edge, not ours
-        else if (zOut === -Infinity) kind = (r.wall ?? WALL_H) > 0 ? { h: r.wall ?? WALL_H, rail: true } : null; // the outside: a rail (none when the rect is open-edged)
-        else if (zOut < rz - EPS) kind = { h: rz, rail: false }; // a drop: this slab's cliff face
-        // else: level or higher next door — open
-        if (kind && run && run.h === kind.h && run.rail === kind.rail && Math.abs(run.t1 - t0) < EPS) run.t1 = t1;
-        else { flush(); if (kind) run = { t0, t1, ...kind }; }
+        for (let i = 0; i + 1 < sorted.length; i++) {
+          const t0 = sorted[i], t1 = sorted[i + 1];
+          const tm = (t0 + t1) / 2;
+          const mx = ax + (bx - ax) * tm, my = ay + (by - ay) * tm;
+          const zIn = zAt(mx - nx * PROBE, my - ny * PROBE);
+          const zOut = zAt(mx + nx * PROBE, my + ny * PROBE);
+          let h = 0;
+          if (zIn > rz + EPS) h = 0; // a higher slab covers this side: its edge, not ours
+          else if (zOut === -Infinity) h = rails ? (r.wall ?? WALL_H) : rz; // the outside: a rail (none when the rect is open-edged) on top of the slab's side
+          else if (zOut < rz - EPS) h = rails ? 0 : rz; // a drop: this slab's cliff face
+          // else: level or higher next door — open
+          if (h > 0 && run && run.h === h && Math.abs(run.t1 - t0) < EPS) run.t1 = t1;
+          else { flush(); if (h > 0) run = { t0, t1, h }; }
+        }
+        flush();
       }
-      flush();
     }
   }
   return out;

@@ -703,13 +703,14 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
       ev.boost = true;
       carried = zone;
     }
-    // cup pull + capture (felt level only)
-    if (b.z - ground < 0.3) {
+    // cup pull + capture (felt level only — and the cup's OWN felt: it sits
+    // on the top surface, so a ball in a tunnel underneath rolls on past)
+    if (b.z - ground < 0.3 && Math.abs(ground - groundZ(g, cup.x, cup.y)) < 1) {
       const cx = cup.x - b.x, cy = cup.y - b.y;
       const d = Math.hypot(cx, cy);
       const s = speedOf(b);
       if (d < CUP_R && s < CAPTURE_SPEED) {
-        b.x = cup.x; b.y = cup.y; b.z = groundZ(g, cup.x, cup.y, b.z);
+        b.x = cup.x; b.y = cup.y; b.z = groundZ(g, cup.x, cup.y);
         b.vx = 0; b.vy = 0; b.vz = 0;
         ev.holed = true;
         return;

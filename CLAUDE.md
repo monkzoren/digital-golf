@@ -69,6 +69,21 @@ README.md for architecture and run instructions. Key facts:
   passage with a roof slab (`carvedFloor`, `bottom`). The cup and tee are
   drawn at `groundZ` (up a ramp, tilted with it), never at the slab under
   it.
+- `spacetimedb/src/shared/expansion.ts` holds the expansion set (six
+  courses, ids 12–17: Highland Terraces, Rooftops, Millpond, Pinball
+  Palace, Asteroid Belt, Crossroads), every hole a fork with at least two
+  real routes to the cup; `library.ts` exports `LAUNCH` (the nine below)
+  and `LIBRARY = [...LAUNCH, ...EXPANSION]`. The small block/floor
+  builders both files share (`tri`, `low`, `corner`, `star`, `open` — a
+  rail-less rect, `lowRail`, `pond` — water minus islands) live in
+  `shared/pieces.ts` so the two course files never import each other.
+  Lessons from building it: a jump pad ON the tee line makes the gamble
+  the default (put pads off the line); a ramp in an alley that spans the
+  alley's full width has its low edge on the outer rail and cannot be
+  entered; zones apply by x/y at every level, so never lay water, sand or
+  a belt over a tunnel; the greedy checker player mimics the best line,
+  so a fragile "best" line (a launch over a black hole) makes the decent
+  player drown — give the honest route a better landing than the gamble.
 - `spacetimedb/src/shared/library.ts` holds the launch courses (nine, all
   designed around hidden holes-in-one; Galaxy Road is the `space` one;
   Hairpin Hollow and Neon Labyrinth are the corner courses — `corner()`
@@ -86,7 +101,17 @@ README.md for architecture and run instructions. Key facts:
   put it back on the tee / where it was last struck from, strokes kept. Cannons LOAD a ball that rolls in; the next
   shot uses `shotFrom` (lofted). The `shoot` reducer takes `atTick` and
   rewinds ≤ 12 ticks (lag compensation).
-  Run it after touching physics or courses. The module's private
+  Run it after touching physics or courses. Its greedy player routes
+  through the floor rects height-aware (`rectAt`, `canRoll`, `door`: a
+  platform is entered only up a ramp standing on the lower rect, in at
+  the low edge and out at the top; a ball in a tunnel is on the tunnel's
+  green, not on the slab above) and carries the ball's resting `z`
+  between strokes; a cannon only counts as progress when it lies AHEAD
+  of the ball. `TRACE_HOLE="name"` prints its strokes on one hole.
+  Physics notes that came out of the expansion: the cup only captures a
+  ball on its OWN surface (a ball in a tunnel under it rolls past), and a
+  raised rect's edge over the lawn is a cliff face to a ball flying
+  below its top even when the rect is open-edged (`wall: 0`). The module's private
   `roll_clock` table stops any ball still rolling after 15 s (pinball
   loops) — a safety net, not a design tool.
 - Lobby manners are SHARED with digital-tennis and digital-racing — keep

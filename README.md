@@ -61,7 +61,7 @@ TypeScript three.js game with a built-in course editor.
   Late joiners drop straight onto the tee. Refreshing mid-round keeps your
   seat for 25 s. The host can only start once everyone in the lobby has
   readied up.
-- **Twelve built-in courses, 110 holes.** Sunny Park (the tutorial), Neon
+- **Eighteen built-in courses, 164 holes.** Sunny Park (the tutorial), Neon
   Orbit and Toy Box (one hole per gadget) show the pieces off; the launch
   library — Bank Shot Alley, Clockwork, Ramp Ridge, Machine Works, Frost &
   Flame, the championship Grand Tour, **Galaxy Road**, and the two corner
@@ -75,8 +75,16 @@ TypeScript three.js game with a built-in course editor.
   launch, a gadget chain) and is narrow enough to be a feat. Galaxy Road
   is a rainbow road floating in deep space: gravity fields that flip half
   way down a hole, wormholes across the void, a black hole to slingshot
-  round, star jumps in moon gravity and gold star obstacles. Plus
-  **unlimited player-made courses.**
+  round, star jumps in moon gravity and gold star obstacles. The
+  **expansion set** (six more courses, 54 holes, `shared/expansion.ts`)
+  is built on forks: every hole has at least two real ways to the cup —
+  over the platform or through the tunnel under it (**Highland
+  Terraces**), across the rail-less roofs or down in the alley and up a
+  ramp (**Rooftops**), the causeway or the jump (**Millpond**), the
+  bumper field or the outlane (**Pinball Palace**), round the black hole
+  or along the rim (**Asteroid Belt**), left lane or right lane
+  (**Crossroads**) — and the hidden ace usually sits on the one nobody
+  takes first. Plus **unlimited player-made courses.**
 - **Worlds, not just palettes.** A course (or any hole) picks a theme and
   the whole 3D scene follows it — sky and the light it casts, the ground
   (or none: space holes float), fog, felt, rails, blocks, what "sand" and
@@ -183,7 +191,12 @@ cells (humanly hittable), covers under ~4.5% of random shots (hidden), a
 par, the ball travels far enough for the par (55 / 75 / 95 units for par
 3 / 4 / 5) and nothing rolls for ever. Ramps are wedges: enter them from
 the low edge — a ramp met side-on or from its top is a step the ball
-bounces off.
+bounces off. The greedy player routes through the floor rects with their
+heights in mind (a platform is only entered up a ramp standing on the
+lower green, a ball in a tunnel is under the cup, not at it) and carries
+the ball's resting height between strokes. `TRACE_HOLE="Summit Keep"`
+prints every stroke it takes on that hole; `DEBUG_LEN` prints a hole's
+route length.
 
 ## Run it locally
 

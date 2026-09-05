@@ -14,17 +14,13 @@
 // climbing — so they are always entered from their low edge. A cannon loads the ball
 // that rolls in; the next shot is the player's, lofted.
 import {
-  type Block, type Course, type Hole, R, polyRect, polyStar,
+  type Course, R, polyRect,
   bumper, post, windmill, slider, pendulum, laser, rubber,
   sand, ice, water, slope, slopeTo, boost, jump, tele, conveyor, spinner, fan, trampoline, magnet, cannon, gfield,
 } from './courses';
+import { tri, low, mirrorTR, star, corner } from './pieces';
+import { EXPANSION } from './expansion';
 
-/** A triangle / any polygon block from flat points. */
-const tri = (...pts: number[]): Block => ({ pts });
-/** A low (jumpable) wall block. */
-const low = (x: number, y: number, w: number, h: number, height = 1.2): Block => ({ ...polyRect(x, y, w, h), h: height });
-/** A 45° mirror filling the top-right corner of a lane that ends at x=right, y=0..size. */
-const mirrorTR = (right: number, size: number): Block => tri(right - size, 0, right, 0, right, size);
 
 // ---------------------------------------------------------------------------
 // BANK SHOT ALLEY — mirrors, gaps and rubber. Every ace is a carom.
@@ -674,12 +670,6 @@ export const GRAND: Course = {
 // sideways (and flip half way), wormholes, black holes, star jumps and
 // star-shaped obstacles. Water is the void; sand is moon dust.
 // ---------------------------------------------------------------------------
-/** A star-shaped block (5 tips); `bounce` > 1 makes it a rubber "power star". */
-const star = (cx: number, cy: number, r: number, bounce?: number, tips = 5): Block => {
-  const b: Block = { pts: polyStar(cx, cy, r, tips) };
-  if (bounce !== undefined) b.bounce = bounce;
-  return b;
-};
 
 export const GALAXY: Course = {
   id: 9,
@@ -795,8 +785,6 @@ export const GALAXY: Course = {
 // pockets. Every outer corner carries a 45° mirror, so a drive with the right
 // pace caroms round the bend — that is where the hidden aces live.
 // ---------------------------------------------------------------------------
-/** A 45° mirror filling the corner at (px, py); ix/iy point INTO the floor. */
-const corner = (px: number, py: number, s: number, ix: 1 | -1, iy: 1 | -1): Block => tri(px, py, px + ix * s, py, px, py + iy * s);
 
 export const HAIRPIN: Course = {
   id: 10,
@@ -1024,4 +1012,7 @@ export const LABYRINTH: Course = {
   ],
 };
 
-export const LIBRARY: Course[] = [BANK, CLOCKWORK, RIDGE, MACHINE, FROST, GRAND, GALAXY, HAIRPIN, LABYRINTH];
+/** The launch nine. */
+export const LAUNCH: Course[] = [BANK, CLOCKWORK, RIDGE, MACHINE, FROST, GRAND, GALAXY, HAIRPIN, LABYRINTH];
+/** Every library course: the launch nine and the expansion set (`expansion.ts`). */
+export const LIBRARY: Course[] = [...LAUNCH, ...EXPANSION];

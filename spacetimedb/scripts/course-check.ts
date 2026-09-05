@@ -12,8 +12,10 @@
 //   npm run check-courses -- "Bank"  # courses whose name contains "Bank"
 //   npm run check-courses -- "Bank" "Ridge"  # ... only its holes whose name contains "Ridge"
 //   VERBOSE=1 npm run check-courses  # print the ace lines
+//   TRACE_HOLE="Summit Keep" npm run check-courses -- "Terraces"  # print the greedy / decent player's strokes on that hole
+//   DEBUG_LEN="Summit Keep" npm run check-courses -- "Terraces"    # print that hole's route length
 import { cannonAt, geomOf, groundZ, newEvents, restingOn, shotFrom, stepBall, DT, type BallState, type HoleGeom } from '../src/shared/physics';
-import { COURSES, type Course, type Hole } from '../src/shared/courses';
+import { COURSES, pointInRect, rampExtent, type Course, type Hole } from '../src/shared/courses';
 import { LIBRARY } from '../src/shared/library';
 import { cleanHole } from '../src/shared/mapformat';
 
@@ -35,11 +37,13 @@ const MIN_ACES = 3; // library courses: at least this many of 9 holes must have 
 // tutorial / showcase courses: their aces are meant to be easy to find
 const SHOWCASE = new Set(['Sunny Park', 'Neon Orbit', 'Toy Box']);
 
-interface ShotResult { holed: boolean; water: number; resets: number; rest: { x: number; y: number }; ticks: number; settled: boolean; travel: number }
+interface ShotResult { holed: boolean; water: number; resets: number; rest: Pos; ticks: number; settled: boolean; travel: number }
+/** Where a ball sits; `z` is its resting height when that is not the top surface (a tunnel). */
+type Pos = { x: number; y: number; z?: number };
 
-function play(g: HoleGeom, from: { x: number; y: number }, angle: number, power: number, t0: number): ShotResult {
+function play(g: HoleGeom, from: Pos, angle: number, power: number, t0: number): ShotResult {
   const v = shotFrom(g, from.x, from.y, angle, power);
-  const z0 = groundZ(g, from.x, from.y);
+  const z0 = from.z ?? groundZ(g, from.x, from.y);
   const b: BallState = { x: from.x, y: from.y, z: v.vz > 0 ? z0 + 0.01 : z0, vx: v.vx, vy: v.vy, vz: v.vz, teleTicks: 0 };
   let water = 0, resets = 0, travel = 0;
   for (let tick = 1; tick <= MAX_TICKS; tick++) {
@@ -54,11 +58,11 @@ function play(g: HoleGeom, from: { x: number; y: number }, angle: number, power:
       b.x = from.x; b.y = from.y; b.z = groundZ(g, from.x, from.y); b.vx = b.vy = b.vz = 0; b.teleTicks = 0;
       return { holed: false, water, resets, rest: { x: b.x, y: b.y }, ticks: tick, settled: true, travel };
     }
-    if (restingOn(g, b)) return { holed: false, water, resets, rest: { x: b.x, y: b.y }, ticks: tick, settled: true, travel };
+    if (restingOn(g, b)) return { holed: false, water, resets, rest: { x: b.x, y: b.y, z: b.z }, ticks: tick, settled: true, travel };
   }
   // still creeping along (a slow slide on ice) counts as settled: it will stop
   const creeping = Math.hypot(b.vx, b.vy) < 1.5 && b.vz === 0;
-  return { holed: false, water, resets, rest: { x: b.x, y: b.y }, ticks: MAX_TICKS, settled: creeping, travel };
+  return { holed: false, water, resets, rest: { x: b.x, y: b.y, z: b.z }, ticks: MAX_TICKS, settled: creeping, travel };
 }
 
 const hasMovers = (h: Hole) => (h.blocks ?? []).some(b => b.motion) || (h.zones ?? []).some(z => z.kind === 'spinner');
@@ -103,11 +107,19 @@ function findAces(h: Hole, g: HoleGeom): AceReport {
  *  wobble (angle ± noise°, power ± noise/50) — a decent player, not a robot. */
 function greedy(h: Hole, g: HoleGeom, maxStrokes = 8, noise = 0, seed = 1): { strokes: number; holed: boolean; unsettled: number; travel: number } {
   const route = routeTo(h);
-  let pos = { ...h.tee };
+  let pos: Pos = { ...h.tee };
   let strokes = 0, unsettled = 0, travel = 0;
   let t = 0;
   let rng = seed * 7919 + 17;
   const rand = () => { rng = (rng * 1103515245 + 12345) & 0x7fffffff; return rng / 0x7fffffff; };
+  // how good is a shot: where it ends, along the route, water and resets counted
+  const score = (r: ShotResult): number => {
+    let d = r.holed ? -1 : route(r.rest.x, r.rest.y, r.rest.z) + (r.water + r.resets) * 30;
+    // loaded in a NEW cannon: the next shot flies (hopping in place in the same one is not progress)
+    // (only a cannon AHEAD of the ball: rolling back to the one that just fired you is not)
+    if (!r.holed && !r.water && !r.resets) { const c = cannonAt(g, r.rest.x, r.rest.y); if (c && c !== cannonAt(g, pos.x, pos.y) && d < route(pos.x, pos.y, pos.z)) d = Math.max(0.1, d - 45); }
+    return d;
+  };
   for (let s = 0; s < maxStrokes; s++) {
     let bestR: ShotResult | null = null, bestD = Infinity, bestA = 0, bestP = 0;
     for (let a = 0; a < 360; a += 6) {
@@ -116,15 +128,13 @@ function greedy(h: Hole, g: HoleGeom, maxStrokes = 8, noise = 0, seed = 1): { st
         if (!r.settled) { unsettled++; if (VERBOSE && noise === 0 && unsettled <= 3) console.log(`      never settled (greedy from ${pos.x.toFixed(1)},${pos.y.toFixed(1)}): angle ${a}° power ${p.toFixed(2)} → (${r.rest.x.toFixed(1)}, ${r.rest.y.toFixed(1)})`); continue; }
         // the decent player does not know the hidden line: a hole-out from
         // far away is not a shot they would pick
-        if (noise > 0 && r.holed && route(pos.x, pos.y) > 25) continue;
-        let d = r.holed ? -1 : route(r.rest.x, r.rest.y) + (r.water + r.resets) * 30;
-        // loaded in a NEW cannon: the next shot flies (hopping in place in the same one is not progress)
-        if (!r.holed && !r.water && !r.resets) { const c = cannonAt(g, r.rest.x, r.rest.y); if (c && c !== cannonAt(g, pos.x, pos.y)) d = Math.max(0.1, d - 45); }
+        if (noise > 0 && r.holed && route(pos.x, pos.y, pos.z) > 25) continue;
+        const d = score(r);
         if (d < bestD) { bestD = d; bestR = r; bestA = a; bestP = p; }
       }
     }
     if (!bestR) return { strokes: strokes + 1, holed: false, unsettled, travel };
-    if (process.env.TRACE_HOLE && h.name === process.env.TRACE_HOLE) console.log(`      ${noise ? 'decent' : 'greedy'} #${seed} stroke ${strokes + 1} from (${pos.x.toFixed(1)},${pos.y.toFixed(1)}): ${bestA}° p${bestP.toFixed(1)} → ${bestR.holed ? 'HOLED' : `(${bestR.rest.x.toFixed(1)},${bestR.rest.y.toFixed(1)})`}${bestR.water ? ' water' : ''} routeD=${route(bestR.rest.x, bestR.rest.y).toFixed(1)}`);
+    if (process.env.TRACE_HOLE && h.name === process.env.TRACE_HOLE) console.log(`      ${noise ? 'decent' : 'greedy'} #${seed} stroke ${strokes + 1} from (${pos.x.toFixed(1)},${pos.y.toFixed(1)}): ${bestA}° p${bestP.toFixed(1)} → ${bestR.holed ? 'HOLED' : `(${bestR.rest.x.toFixed(1)},${bestR.rest.y.toFixed(1)})`}${bestR.water ? ' water' : ''} routeD=${route(bestR.rest.x, bestR.rest.y, bestR.rest.z).toFixed(1)}`);
     if (noise > 0) {
       const a = bestA + (rand() * 2 - 1) * noise;
       const p = Math.max(0.02, Math.min(1, bestP + (rand() * 2 - 1) * noise / 50));
@@ -140,58 +150,96 @@ function greedy(h: Hole, g: HoleGeom, maxStrokes = 8, noise = 0, seed = 1): { st
   return { strokes, holed: false, unsettled, travel };
 }
 
+type Rc = { x: number; y: number; w: number; h: number; z?: number };
+const touches = (a: Rc, b: Rc) => a.x <= b.x + b.w && b.x <= a.x + a.w && a.y <= b.y + b.h && b.y <= a.y + a.h;
+/** Can a ball roll from floor rect `a` into rect `b`? They must touch, and
+ *  a higher `b` (a platform) is only reachable up a ramp: a slope zone
+ *  standing in `a` whose top edge meets `b`. Rolling DOWN is always fine —
+ *  a ball on a platform rolls off its edge. */
+function canRoll(h: Hole, a: number, b: number): boolean {
+  if (!touches(h.floor[a], h.floor[b])) return false;
+  if ((h.floor[b].z ?? 0) <= (h.floor[a].z ?? 0) + 0.01) return true;
+  return !!rampUp(h, a, b);
+}
+/** The ramp that climbs from rect `a` onto the higher rect `b`, if any: a
+ *  slope standing on `a` (the slab under its centre) whose edge meets `b`. */
+const rampUp = (h: Hole, a: number, b: number) => (h.zones ?? []).find(z => z.kind === 'slope' && rectAt(h, z.x + z.w / 2, z.y + z.h / 2) === a && touches(z, h.floor[b]));
+/** Where a ball crosses from rect `a` into rect `b`, coming from (px, py):
+ *  up a ramp it is the ramp's top edge; between nested rects (a platform
+ *  laid over a floor) it is the nearest point of the inner rect's edge;
+ *  otherwise the middle of the shared edge. */
+type Door = { x: number; y: number; out?: { x: number; y: number } };
+function door(h: Hole, ai: number, bi: number, px: number, py: number): Door {
+  const a = h.floor[ai], b = h.floor[bi];
+  if ((b.z ?? 0) > (a.z ?? 0) + 0.01) {
+    // up a ramp: in at the low edge, out at the top
+    const r = rampUp(h, ai, bi)!;
+    const ang = ((r.angle ?? 0) * Math.PI) / 180, ext = rampExtent(r) / 2;
+    const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+    return { x: cx + Math.cos(ang) * ext, y: cy + Math.sin(ang) * ext, out: { x: cx - Math.cos(ang) * ext, y: cy - Math.sin(ang) * ext } };
+  }
+  const ox = Math.max(a.x, b.x), oy = Math.max(a.y, b.y), ox2 = Math.min(a.x + a.w, b.x + b.w), oy2 = Math.min(a.y + a.h, b.y + b.h);
+  const inner = [a, b].find(r => Math.abs(r.x - ox) < 0.01 && Math.abs(r.y - oy) < 0.01 && Math.abs(r.x + r.w - ox2) < 0.01 && Math.abs(r.y + r.h - oy2) < 0.01);
+  if (inner) {
+    // nearest point of the inner rect's perimeter
+    const cx = Math.max(inner.x, Math.min(inner.x + inner.w, px)), cy = Math.max(inner.y, Math.min(inner.y + inner.h, py));
+    const dl = cx - inner.x, dr = inner.x + inner.w - cx, dt = cy - inner.y, db = inner.y + inner.h - cy;
+    const m = Math.min(dl, dr, dt, db);
+    if (m === dl) return { x: inner.x, y: cy };
+    if (m === dr) return { x: inner.x + inner.w, y: cy };
+    if (m === dt) return { x: cx, y: inner.y };
+    return { x: cx, y: inner.y + inner.h };
+  }
+  return { x: (ox + ox2) / 2, y: (oy + oy2) / 2 };
+}
+
+/** The floor rect the ball is on at (x, y): the tallest one covering the
+ *  point (a platform laid over a floor) — no taller than the ball's
+ *  resting height `z` when that is known (a ball in a tunnel is on the
+ *  green the tunnel runs at, not on the platform over its head). */
+function rectAt(h: Hole, x: number, y: number, z = Infinity): number {
+  let best = -1;
+  h.floor.forEach((r, i) => {
+    if (x < r.x - 0.01 || x > r.x + r.w + 0.01 || y < r.y - 0.01 || y > r.y + r.h + 0.01) return;
+    const rz = r.z ?? 0;
+    if (rz > z + 0.01) return;
+    if (best < 0 || rz > (h.floor[best].z ?? 0)) best = i;
+  });
+  return best;
+}
+
 /** Distance to the cup ALONG the floor: through the doorways between
  *  floor rects, so a greedy player in a dogleg heads for the corner
  *  instead of parking against the wall nearest the cup. */
-type Rc = { x: number; y: number; w: number; h: number };
-function routeTo(h: Hole): (x: number, y: number) => number {
-  const inRect = (x: number, y: number, r: Rc) => x >= r.x - 0.01 && x <= r.x + r.w + 0.01 && y >= r.y - 0.01 && y <= r.y + r.h + 0.01;
-  const goal = h.floor.findIndex(r => inRect(h.cup.x, h.cup.y, r));
+function routeTo(h: Hole): (x: number, y: number, z?: number) => number {
+  const goal = rectAt(h, h.cup.x, h.cup.y);
   if (h.floor.length < 2 || goal < 0) return (x, y) => Math.hypot(x - h.cup.x, y - h.cup.y);
-  const touches = (a: Rc, b: Rc) => a.x <= b.x + b.w && b.x <= a.x + a.w && a.y <= b.y + b.h && b.y <= a.y + a.h;
-  const door = (a: Rc, b: Rc) => ({ x: (Math.max(a.x, b.x) + Math.min(a.x + a.w, b.x + b.w)) / 2, y: (Math.max(a.y, b.y) + Math.min(a.y + a.h, b.y + b.h)) / 2 });
   // BFS from the goal rect outward: next[i] = the rect to go to from rect i
   const next = new Map<number, number>(); next.set(goal, -1);
   const queue = [goal];
   while (queue.length) {
     const i = queue.shift()!;
-    h.floor.forEach((r, j) => { if (!next.has(j) && touches(h.floor[i], r)) { next.set(j, i); queue.push(j); } });
+    h.floor.forEach((_, j) => { if (!next.has(j) && canRoll(h, j, i)) { next.set(j, i); queue.push(j); } });
   }
-  return (x, y) => {
-    let i = h.floor.findIndex(r => inRect(x, y, r));
+  return (x, y, z) => {
+    let i = rectAt(h, x, y, z);
     if (i < 0 || !next.has(i)) return Math.hypot(x - h.cup.x, y - h.cup.y);
     let d = 0, px = x, py = y;
     while (i !== goal) {
       const j = next.get(i)!;
-      const dr = door(h.floor[i], h.floor[j]);
+      const dr = door(h, i, j, px, py);
       d += Math.hypot(dr.x - px, dr.y - py); px = dr.x; py = dr.y; i = j;
+      if (dr.out) { d += Math.hypot(dr.out.x - px, dr.out.y - py); px = dr.out.x; py = dr.out.y; }
     }
     return d + Math.hypot(h.cup.x - px, h.cup.y - py);
   };
 }
 
-/** How long is the hole, really: tee → cup as the crow flies, plus the
- *  detour a dogleg forces (through the floor rects' centres in order). */
+/** How long is the hole, really: tee → cup as the crow flies, or the
+ *  detour a dogleg / platform forces (the route through the floor rects'
+ *  doorways), whichever is longer. */
 function holeLength(h: Hole): number {
-  const direct = Math.hypot(h.cup.x - h.tee.x, h.cup.y - h.tee.y);
-  if (h.floor.length < 2) return direct;
-  const inRect = (x: number, y: number, r: Rc) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
-  const start = h.floor.findIndex(r => inRect(h.tee.x, h.tee.y, r)), goal = h.floor.findIndex(r => inRect(h.cup.x, h.cup.y, r));
-  if (start < 0 || goal < 0 || start === goal) return direct;
-  const touches = (a: Rc, b: Rc) => a.x <= b.x + b.w && b.x <= a.x + a.w && a.y <= b.y + b.h && b.y <= a.y + a.h;
-  const centre = (r: Rc) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
-  const prev = new Map<number, number>(); const queue = [start]; prev.set(start, -1);
-  while (queue.length) {
-    const i = queue.shift()!;
-    if (i === goal) break;
-    h.floor.forEach((r, j) => { if (!prev.has(j) && touches(h.floor[i], r)) { prev.set(j, i); queue.push(j); } });
-  }
-  if (!prev.has(goal)) return direct;
-  const path: { x: number; y: number }[] = [h.cup];
-  for (let i = prev.get(goal)!; i !== -1 && i !== start; i = prev.get(i)!) path.push(centre(h.floor[i]));
-  path.push(h.tee);
-  let len = 0; for (let i = 1; i < path.length; i++) len += Math.hypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y);
-  return Math.max(direct, len);
+  return Math.max(Math.hypot(h.cup.x - h.tee.x, h.cup.y - h.tee.y), routeTo(h)(h.tee.x, h.tee.y));
 }
 const MIN_LENGTH: Record<number, number> = { 1: 0, 2: 30, 3: 55, 4: 75, 5: 95 };
 const NOISE_DEG = 3; // the "decent player": ±3° and ±6% power
@@ -254,4 +302,5 @@ for (const course of ALL) {
 }
 console.log(`\n${problems ? `${problems} hole(s) need work` : 'every hole passes'}`);
 if (process.env.TABLE) console.log('\n| course | # | hole | par | length | ace window | decent player | notes |\n|---|---|---|---|---|---|---|---|\n' + rows.join('\n'));
+if (process.env.DEBUG_LEN) { for (const c of ALL) for (const h of c.holes) if (h.name === process.env.DEBUG_LEN) { const hh = cleanHole(JSON.parse(JSON.stringify(h))); console.log('holeLength', holeLength(hh).toFixed(1), 'route from tee', routeTo(hh)(hh.tee.x, hh.tee.y).toFixed(1)); } }
 process.exit(problems ? 1 : 0);
