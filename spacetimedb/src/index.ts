@@ -43,7 +43,10 @@ const EV_LAND = 8;
 const EV_BOOST = 9;
 const EV_RESET = 10;
 
-const MAX_PLAYERS = 32;
+const N_CHARACTERS = 18; // mirrors client/src/characters.ts
+// One golfer per roster character (freeCharacter / set_character), so a
+// room can never seat more players than there are characters.
+const MAX_PLAYERS = N_CHARACTERS;
 
 // The championship relay (digital-championship/relay) mints a token signed
 // with THIS server's key carrying this issuer — the trick the tennis
@@ -52,7 +55,6 @@ const MAX_PLAYERS = 32;
 // Mirrored in the hub and every sibling game — change everywhere.
 const RELAY_ISSUER = 'digital-championship-relay';
 const N_COLORS = 12;
-const N_CHARACTERS = 18; // mirrors client/src/characters.ts
 const INTRO_SECS = 3.5;
 const RESULTS_SECS = 7;
 const OFFLINE_GRACE_SECS = 25; // a refresh mid-round keeps your seat this long
@@ -426,6 +428,16 @@ function freeColor(ctx: Ctx, lobbyId: bigint, preferred: number): number {
   return preferred;
 }
 
+/** The character the player wants, unless someone in the room already
+ *  plays as it — then the first free one (every golfer is unique in a room). */
+function freeCharacter(ctx: Ctx, lobbyId: bigint, preferred: number): number {
+  const taken = new Set<number>();
+  for (const p of ctx.db.player.byLobby.filter(lobbyId)) taken.add(p.characterId);
+  if (!taken.has(preferred)) return preferred;
+  for (let c = 0; c < N_CHARACTERS; c++) if (!taken.has(c)) return c;
+  return preferred;
+}
+
 function startTicking(ctx: Ctx, lobbyId: bigint) {
   stopTicking(ctx, lobbyId);
   ctx.db.tickTimer.insert({ scheduledId: 0n, scheduledAt: ScheduleAt.interval(TICK_MICROS), lobbyId });
@@ -624,6 +636,13 @@ export const set_name = spacetimedb.reducer({ name: t.string() }, (ctx, { name }
 export const set_character = spacetimedb.reducer({ characterId: t.u8() }, (ctx, { characterId }) => {
   if (characterId >= N_CHARACTERS) throw new SenderError('Unknown character');
   const p = getPlayer(ctx);
+  if (p.lobbyId !== 0n) {
+    for (const o of ctx.db.player.byLobby.filter(p.lobbyId)) {
+      if (o.characterId === characterId && !o.identity.isEqual(p.identity)) {
+        throw new SenderError(`${o.name || 'Someone'} is already playing as that golfer`);
+      }
+    }
+  }
   ctx.db.player.identity.update({ ...p, characterId });
 });
 
@@ -673,7 +692,7 @@ export const create_lobby = spacetimedb.reducer(
     });
     const fresh = ctx.db.player.identity.find(ctx.sender)!;
     ctx.db.player.identity.update({
-      ...fresh, lobbyId: lobby.id, seat: 0, total: 0, holeScores: [], color: freeColor(ctx, lobby.id, fresh.color), ready: false, kicked: false,
+      ...fresh, lobbyId: lobby.id, seat: 0, total: 0, holeScores: [], color: freeColor(ctx, lobby.id, fresh.color), characterId: freeCharacter(ctx, lobby.id, fresh.characterId), ready: false, kicked: false,
     });
   }
 );

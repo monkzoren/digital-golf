@@ -11,7 +11,7 @@ const usableEnvUri = envUri && !(envPointsLocal && !pageIsLocal) ? envUri : unde
 export const SPACETIMEDB_URI = usableEnvUri ?? defaultUri;
 export const DATABASE_NAME = (import.meta as any).env?.VITE_DATABASE_NAME ?? 'digital-golf';
 
-export const MAX_PLAYERS = 32; // mirrors MAX_PLAYERS in the module
+export const MAX_PLAYERS = 18; // mirrors MAX_PLAYERS in the module (one seat per roster character)
 export const POWER_MULS: [number, string][] = [[80, 'SOFT'], [100, 'NORMAL'], [130, 'TURBO']];
 
 // Ball colours — index = player.color. Mirrors N_COLORS in the module.

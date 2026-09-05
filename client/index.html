@@ -1504,13 +1504,19 @@
     }
     /* the waiting screen packs a lot — a slimmer headline buys a panel */
     #waiting h1 { font-size: 36px; }
+    /* The body takes whatever height the headline and the action row leave
+       and its panels scroll INSIDE it (roster, chat feed, the host's
+       settings column) — it used to be flex-shrink: 0, so a long chat or a
+       full settings panel pushed Ready / Start / Leave below the stage's
+       edge, where nobody looks for a scrollbar. */
     #waiting-body {
       display: grid;
       grid-template-columns: minmax(0, 1fr) clamp(240px, 28%, 320px);
       gap: 14px;
       align-items: stretch;
       width: min(1100px, 100%);
-      flex-shrink: 0;
+      flex: 1 1 auto;
+      min-height: 0;
     }
     #waiting-main {
       display: flex;
@@ -1518,12 +1524,16 @@
       align-items: center;
       gap: 10px;
       min-width: 0;
+      min-height: 0;
+      overflow-y: auto;
+      scrollbar-width: thin;
     }
     #waiting-side {
       display: flex;
       flex-direction: column;
       gap: 12px;
       min-width: 0;
+      min-height: 0;
     }
     .side-panel {
       display: flex;
@@ -1603,6 +1613,10 @@
     .info-pill .v { color: var(--ink); }
     #waiting-roster { flex-shrink: 0; }
     #waiting-roster.hidden { display: none; }
+    /* Swap golfer without leaving the room (opens the roster picker; the
+       cards of golfers someone else in the room plays as are locked). */
+    #roster-char-btn { align-self: center; margin-top: 2px; }
+    #roster-char-btn.hidden { display: none; }
     .panel-label {
       color: var(--gold);
       font-size: 11px;
@@ -1669,11 +1683,11 @@
        and the input row stays pinned at the bottom. */
     #lobby-chat {
       flex: 1;
-      min-height: 200px;
+      min-height: 120px;
     }
     #lobby-chat-feed {
       flex: 1;
-      min-height: 80px;
+      min-height: 40px;
       display: flex;
       flex-direction: column;
       gap: 4px;
@@ -2554,6 +2568,8 @@
       letter-spacing: 1px;
     }
     .sel-card.locked .lock-line { display: block; }
+    /* a golfer someone else in the room plays as: no lift, no skew */
+    .sel-card.locked, .sel-card.locked:hover, .sel-card.locked:disabled:hover { transform: none; cursor: not-allowed; }
 
     /* ---- World Tour ---- */
     /* Menu hero button: the campaign gets a full-width card above the modes */
@@ -3503,7 +3519,9 @@
       input[type="text"], input[type="email"], input[type="password"] { max-width: 100%; }
       .link-box { max-width: 100%; }
       .card-grid, #waiting-players { max-width: 100%; }
-      #waiting-body { grid-template-columns: 1fr; }
+      /* the overlay itself scrolls on a phone — panels back to natural height */
+      #waiting-body { grid-template-columns: 1fr; flex-shrink: 0; }
+      #waiting-main { overflow: visible; }
       #waiting-players { max-height: 200px; }
       #lobby-chat { min-height: 0; }
       #lobby-chat-feed { flex: none; max-height: 150px; min-height: 0; }
@@ -3915,6 +3933,7 @@
           <section id="waiting-roster" class="side-panel">
             <div class="panel-label" id="roster-head">GOLFERS</div>
             <div id="waiting-players"></div>
+            <button id="roster-char-btn" class="setting-btn" title="Pick another golfer">✎ CHANGE GOLFER</button>
           </section>
           <section id="lobby-chat" class="side-panel">
             <div class="panel-label">CHAT</div>

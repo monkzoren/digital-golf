@@ -12,7 +12,7 @@ TypeScript three.js game with a built-in course editor.
 
 ## What it plays like
 
-- **Everyone shoots at once.** Up to 32 players per room, no turns. Press,
+- **Everyone shoots at once.** Up to 18 players per room (one per roster character), no turns. Press,
   pull back and release to putt — right-click or Esc mid-pull cancels it
   (or hold ←/→ to aim, Shift for fine, and
   hold Space for power; R puts the ball back on the tee, U back where the

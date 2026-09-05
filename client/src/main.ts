@@ -326,7 +326,7 @@ function onSubscribed() {
   const stored = (store.get('dg_name') ?? '').trim();
   if (!p.name && stored) rd().setName({ name: stored });
   else if (p.name && !stored) store.set('dg_name', p.name);
-  if (store.get('dg_char') !== null && p.characterId !== selectedChar) rd().setCharacter({ characterId: selectedChar });
+  if (store.get('dg_char') !== null && p.characterId !== selectedChar && p.lobbyId === 0n) rd().setCharacter({ characterId: selectedChar });
   else selectedChar = p.characterId;
   const storedColor = store.get('dg_color');
   if (storedColor !== null && Number(storedColor) !== p.color && p.lobbyId === 0n) rd().setColor({ color: Number(storedColor) });
@@ -349,6 +349,7 @@ function route() {
   }
   if (lobby.status === L_OPEN) {
     if (intent === 'change' && overlayTarget === 'select-course') return;
+    if (intent === 'setchar' && overlayTarget === 'select-player') return;
     if (overlayTarget !== 'waiting') showOverlay('waiting'); else renderRoom();
     return;
   }
@@ -356,7 +357,7 @@ function route() {
     if (overlayTarget !== 'gameover') showOverlay('gameover'); else renderGameOver();
     return;
   }
-  if (overlayTarget !== null) { showOverlay(null); enterGame(); }
+  if (overlayTarget !== null) { intent = null; showOverlay(null); enterGame(); }
 }
 
 // ---------------------------------------------------------------------------
@@ -570,28 +571,57 @@ function buildCharGrid() {
     card.dataset.id = String(c.id);
     card.innerHTML =
       `<span class="preview-slot" style="--glow:${c.css}"></span>` +
-      `<div class="cname">${c.name}</div><div class="cmeta">${c.flag} ${c.country} · ${c.style}</div>`;
-    card.addEventListener('click', () => { selectedChar = c.id; sfx.ui(); refreshCharSelection(); });
+      `<div class="cname">${c.name}</div><div class="cmeta">${c.flag} ${c.country} · ${c.style}</div><div class="lock-line"></div>`;
+    card.addEventListener('click', () => { if (card.classList.contains('locked')) { sfx.error(); return; } selectedChar = c.id; sfx.ui(); refreshCharSelection(); });
     grid.appendChild(card);
     slots.push({ char: c, el: card.querySelector('.preview-slot')! });
   }
   staggerChildren(grid);
   initCharacterPreviews($('char-preview') as HTMLCanvasElement, slots, grid);
 }
+/** The room whose golfers the picker has to avoid: mine, or the one I am
+ *  about to join by code. Every golfer is unique in a room (the module's
+ *  set_character refuses a taken one; join_lobby hands out a free one). */
+function pickerLobby(): Lobby | null {
+  const mine = myLobby();
+  if (mine) return mine;
+  if (intent !== 'join' || !joinCode) return null;
+  for (const l of conn.db.lobby.iter()) if (l.code === joinCode) return l;
+  return null;
+}
+/** characterId → name of the OTHER player in that room who plays as it */
+function takenCharacters(): Map<number, string> {
+  const taken = new Map<number, string>();
+  const lobby = subscribed ? pickerLobby() : null;
+  if (lobby) for (const q of lobbyPlayers(lobby.id)) if (!isMe(q.identity)) taken.set(q.characterId, q.name || 'SOMEONE');
+  return taken;
+}
 function refreshCharSelection() {
-  document.querySelectorAll('#char-grid .sel-card').forEach(el => el.classList.toggle('selected', Number((el as HTMLElement).dataset.id) === selectedChar));
+  const taken = takenCharacters();
+  document.querySelectorAll('#char-grid .sel-card').forEach(el => {
+    const id = Number((el as HTMLElement).dataset.id);
+    const by = taken.get(id);
+    el.classList.toggle('selected', id === selectedChar);
+    el.classList.toggle('locked', by !== undefined);
+    (el as HTMLButtonElement).disabled = by !== undefined;
+    el.querySelector('.lock-line')!.textContent = by ? `🔒 ${by.toUpperCase()} PLAYS THIS` : '';
+  });
   const c = CHARACTERS[selectedChar] ?? CHARACTERS[0];
-  $('char-style').textContent = `${c.name} · ${c.country} · ${c.style}`;
-  $('step-course').textContent = intent === 'join' ? '2 · JOIN' : '2 · COURSE';
+  const takenBy = taken.get(c.id);
+  $('char-style').textContent = takenBy ? `${c.name} IS TAKEN BY ${takenBy.toUpperCase()} — PICK ANOTHER GOLFER` : `${c.name} · ${c.country} · ${c.style}`;
+  ($('char-confirm') as HTMLButtonElement).disabled = takenBy !== undefined;
+  const inRoom = intent === 'setchar' && !!myLobby();
+  $('step-course').textContent = intent === 'join' ? '2 · JOIN' : inRoom ? '2 · ROOM' : '2 · COURSE';
   document.querySelectorAll('#select-player .step')[2].textContent = '3 · PLAY';
 }
-$('char-back').onclick = () => { intent = null; showOverlay('menu'); };
+$('char-back').onclick = () => { intent = null; route(); };
 $('char-confirm').onclick = () => {
+  if (takenCharacters().has(selectedChar)) { sfx.error(); refreshCharSelection(); return; }
   store.set('dg_char', String(selectedChar));
   rd().setCharacter({ characterId: selectedChar });
   sfx.ui();
   if (intent === 'join') { rd().joinLobby({ code: joinCode }); intent = null; return; }
-  if (intent === 'setchar') { intent = null; showOverlay('menu'); return; }
+  if (intent === 'setchar') { intent = null; route(); return; }
   showOverlay('select-course');
 };
 
@@ -878,6 +908,7 @@ $('start-btn').onclick = () => { unlockAudio(); rd().startGame({}); };
 $('ready-btn').onclick = () => { unlockAudio(); const p = me(); if (p) { sfx.ui(); rd().setReady({ ready: !p.ready }); } };
 $('leave-btn').onclick = () => { rd().leaveLobby({}); intent = null; resetScene(); showOverlay('menu'); };
 $('waiting-settings-btn').onclick = () => modal('settings-modal', true);
+$('roster-char-btn').onclick = () => { sfx.ui(); intent = 'setchar'; showOverlay('select-player'); };
 $('copy-link-btn').onclick = async () => {
   const l = myLobby();
   if (!l) return;
@@ -974,6 +1005,7 @@ function wireRowEvents() {
     if (overlayTarget === 'menu') renderMenu();
     else if (overlayTarget === 'waiting') renderRoom();
     else if (overlayTarget === 'select-course') renderCourseGrid();
+    else if (overlayTarget === 'select-player') refreshCharSelection();
     else if (overlayTarget === 'gameover') renderGameOver();
     if (!$('mine-modal').classList.contains('hidden')) renderMine();
   };
@@ -987,6 +1019,12 @@ function wireRowEvents() {
   conn.db.player.onUpdate((_c, old, row) => {
     notePlayer(row, old);
     if (isMe(row.identity) && row.kicked && !old.kicked) { notify('THE HOST REMOVED YOU FROM THE ROOM', true); sfx.error(); }
+    if (isMe(row.identity) && row.characterId !== old.characterId && row.characterId !== selectedChar) {
+      // join_lobby swapped my golfer for a free one — someone in the room already had it
+      const wanted = CHARACTERS[old.characterId]?.name ?? 'THAT GOLFER';
+      selectedChar = row.characterId;
+      notify(`${wanted.toUpperCase()} IS TAKEN IN THIS ROOM — YOU ARE ${charOf(row).name.toUpperCase()}`);
+    }
     if (row.lobbyId !== old.lobbyId || row.name !== old.name || row.color !== old.color || row.online !== old.online || row.characterId !== old.characterId || row.ready !== old.ready) refresh();
   });
   conn.db.chat.onInsert((_c, row) => {
