@@ -89,6 +89,13 @@ README.md for architecture and run instructions. Key facts:
   Run it after touching physics or courses. The module's private
   `roll_clock` table stops any ball still rolling after 15 s (pinball
   loops) — a safety net, not a design tool.
+- Lobby manners are SHARED with digital-tennis and digital-racing — keep
+  the three alike: `player.ready` + `set_ready` (a signal to the host, never
+  a gate — `start_game` ignores it; the client labels Start with how many
+  are unready and names them in the sub), host-only `kick_player` (sets
+  `player.kicked` on the way out so the client can toast), ready tags and
+  the host's ✕ on the roster chips, and the room list with ✕ in the ESC
+  menu (`renderMatchMenu`).
 - `client/src/main.ts` owns connection, screens (tennis-style overlays +
   wipe), room, game loop, HUD. `aim.ts` is the drag-to-putt reading (screen-space
   pull through a camera basis frozen at pointer-down) shared with the

@@ -823,7 +823,8 @@ export const set_settings = spacetimedb.reducer(
   }
 );
 
-/** Lobby ready-up: the host can only start once everyone online is ready. */
+/** Lobby ready-up: a signal to the host, who may start without it (the
+ *  same rule as tennis and racing). */
 export const set_ready = spacetimedb.reducer({ ready: t.bool() }, (ctx, { ready }) => {
   const p = getPlayer(ctx);
   const lobby = ctx.db.lobby.id.find(p.lobbyId);
@@ -838,8 +839,8 @@ export const start_game = spacetimedb.reducer(ctx => {
   if (!lobby.hostId.isEqual(ctx.sender)) throw new SenderError('Only the host can start');
   if (lobby.status === L_RUNNING) throw new SenderError('Already playing');
   const members = lobbyPlayers(ctx, lobby.id);
-  const notReady = members.filter(m => m.online && !m.ready);
-  if (notReady.length) throw new SenderError(`Not everyone is ready: ${notReady.map(m => m.name || 'someone').join(', ')}`);
+  // Ready-up is a courtesy, not a gate: the host may start with players
+  // still unready (the client says who).
   for (const m of members) {
     ctx.db.player.identity.update({ ...m, total: 0, holeScores: [], finishedTick: 0, ready: false });
   }

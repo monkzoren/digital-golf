@@ -816,9 +816,12 @@ function renderRoom() {
   const membersNow = lobbyPlayers(lobby.id);
   const waitingOn = membersNow.filter(q => q.online && !q.ready);
   const allReady = waitingOn.length === 0;
+  const waitingNames = waitingOn.map(q => (isMe(q.identity) ? 'YOU' : q.name.toUpperCase())).join(', ');
   $('waiting-sub').textContent = allReady
     ? (host ? 'EVERYONE IS READY — START WHEN YOU LIKE' : 'EVERYONE IS READY — WAITING FOR THE HOST TO START')
-    : `READY UP · WAITING ON ${waitingOn.map(q => (isMe(q.identity) ? 'YOU' : q.name.toUpperCase())).join(', ')}`;
+    : host
+      ? `WAITING ON ${waitingNames} — OR START ANYWAY`
+      : `READY UP · WAITING ON ${waitingNames}`;
   const pills = [
     ['COURSE', lobby.courseName], ['HOLES', String(lobby.holeCount)], ['PAR', String(course?.totalPar ?? '?')],
     ['BY', course?.authorName ?? '?'], ['MAX', `${lobby.maxStrokes} STROKES`], ['TIME', `${lobby.holeSecs} S / HOLE`],
@@ -869,9 +872,12 @@ function renderRoom() {
     wp.appendChild(chip);
   }
   staggerChildren(wp);
+  // The host may start with players still unready — the button says how
+  // many, the sub says who. Same manners as tennis and racing.
   $('start-btn').classList.toggle('hidden', !host);
-  ($('start-btn') as HTMLButtonElement).disabled = !allReady;
-  $('start-btn').title = allReady ? '' : 'Everyone has to ready up first';
+  ($('start-btn') as HTMLButtonElement).disabled = false;
+  $('start-btn').textContent = allReady ? '▶ Start Round' : `▶ Start Anyway (${waitingOn.length} not ready)`;
+  $('start-btn').title = allReady ? '' : `Not ready: ${waitingOn.map(q => q.name || 'someone').join(', ')}`;
   $('ready-btn').textContent = p.ready ? '✓ Ready' : 'Ready up';
   $('ready-btn').classList.toggle('primary', !p.ready);
   $('ready-btn').classList.toggle('alt', p.ready);
