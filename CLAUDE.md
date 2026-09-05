@@ -29,6 +29,13 @@ README.md for architecture and run instructions. Key facts:
   on-canvas gizmo is `gripsOf` (where the grips are) + `dragGrip` (what a
   drag does) + `wheelAdjust` (Shift/Alt+wheel); a new parameter that can
   be shown on the canvas should get a grip there, not just a field.
+  The editor's 2D view hides nothing: `drawHole` with `editor` redraws
+  zones and tunnel walls ghosted outside the floor union (a piece with no
+  green under it is still visible and pickable), and the outliner under
+  the tool list (`renderOutline`, `outlineRows`) lists every piece grouped
+  by kind — click selects, double-click frames, ⚠/◐ flag pieces fully or
+  partly off the floor. It refreshes from `renderProps` and a 250 ms tick
+  in `frame` (drags move things without a re-render).
   In 3D a magnet is a black hole (`blackHoleMesh`: well, spinning accretion
   disc, horizon ring, dust on tightening orbits; orange and reversed when it
   repels), animated per frame from `blackHoles`.
