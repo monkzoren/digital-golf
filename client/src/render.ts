@@ -179,8 +179,42 @@ export function drawHole(g: CanvasRenderingContext2D, hole: Hole, cam: Camera, W
       }
     }
   }
-  // cup shadow ring on the felt
   g.restore();
+
+  // editor: nothing hides off the felt. Everything the floor clip cut away
+  // (a zone or tunnel dragged past the green, or left behind when its floor
+  // was deleted) is drawn again, ghosted, outside the floor union so the
+  // map maker can still see, pick and move it.
+  if (o.editor) {
+    g.save();
+    g.beginPath();
+    g.rect(0, 0, W, H);
+    for (const r of hole.floor) rectPath(g, r, cam, W, H);
+    g.clip('evenodd');
+    g.globalAlpha = 0.55;
+    for (const z of hole.zones ?? []) drawZone(g, z, cam, W, H, o);
+    if (geom.tunnels.length) {
+      g.strokeStyle = th.wallSide;
+      g.lineWidth = Math.max(2, 0.3 * s);
+      g.beginPath();
+      for (const seg of tunnelWalls(hole, geom.tunnels)) {
+        const a = w2s(cam, W, H, seg.ax, seg.ay), b = w2s(cam, W, H, seg.bx, seg.by);
+        g.moveTo(a.x, a.y); g.lineTo(b.x, b.y);
+      }
+      g.stroke();
+    }
+    g.globalAlpha = 1;
+    // a dashed hairline marks the ghosted part as off the course
+    g.strokeStyle = 'rgba(255,255,255,0.45)';
+    g.lineWidth = 1;
+    g.setLineDash([3, 3]);
+    for (const z of hole.zones ?? []) {
+      const p = w2s(cam, W, H, z.x, z.y);
+      g.strokeRect(p.x, p.y, z.w * s, z.h * s);
+    }
+    g.setLineDash([]);
+    g.restore();
+  }
 
   // cup
   {

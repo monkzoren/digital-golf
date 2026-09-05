@@ -302,6 +302,102 @@ function renderHoleTabs() {
 }
 
 // ---------------------------------------------------------------------------
+// Outliner — every piece of the hole as a row, grouped by kind. Click selects
+// (and switches to the select tool), double-click frames it, and a badge flags
+// anything with no floor under it (the canvas still draws it, ghosted).
+// ---------------------------------------------------------------------------
+type OutlineRow = { sel: NonNullable<Sel>; name: string; dim: string; color: string; cx: number; cy: number; floorHit: 'on' | 'part' | 'off' | 'na' };
+const toolColor = (id: Tool) => TOOL_DEFS.find(t => t.id === id)?.color ?? '#fff';
+const sameSel = (a: Sel, b: Sel) => !!a && !!b && a.kind === b.kind && ('i' in a ? a.i : -1) === ('i' in b ? b.i : -1);
+/** how much of a set of points has floor under it */
+function floorHitOf(h: Hole, pts: [number, number][]): OutlineRow['floorHit'] {
+  let n = 0;
+  for (const [x, y] of pts) if (pointInFloor(x, y, h)) n++;
+  return n === pts.length ? 'on' : n === 0 ? 'off' : 'part';
+}
+const rectSamples = (r: Rect): [number, number][] => [
+  [r.x + r.w / 2, r.y + r.h / 2], [r.x + 0.05, r.y + 0.05], [r.x + r.w - 0.05, r.y + 0.05], [r.x + 0.05, r.y + r.h - 0.05], [r.x + r.w - 0.05, r.y + r.h - 0.05],
+];
+function blockName(b: Block): { name: string; tool: Tool } {
+  if (b.gen?.kind === 'windmill') return { name: `Windmill ×${b.gen.blades}`, tool: 'windmill' };
+  if (b.gen?.kind === 'bar' || b.motion?.type === 'swing') return { name: 'Pendulum', tool: 'pendulum' };
+  if (b.motion?.type === 'blink') return { name: 'Laser gate', tool: 'laser' };
+  if (b.motion?.type === 'slide') return { name: 'Slider', tool: 'slider' };
+  if ((b.bounce ?? 1) > 1) return { name: 'Rubber wall', tool: 'rubber' };
+  if (b.gen?.kind === 'tri') return { name: 'Triangle', tool: 'tri' };
+  if (b.h !== undefined && b.h < WALL_H) return { name: 'Low wall', tool: 'lowblock' };
+  return { name: b.motion?.type === 'rotate' ? 'Rotating block' : 'Wall block', tool: 'block' };
+}
+const fmtDim = (w: number, h: number) => `${round1(w)}×${round1(h)}`;
+function outlineRows(h: Hole): { group: string; rows: OutlineRow[] }[] {
+  const layout: OutlineRow[] = [
+    { sel: { kind: 'tee' }, name: 'Tee', dim: `${round1(h.tee.x)}, ${round1(h.tee.y)}`, color: toolColor('tee'), cx: h.tee.x, cy: h.tee.y, floorHit: floorHitOf(h, [[h.tee.x, h.tee.y]]) },
+    { sel: { kind: 'cup' }, name: 'Cup', dim: `${round1(h.cup.x)}, ${round1(h.cup.y)}`, color: '#222', cx: h.cup.x, cy: h.cup.y, floorHit: floorHitOf(h, [[h.cup.x, h.cup.y]]) },
+  ];
+  const floors: OutlineRow[] = h.floor.map((r, i) => ({
+    sel: { kind: 'floor', i }, name: r.z ? `Platform ▲${round1(r.z)}` : r.wall === 0 ? 'Floor (open edge)' : r.wall !== undefined ? `Floor (rail ${round1(r.wall)})` : 'Floor',
+    dim: fmtDim(r.w, r.h), color: toolColor('floor'), cx: r.x + r.w / 2, cy: r.y + r.h / 2, floorHit: 'na',
+  }));
+  const zones: OutlineRow[] = (h.zones ?? []).map((z, i) => ({
+    sel: { kind: 'zone', i }, name: z.kind === 'tele' ? 'Teleporter' : z.kind, dim: fmtDim(z.w, z.h), color: toolColor(z.kind),
+    cx: z.x + z.w / 2, cy: z.y + z.h / 2, floorHit: floorHitOf(h, rectSamples(z)),
+  }));
+  (h.zones ?? []).forEach((z, i) => {
+    if (z.kind === 'tele' && z.tx !== undefined && z.ty !== undefined)
+      zones.push({ sel: { kind: 'teleExit', i }, name: `↳ exit of tele ${i + 1}`, dim: `${round1(z.tx)}, ${round1(z.ty)}`, color: toolColor('tele'), cx: z.tx, cy: z.ty, floorHit: floorHitOf(h, [[z.tx, z.ty]]) });
+  });
+  const blocks: OutlineRow[] = (h.blocks ?? []).map((b, i) => {
+    const { name, tool } = blockName(b);
+    const c = b.motion && (b.motion.type === 'rotate' || b.motion.type === 'swing') ? { x: b.motion.cx, y: b.motion.cy } : centroid(b.pts);
+    const pts: [number, number][] = [[c.x, c.y]];
+    for (let k = 0; k < b.pts.length; k += 2) pts.push([b.pts[k], b.pts[k + 1]]);
+    const dim = b.gen && (b.gen.kind === 'rect' || b.gen.kind === 'tri') ? fmtDim(b.gen.w, b.gen.h) : b.gen ? `len ${round1(b.gen.len)}` : `${b.pts.length / 2} pts`;
+    return { sel: { kind: 'block', i }, name, dim, color: toolColor(tool), cx: c.x, cy: c.y, floorHit: floorHitOf(h, pts) };
+  });
+  const bumpers: OutlineRow[] = (h.bumpers ?? []).map((b, i) => ({
+    sel: { kind: 'bumper', i }, name: b.kick > 0 ? 'Bumper' : 'Post', dim: `r ${round1(b.r)}`, color: toolColor(b.kick > 0 ? 'bumper' : 'post'),
+    cx: b.x, cy: b.y, floorHit: floorHitOf(h, [[b.x, b.y]]),
+  }));
+  return [
+    { group: 'Layout', rows: [...layout, ...floors] },
+    { group: 'Zones', rows: zones },
+    { group: 'Blocks', rows: blocks },
+    { group: 'Bumpers', rows: bumpers },
+  ];
+}
+let outlineSig = '';
+let outlineAt = 0;
+function renderOutline(force = false) {
+  const el = $('ed-outline');
+  const h = hole();
+  const groups = outlineRows(h);
+  const sig = JSON.stringify([groups, sel]);
+  if (!force && sig === outlineSig) return;
+  outlineSig = sig;
+  const top = el.scrollTop;
+  el.innerHTML = '';
+  for (const { group, rows } of groups) {
+    const head = document.createElement('h3');
+    head.innerHTML = `${esc(group)}<span>${rows.length}</span>`;
+    el.appendChild(head);
+    if (!rows.length) { const e = document.createElement('div'); e.className = 'empty'; e.textContent = 'none'; el.appendChild(e); continue; }
+    for (const r of rows) {
+      const row = document.createElement('div');
+      row.className = 'row' + (sameSel(sel, r.sel) ? ' active' : '');
+      const idx = 'i' in r.sel && r.sel.kind !== 'teleExit' ? `${r.sel.i + 1} · ` : '';
+      const warn = r.floorHit === 'off' ? `<span class="warn bad" title="No floor under it — the ball can't reach this. Move it onto the green or draw a floor under it.">⚠</span>`
+        : r.floorHit === 'part' ? `<span class="warn" title="Partly off the floor — only the part over the green is in play.">◐</span>` : '';
+      row.innerHTML = `<i style="background:${r.color}"></i><span class="name">${idx}${esc(r.name)}</span><span class="dim">${esc(r.dim)}</span>${warn}`;
+      row.onclick = () => { sel = r.sel; if (tool !== 'select') { tool = 'select'; buildTools(); } renderProps(); };
+      row.ondblclick = () => { sel = r.sel; cam.x = r.cx; cam.y = r.cy; renderProps(); };
+      el.appendChild(row);
+    }
+  }
+  el.scrollTop = top;
+  el.querySelector('.row.active')?.scrollIntoView({ block: 'nearest' });
+}
+
+// ---------------------------------------------------------------------------
 // Undo
 // ---------------------------------------------------------------------------
 function pushUndo() {
@@ -916,6 +1012,7 @@ function renderProps() {
   const top = el.scrollTop;
   renderPropsInto(el);
   el.scrollTop = top;
+  renderOutline();
 }
 function renderPropsInto(el: HTMLElement) {
   const h = hole();
@@ -1532,6 +1629,7 @@ function frame(now: number) {
     g.strokeRect(p.x, p.y, Math.abs(drag.x1 - drag.x0) * cam.scale, Math.abs(drag.y1 - drag.y0) * cam.scale);
     g.setLineDash([]);
   }
+  if (now - outlineAt > 250) { outlineAt = now; renderOutline(); }
   const b = holeBounds(h);
   const tdef = TOOL_DEFS.find(t => t.id === tool)!;
   $('ed-status').textContent = `${tdef.label.toUpperCase()} — ${tdef.hint} · (${snapV(hoverWorld.x)}, ${snapV(hoverWorld.y)}) · hole ${round2(b.w)}×${round2(b.h)}${dirty ? ' · UNSAVED' : ''}`;

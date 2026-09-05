@@ -3645,7 +3645,20 @@
     #ed-holes { display: flex; gap: 4px; flex-wrap: wrap; }
     #ed-holes button { width: 32px; height: 32px; padding: 0; border-radius: 6px; font-size: 13px; transform: none; }
     #ed-holes button.active { background: var(--gold); color: #241a00; }
-    #ed-tools { display: flex; flex-direction: column; gap: 4px; padding: 10px; overflow: auto; background: var(--panel-lo); border-right: 1px solid var(--line); }
+    #ed-left { display: flex; flex-direction: column; min-height: 0; background: var(--panel-lo); border-right: 1px solid var(--line); }
+    #ed-tools { display: flex; flex-direction: column; gap: 4px; padding: 10px; overflow: auto; flex: 1 1 55%; min-height: 0; }
+    #ed-outline { flex: 1 1 45%; min-height: 0; overflow: auto; padding: 8px 10px 10px; border-top: 1px solid var(--line); font-size: 11px; text-align: left; }
+    #ed-outline h3 { margin: 6px 0 4px; font-size: 10px; letter-spacing: 3px; color: var(--gold); font-style: italic; display: flex; align-items: center; gap: 6px; }
+    #ed-outline h3 span { color: var(--dim-2); letter-spacing: 1px; font-style: normal; font-weight: 400; margin-left: auto; }
+    #ed-outline .row { display: flex; align-items: center; gap: 7px; padding: 4px 6px; border-radius: 5px; cursor: pointer; border: 1px solid transparent; color: var(--ink); letter-spacing: 0.5px; white-space: nowrap; overflow: hidden; }
+    #ed-outline .row:hover { background: rgba(255,255,255,0.08); }
+    #ed-outline .row.active { border-color: #a4ff3d; background: rgba(164, 255, 61, 0.12); }
+    #ed-outline .row i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; flex-shrink: 0; }
+    #ed-outline .row .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; text-transform: uppercase; }
+    #ed-outline .row .dim { color: var(--dim-2); font-size: 10px; flex-shrink: 0; }
+    #ed-outline .row .warn { color: #ff9f43; font-size: 11px; flex-shrink: 0; cursor: help; }
+    #ed-outline .row .warn.bad { color: #ff5a5a; }
+    #ed-outline .empty { color: var(--dim-2); font-style: italic; padding: 2px 6px; }
     #ed-tools h3 { margin: 8px 0 4px; font-size: 10px; letter-spacing: 3px; color: var(--gold); font-style: italic; }
     #ed-tools button { text-align: left; padding: 7px 10px; border-radius: 6px; border: 1px solid transparent; background: rgba(255,255,255,0.05); color: var(--ink); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; display: flex; align-items: center; gap: 8px; transform: none; box-shadow: none; }
     #ed-tools button:hover { transform: none; background: rgba(255,255,255,0.1); }
@@ -3676,7 +3689,7 @@
     #ed-props button { padding: 6px 10px; font-size: 11px; transform: none; }
     #ed-props .tiny { font-size: 10px; color: var(--dim-2); letter-spacing: 1px; line-height: 1.5; }
     #ed-props .field + .tiny, #ed-props .grid2 + .tiny { margin: -2px 0 10px; }
-    @media (max-width: 900px) { #editor { grid-template-columns: 150px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; } #ed-props { grid-column: 1 / -1; border-left: none; border-top: 1px solid var(--line); max-height: 30vh; } }
+    @media (max-width: 900px) { #editor { grid-template-columns: 150px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; } #ed-left { grid-row: 2; } #ed-props { grid-column: 1 / -1; border-left: none; border-top: 1px solid var(--line); max-height: 30vh; } }
     /* test play steps out of the editor onto the real 3D stage; this bar is
        the only editor UI left on screen */
     .player-chip .ready-tag { color: #86efac; font-size: 10px; letter-spacing: 2px; margin-left: 6px; }
@@ -4028,7 +4041,7 @@
       <button class="gold small" id="ed-publish">Publish</button>
       <button class="primary small" id="ed-save">Save</button>
     </div>
-    <div id="ed-tools"></div>
+    <div id="ed-left"><div id="ed-tools"></div><div id="ed-outline"></div></div>
     <div id="ed-canvas-wrap"><canvas id="ed-canvas"></canvas><div id="ed-status"></div></div>
     <div id="ed-props"></div>
   </div>
