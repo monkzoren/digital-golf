@@ -59,8 +59,8 @@ export interface GolfScene {
   players: GolfPlayer[];
   /** local aim in progress: angle (golf world radians), power 0..1. No
    *  trajectory preview — reading the bounces is the player's skill.
-   *  `lockCam`: a mouse drag is in progress, so the camera must not swing
-   *  under the pointer (it would change the aim it is being read from). */
+   *  `lockCam`: a mouse drag is in progress (kept for callers; the play
+   *  camera no longer turns on its own, so nothing swings under it). */
   aim: { angle: number; power: number; lockCam?: boolean } | null;
   /** 'play' behind the local ball · 'overview' whole hole · 'cup' slow orbit
    *  · 'preview' a slow, wide pan around the hole (the lobby backdrop) */
@@ -2137,6 +2137,7 @@ let flagMesh: THREE.Mesh | null = null;
 const camPos = new THREE.Vector3();
 const camLook = new THREE.Vector3();
 const camDir = new THREE.Vector3(1, 0, 0);
+let camDirFresh = true; // heading not yet chosen for this hole (set on the first play frame)
 let camMode: GolfScene['cam'] | '' = '';
 
 // Free look: a yaw / pitch / distance offset the player lays over the
@@ -3406,6 +3407,7 @@ export function drawScene(scene: GolfScene) {
     builtHoleKey = scene.holeKey;
     setHole(scene.hole);
     resetLook();
+    camDirFresh = true;
     // everybody's golfer teleports to the new tee — no walking across holes
     for (const g of golfers) { g.px = NaN; g.holedAt = -1; g.wasHoled = false; g.swingStart = -1; }
   }
@@ -3685,21 +3687,16 @@ export function drawScene(scene: GolfScene) {
   const cut = camMode !== scene.cam;
   camMode = scene.cam;
   if (scene.cam === 'play' && myBall && myPlayer && hole) {
-    // direction: the aim while aiming (held still during a pointer drag —
-    // the drag is read in screen space, so a camera that chased the aim
-    // would feed back into it and judder), the roll while rolling, else the cup
-    let dx: number, dz: number;
-    if (scene.aim && scene.aim.lockCam) { dx = camDir.x; dz = camDir.z; }
-    else if (scene.aim) { dx = Math.cos(scene.aim.angle); dz = Math.sin(scene.aim.angle); }
-    else if (!myPlayer.resting && Math.hypot(myPlayer.vx, myPlayer.vy) > 2) { const l = Math.hypot(myPlayer.vx, myPlayer.vy); dx = myPlayer.vx / l; dz = myPlayer.vy / l; }
-    else if (myPlayer.holed) { dx = camDir.x; dz = camDir.z; }
-    else { const cx = hole.cup.x - holeCX - myBall.x, cz = hole.cup.y - holeCY - myBall.z; const l = Math.hypot(cx, cz) || 1; dx = cx / l; dz = cz / l; }
-    const dr = 1 - Math.exp(-(scene.aim ? 5 : 2.5) * dt);
-    camDir.x += (dx - camDir.x) * dr;
-    camDir.z += (dz - camDir.z) * dr;
-    camDir.y = 0;
-    if (camDir.lengthSq() < 0.01) camDir.set(1, 0, 0);
-    camDir.normalize();
+    // The camera never turns on its own: it faces the cup when the view
+    // cuts to the ball (a new hole, back from the overview) and holds that
+    // heading until the player drags it round (free look). Chasing the aim,
+    // the roll or the cup here used to rotate the view under the player.
+    if (cut || camDirFresh) {
+      const cx = hole.cup.x - holeCX - myBall.x, cz = hole.cup.y - holeCY - myBall.z; const l = Math.hypot(cx, cz) || 1;
+      camDir.set(cx / l, 0, cz / l);
+      if (camDir.lengthSq() < 0.01) camDir.set(1, 0, 0);
+      camDirFresh = false;
+    }
     const back = scene.aim ? 18.5 : 17, up = scene.aim ? 10 : 8.5;
     wantPos.set(myBall.x - camDir.x * back, myBall.y + up, myBall.z - camDir.z * back);
     wantLook.set(myBall.x + camDir.x * 5, myBall.y + 0.4, myBall.z + camDir.z * 5);
