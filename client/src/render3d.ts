@@ -2952,7 +2952,15 @@ type Slab = Rect & { bottom?: number };
  *  the passage gets its own floor at the tunnel's level. */
 function carvedFloor(hole: Hole): Slab[] {
   const zones = hole.zones ?? [];
-  let rects: Slab[] = hole.floor.map(r => ({ ...r }));
+  // overlapping rects share a top face and z-fight: each slab is laid only
+  // where no slab at its level or higher is already down (a platform hides
+  // the felt under it anyway, its sides run down to the ground)
+  let rects: Slab[] = [];
+  for (const r of hole.floor) {
+    let pieces: Slab[] = [{ ...r }];
+    for (const laid of rects) if ((laid.z ?? 0) >= (r.z ?? 0)) pieces = pieces.flatMap(pc => subtractRect(pc, laid));
+    rects.push(...pieces);
+  }
   for (const z of zones) {
     if (z.kind !== 'water') continue;
     let cuts: Rect[] = [z];
