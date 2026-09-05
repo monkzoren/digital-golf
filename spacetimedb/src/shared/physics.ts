@@ -44,6 +44,8 @@ export const POST_H = WALL_H; // a plain round post is as tall as a wall
 export const HUB_EXTRA = 0.3; // a windmill / pendulum hub stands this much above its blades
 export const ON_TOP = 0.001; // a ball this close under a wall's top is on it, not against it
 export const bumperH = (p: Bumper) => (p.kick > 0 ? BUMPER_H : POST_H);
+/** a belt's grip: the rate (1/s) at which it pulls the ball's along-belt speed to its own */
+export const CONVEYOR_GRIP = 5;
 /** a ramp steeper than this (its downhill acceleration beats the friction on it) never lets a ball rest */
 export const rampRolls = (z: Zone) => zonePower(z) > FRICTION * RAMP_FRICTION_MUL;
 /** a gravity field stronger than the felt's grip never lets a ball rest (it rolls until a wall holds it) */
@@ -546,6 +548,7 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
       b.z = ground; b.vz = 0;
       let fr = FRICTION;
       let trickle = true; // the felt's low-speed let-go (off in a gravity field: a pull that matched it would roll for ever)
+      let sx = 0, sy = 0; // the ground's own velocity (a belt): friction grips the ball against THAT, not the world
       if (zone) {
         switch (zone.kind) {
           case 'water':
@@ -587,17 +590,20 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
             break;
           }
           case 'conveyor': {
-            // the belt drags the ball's along-belt speed toward its own;
-            // across the belt it rolls freely, so a crossing ball drifts
-            // downstream and a shot upstream can still punch through
+            // the belt is moving ground: its grip drags the ball's
+            // along-belt speed toward its own, and the rolling friction
+            // below works against the BELT (sx, sy), so the ball settles
+            // at exactly belt speed instead of a friction's worth short.
+            // Across the belt it rolls freely, so a crossing ball drifts
+            // downstream and a hard shot upstream can still punch through
             const d = dirOf(zone);
             const s = zonePower(zone);
             const along = b.vx * d.x + b.vy * d.y;
-            const k = Math.min(1, 3 * h);
+            const k = Math.min(1, CONVEYOR_GRIP * h);
             const dv = (s - along) * k;
             b.vx += d.x * dv;
             b.vy += d.y * dv;
-            fr = FRICTION * 0.6;
+            sx = d.x * s; sy = d.y * s;
             carried = zone;
             break;
           }
@@ -661,11 +667,12 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
       // rolling friction — a constant deceleration that eases off as the
       // ball slows (felt lets a slow ball trickle), never past zero
       if (b.z <= ground + 0.001) {
-        const s = speedOf(b);
+        const rx = b.vx - sx, ry = b.vy - sy; // speed over the ground (the ground itself may move)
+        const s = Math.hypot(rx, ry);
         if (s > 0) {
           const eased = trickle && fr === FRICTION && s < TRICKLE_SPEED ? fr * (TRICKLE_MUL + (1 - TRICKLE_MUL) * (s / TRICKLE_SPEED)) : fr;
           const ns = Math.max(0, s - eased * h);
-          b.vx *= ns / s; b.vy *= ns / s;
+          b.vx = sx + rx * (ns / s); b.vy = sy + ry * (ns / s);
         }
       }
     } else {
