@@ -48,7 +48,19 @@ README.md for architecture and run instructions. Key facts:
   rolls off); level or higher → open. `slopeTo(..., rise)` sizes a ramp to
   meet a platform. Overlapping rects are fine (a platform laid over a
   floor); the renderers skip cliff segs (the taller slab's side is the face).
-  Keep a zone inside one level.
+  Keep a zone inside one level. A `tunnel` zone bores a passage through
+  every slab it covers that is high enough (`tunnelBores`: slab − `TUNNEL_LID`
+  − level ≥ `TUNNEL_MIN_CLEAR`); its floor is `tunnelLevel` (explicit
+  `level`, else the highest lower green the rect touches, else 0) and that
+  is its `base`. `groundZ` needs the ball's z to tell under from over: below
+  the roof (top − `TUNNEL_LID`) the ground is the passage floor, and with no
+  z it is always the top surface (tees, cups, resets). `cutTunnelMouths`
+  opens the cliff faces at the mouths, `tunnelWalls` adds the passage's
+  side walls (absolute height, ignored by a ball on top), `roofZ` is the
+  ceiling a ball in the tunnel bumps. The 3D slab is split around the
+  passage with a roof slab (`carvedFloor`, `bottom`). The cup and tee are
+  drawn at `groundZ` (up a ramp, tilted with it), never at the slab under
+  it.
 - `spacetimedb/src/shared/library.ts` holds the launch courses (nine, all
   designed around hidden holes-in-one; Galaxy Road is the `space` one;
   Hairpin Hollow and Neon Labyrinth are the corner courses — `corner()`

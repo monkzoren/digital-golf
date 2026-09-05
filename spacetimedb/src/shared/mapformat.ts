@@ -23,7 +23,7 @@ export const LIMITS = {
 };
 
 export const THEME_NAMES = ['park', 'neon', 'space'];
-const ZONE_KINDS: ZoneKind[] = ['sand', 'ice', 'water', 'slope', 'boost', 'jump', 'tele', 'conveyor', 'spinner', 'fan', 'trampoline', 'magnet', 'cannon', 'gravity'];
+const ZONE_KINDS: ZoneKind[] = ['sand', 'ice', 'water', 'slope', 'boost', 'jump', 'tele', 'conveyor', 'spinner', 'fan', 'trampoline', 'magnet', 'cannon', 'gravity', 'tunnel'];
 /** zones whose `power` may be negative (it flips their direction) */
 const SIGNED_POWER: ZoneKind[] = ['spinner', 'magnet'];
 
@@ -157,6 +157,10 @@ export function cleanHole(raw: any): Hole {
         out.power = r2(clampN(z.power, SIGNED_POWER.includes(out.kind) ? -80 : 0, 80));
       }
       if (z.lift != null) { if (!num(z.lift)) throw new Error(`zone ${i + 1}: bad lift`); out.lift = r2(clampN(z.lift, 0, 30)); }
+      if (out.kind === 'tunnel' && z.level != null) {
+        if (!num(z.level)) throw new Error(`zone ${i + 1}: bad tunnel level`);
+        out.level = r2(clampN(z.level, 0, LIMITS.floorZ));
+      }
       if (out.kind === 'tele') {
         if (!num(z.tx) || !num(z.ty)) throw new Error(`zone ${i + 1}: teleporter has no exit`);
         out.tx = r2(z.tx); out.ty = r2(z.ty);

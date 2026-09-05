@@ -3,8 +3,8 @@
 // pure: no SpacetimeDB, no DOM, no randomness.
 import {
   type Block, type Bumper, type Hole, type Seg, type Zone,
-  GRAVITY, WALL_H, blockPtsAt, floorWalls, floorZ, moverActive, pointInFloor, pointInPoly, pointInRect, polySegs,
-  rampExtent, rampFrac,
+  GRAVITY, TUNNEL_LID, WALL_H, blockPtsAt, cutTunnelMouths, floorWalls, floorZ, moverActive, pointInFloor, pointInPoly, pointInRect, polySegs,
+  rampExtent, rampFrac, tunnelBores, tunnelLevel, tunnelWalls,
 } from './courses';
 export { GRAVITY };
 
@@ -53,7 +53,7 @@ export const fieldRolls = (z: Zone) => zonePower(z) > FRICTION;
 export const ZONE_DEFAULT_POWER: Record<Zone['kind'], number> = {
   sand: 0, ice: 0, water: 0, tele: 0,
   slope: 3.5, boost: 40, jump: 11,
-  conveyor: 6, spinner: 3, fan: 30, trampoline: 12, magnet: 25, cannon: 34, gravity: 12,
+  conveyor: 6, spinner: 3, fan: 30, trampoline: 12, magnet: 25, cannon: 34, gravity: 12, tunnel: 0,
 };
 export const CANNON_DEFAULT_LIFT = 10;
 export const zonePower = (z: Zone) => z.power ?? ZONE_DEFAULT_POWER[z.kind];
@@ -101,6 +101,8 @@ export interface HoleGeom {
   ramps: Zone[];
   /** the wedges' outer faces: a ball on the flat bounces off them like a low wall */
   rampFaces: RampFace[];
+  /** tunnel zones — passages under platforms; `base` holds each one's floor level */
+  tunnels: Zone[];
   gravity: number;
   /** the floor height each block, bumper and zone stands on (the slab under its centre) */
   base: Map<object, number>;
@@ -122,7 +124,11 @@ export function invalidateGeom(hole: Hole) {
 export function geomOf(hole: Hole): HoleGeom {
   let g = geomCache.get(hole);
   if (g) return g;
-  const staticSegs = floorWalls(hole.floor);
+  const zones = hole.zones ?? [];
+  const tunnels = zones.filter(z => z.kind === 'tunnel');
+  // the platforms' cliff faces, opened where a tunnel's mouth is, plus the tunnels' own side walls
+  const staticSegs = cutTunnelMouths(hole, floorWalls(hole.floor), tunnels);
+  staticSegs.push(...tunnelWalls(hole, tunnels));
   const movers: Block[] = [];
   const solids: Block[] = [];
   const base = new Map<object, number>();
@@ -137,8 +143,7 @@ export function geomOf(hole: Hole): HoleGeom {
     else { solids.push(b); staticSegs.push(...polySegs(b.pts, bz + (b.h ?? WALL_H), wallE(b))); }
   }
   for (const p of hole.bumpers ?? []) base.set(p, floorZ(hole, p.x, p.y));
-  const zones = hole.zones ?? [];
-  for (const z of zones) base.set(z, floorZ(hole, z.x + z.w / 2, z.y + z.h / 2));
+  for (const z of zones) base.set(z, z.kind === 'tunnel' ? tunnelLevel(hole, z) : floorZ(hole, z.x + z.w / 2, z.y + z.h / 2));
   const ramps = zones.filter(z => z.kind === 'slope');
   const rampFaces: RampFace[] = [];
   for (const z of ramps) {
@@ -150,7 +155,7 @@ export function geomOf(hole: Hole): HoleGeom {
     }
   }
   g = {
-    hole, staticSegs, solids, movers, bumpers: hole.bumpers ?? [], zones, ramps, rampFaces,
+    hole, staticSegs, solids, movers, bumpers: hole.bumpers ?? [], zones, ramps, rampFaces, tunnels,
     gravity: GRAVITY * (hole.gravity ?? 1), base,
   };
   geomCache.set(hole, g);
@@ -175,18 +180,39 @@ export function rampAt(g: HoleGeom, x: number, y: number): Zone | null {
   return null;
 }
 
+/** The tunnel the point is in whose passage is really bored there (the
+ *  slab over it is high enough to hold the roof and the headroom), if any. */
+function tunnelAt(g: HoleGeom, x: number, y: number, top: number): Zone | null {
+  for (const t of g.tunnels) if (pointInRect(x, y, t) && tunnelBores(top, baseOf(g, t))) return t;
+  return null;
+}
+
 /** Height of the surface under (x, y) for a ball at height `z`: the floor
  *  slab there (0, or a platform's height), up the wedge on a slope — and
  *  the top of a wall block the ball is above (a ball that flies onto a wall
- *  lands on it and rolls along it). Without `z` only the felt counts. */
+ *  lands on it and rolls along it). Under a tunnelled platform (the ball's
+ *  z is below the roof) it is the passage's floor instead. Without `z`
+ *  only the top surface counts. */
 export function groundZ(g: HoleGeom, x: number, y: number, z = -Infinity): number {
   const r = rampAt(g, x, y);
   let ground = r ? baseOf(g, r) + rampRise(r) * (1 - rampFrac(r, x, y)) : floorZ(g.hole, x, y);
+  if (g.tunnels.length && z !== -Infinity && z < ground - TUNNEL_LID) {
+    const t = tunnelAt(g, x, y, ground);
+    if (t) ground = baseOf(g, t);
+  }
   for (const s of g.solids) {
     const top = baseOf(g, s) + (s.h ?? WALL_H);
     if (top > ground && z >= top - ON_TOP && pointInPoly(x, y, s.pts)) ground = top;
   }
   return ground;
+}
+
+/** The underside of the roof over a ball in a tunnel (Infinity in the open). */
+export function roofZ(g: HoleGeom, x: number, y: number, z: number): number {
+  if (!g.tunnels.length) return Infinity;
+  const r = rampAt(g, x, y);
+  const top = r ? baseOf(g, r) + rampRise(r) * (1 - rampFrac(r, x, y)) : floorZ(g.hole, x, y);
+  return z < top - TUNNEL_LID && tunnelAt(g, x, y, top) ? top - TUNNEL_LID : Infinity;
 }
 
 /** The wedge's grade (rise over run). */
@@ -231,13 +257,13 @@ export function restingOn(g: HoleGeom, b: BallState): boolean {
 // Priority when zones overlap: the first kind listed wins.
 const ZONE_PRIORITY: Record<Zone['kind'], number> = {
   water: 0, tele: 1, cannon: 2, jump: 3, trampoline: 4, boost: 5, conveyor: 6, spinner: 7,
-  magnet: 8, fan: 9, gravity: 10, slope: 11, sand: 12, ice: 13,
+  magnet: 8, fan: 9, gravity: 10, slope: 11, sand: 12, ice: 13, tunnel: 14,
 };
 
 function zoneAt(g: HoleGeom, x: number, y: number): Zone | null {
   let best: Zone | null = null;
   for (const z of g.zones) {
-    if (!pointInRect(x, y, z)) continue;
+    if (z.kind === 'tunnel' || !pointInRect(x, y, z)) continue; // a tunnel is a place, not a surface
     if (!best || ZONE_PRIORITY[z.kind] < ZONE_PRIORITY[best.kind]) best = z;
   }
   return best;
@@ -269,6 +295,14 @@ function moverVelocity(b: Block, t: number, px: number, py: number, out: { x: nu
 }
 
 const tmpV = { x: 0, y: 0 };
+
+/** Through a teleporter: out at its exit, on the felt there, rolling on. */
+function teleport(g: HoleGeom, b: BallState, zone: Zone, ev: StepEvents) {
+  b.x = zone.tx!; b.y = zone.ty!;
+  b.z = groundZ(g, b.x, b.y);
+  b.teleTicks = TELE_COOLDOWN_TICKS;
+  ev.tele = true;
+}
 
 function capSpeed(b: BallState) {
   const sp = speedOf(b);
@@ -519,12 +553,7 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
             b.vx = 0; b.vy = 0;
             return;
           case 'tele':
-            if (b.teleTicks === 0) {
-              b.x = zone.tx!; b.y = zone.ty!;
-              b.z = groundZ(g, b.x, b.y);
-              b.teleTicks = TELE_COOLDOWN_TICKS;
-              ev.tele = true;
-            }
+            if (b.teleTicks === 0) teleport(g, b, zone, ev);
             break;
           case 'cannon': {
             // roll in and the cannon loads you: the ball stops in the
@@ -673,7 +702,7 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
       const d = Math.hypot(cx, cy);
       const s = speedOf(b);
       if (d < CUP_R && s < CAPTURE_SPEED) {
-        b.x = cup.x; b.y = cup.y; b.z = groundZ(g, cup.x, cup.y);
+        b.x = cup.x; b.y = cup.y; b.z = groundZ(g, cup.x, cup.y, b.z);
         b.vx = 0; b.vy = 0; b.vz = 0;
         ev.holed = true;
         return;
@@ -706,7 +735,13 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
       if (b.z <= groundNow) {
         b.z = groundNow;
         const landing = zoneAt(g, b.x, b.y);
-        if (landing && landing.kind === 'trampoline' && b.vz < -1) {
+        if (landing && landing.kind === 'tele' && b.teleTicks === 0) {
+          // first touch is enough: a ball that comes down on the pad goes
+          // through even when it would have skipped off again
+          ev.land = ev.land || b.vz < -3;
+          teleport(g, b, landing, ev);
+          b.vz = 0;
+        } else if (landing && landing.kind === 'trampoline' && b.vz < -1) {
           // boing: back up at least the pad's launch speed
           b.vz = Math.max(zonePower(landing), -b.vz * 0.9);
           b.z = groundNow + 0.01;
@@ -728,6 +763,11 @@ export function stepBall(b: BallState, g: HoleGeom, t: number, ev: StepEvents, c
       // rolling up a ramp (or over a small lip): stay on the felt. A bigger
       // rise is a cliff face — leave the ball low for the wall to hold it
       if (groundNow - b.z <= STEP_CLIMB) b.z = groundNow;
+    }
+    // in a tunnel the roof is a ceiling: a ball bounced up under it bumps its head
+    if (g.tunnels.length) {
+      const roof = roofZ(g, b.x, b.y, b.z);
+      if (b.z > roof - BALL_R) { b.z = roof - BALL_R; if (b.vz > 0) b.vz = -b.vz * 0.3; }
     }
     if (!collide) continue;
     for (const s of g.staticSegs) {

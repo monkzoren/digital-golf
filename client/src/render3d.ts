@@ -10,8 +10,8 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { CHARACTERS, type Character, type HairStyle } from './characters';
 import { getGraphics, onGraphicsChange, type GraphicsSettings } from './graphics';
 import type { Hole, Zone, Block, Rect } from '@shared/courses';
-import { WALL_H, floorWalls, floorZ, holeBounds, motionAngle, moverActive, pointInFloor, rampFrac } from '@shared/courses';
-import { BALL_R, CUP_R, baseOf, geomOf, groundZ, rampRise, zonePower } from '@shared/physics';
+import { TUNNEL_LID, WALL_H, floorWalls, floorZ, holeBounds, motionAngle, moverActive, pointInFloor, rampFrac, tunnelBores, tunnelLevel } from '@shared/courses';
+import { BALL_R, CUP_R, baseOf, geomOf, groundZ, rampAt, rampGrade, rampRise, zonePower } from '@shared/physics';
 import { sceneThemeFor, texHash, type MatSpec, type SceneTheme } from './themes3d';
 
 // ---------------------------------------------------------------------------
@@ -2940,17 +2940,42 @@ function subtractRect(a: Rect, cut: Rect): Rect[] {
   return out;
 }
 
+/** A piece of felt slab to build: a floor rect, or — over a tunnel — the
+ *  platform's roof, a slab that starts at `bottom` instead of the ground. */
+type Slab = Rect & { bottom?: number };
+
 /** The floor with the ponds cut out of it. Another zone laid over a pond
  *  (a sand island, a jump pad) keeps its felt underneath, so it reads as a
- *  platform in the water rather than a slab floating over the bed. */
-function carvedFloor(hole: Hole): Rect[] {
+ *  platform in the water rather than a slab floating over the bed. A
+ *  tunnel bores a platform: the slab is split around the passage (its
+ *  sides become the tunnel's walls), a roof TUNNEL_LID thick spans it, and
+ *  the passage gets its own floor at the tunnel's level. */
+function carvedFloor(hole: Hole): Slab[] {
   const zones = hole.zones ?? [];
-  let rects: Rect[] = hole.floor.map(r => ({ ...r }));
+  let rects: Slab[] = hole.floor.map(r => ({ ...r }));
   for (const z of zones) {
     if (z.kind !== 'water') continue;
     let cuts: Rect[] = [z];
     for (const o of zones) if (o !== z && o.kind !== 'water') cuts = cuts.flatMap(c => subtractRect(c, o));
     for (const c of cuts) rects = rects.flatMap(r => subtractRect(r, c));
+  }
+  for (const t of zones) {
+    if (t.kind !== 'tunnel') continue;
+    const level = tunnelLevel(hole, t);
+    const next: Slab[] = [];
+    for (const r of rects) {
+      const rz = r.z ?? 0;
+      if (r.bottom !== undefined || !tunnelBores(rz, level)) { next.push(r); continue; }
+      const x0 = Math.max(r.x, t.x), y0 = Math.max(r.y, t.y);
+      const x1 = Math.min(r.x + r.w, t.x + t.w), y1 = Math.min(r.y + r.h, t.y + t.h);
+      if (x1 - x0 <= 0.001 || y1 - y0 <= 0.001) { next.push(r); continue; }
+      next.push(...subtractRect(r, t));
+      next.push({ x: x0, y: y0, w: x1 - x0, h: y1 - y0, z: rz, bottom: rz - TUNNEL_LID });
+      // the passage's own floor, unless a green at that level already runs under the platform
+      const floored = hole.floor.some(f => (f.z ?? 0) === level && f.x <= x0 + 0.001 && f.y <= y0 + 0.001 && f.x + f.w >= x1 - 0.001 && f.y + f.h >= y1 - 0.001);
+      if (!floored) next.push(level > 0 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0, z: level } : { x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+    }
+    rects = next;
   }
   return rects;
 }
@@ -3078,18 +3103,21 @@ function setHole(hole: Hole) {
   for (const r of carvedFloor(hole)) {
     const rz = r.z ?? 0;
     const H = FLOOR_Y + rz;
-    const geo = new THREE.BoxGeometry(r.w, H, r.h);
+    const roof = r.bottom !== undefined; // a platform's roof over a tunnel
+    const y0 = roof ? FLOOR_Y + r.bottom! : 0;
+    const geo = new THREE.BoxGeometry(r.w, H - y0, r.h);
     const uv = geo.attributes.uv as THREE.BufferAttribute;
     // faces: +x −x +y −y +z −z, four vertices each — felt on top in world
     // units, the sides tiled like the rails
     for (let i = 0; i < uv.count; i++) {
       const face = Math.floor(i / 4);
       if (face === 2 || face === 3) uv.setXY(i, uv.getX(i) * r.w / 6, uv.getY(i) * r.h / 6);
-      else uv.setXY(i, uv.getX(i) * (face < 2 ? r.h : r.w) / 4, uv.getY(i) * H / WALL_H);
+      else uv.setXY(i, uv.getX(i) * (face < 2 ? r.h : r.w) / 4, uv.getY(i) * (H - y0) / WALL_H);
     }
     const side = rz > 0 ? WALL_MAT : FELT_MAT;
-    const m = new THREE.Mesh(geo, [side, side, FELT_MAT, FELT_MAT, side, side]);
-    m.position.set(r.x + r.w / 2 - holeCX, H / 2, r.y + r.h / 2 - holeCY);
+    // a roof's underside is the tunnel's ceiling: timber, not felt
+    const m = new THREE.Mesh(geo, [side, side, FELT_MAT, roof ? WALL_MAT : FELT_MAT, side, side]);
+    m.position.set(r.x + r.w / 2 - holeCX, y0 + (H - y0) / 2, r.y + r.h / 2 - holeCY);
     m.receiveShadow = true;
     m.castShadow = rz > 0;
     holeGroup.add(m);
@@ -3172,6 +3200,7 @@ function setHole(hole: Hole) {
     const zy = FLOOR_Y + baseOf(geom, z); // the platform the zone lies on
     if (z.kind === 'water') { holeGroup.add(pondMesh(z, cx, cz, th, themeName)); return; }
     if (z.kind === 'magnet') { holeGroup.add(blackHoleMesh(z, cx, cz, i, zy)); return; }
+    if (z.kind === 'tunnel') return; // the passage is carved out of the platform slab (carvedFloor)
     const tex = makeZoneTexture(z, th);
     const flat = z.kind === 'tele';
     // portals are emitters (over-bright so they bloom)
@@ -3306,13 +3335,23 @@ function setHole(hole: Hole) {
   {
     const cup = new THREE.Mesh(new THREE.CircleGeometry(CUP_R, 28), CUP_MAT);
     if (!CUP_MAT.map) { CUP_MAT.map = surfaces().cup; CUP_MAT.needsUpdate = true; }
-    const cy = FLOOR_Y + floorZ(hole, hole.cup.x, hole.cup.y);
-    cup.rotation.x = -Math.PI / 2;
-    cup.position.set(hole.cup.x - holeCX, cy + 0.02, hole.cup.y - holeCY);
+    // the cup sits IN the felt where it is: up on a platform, up a ramp —
+    // and on a ramp it is tilted with the wedge rather than buried under it
+    const cy = FLOOR_Y + groundZ(geom, hole.cup.x, hole.cup.y);
+    const cupRamp = rampAt(geom, hole.cup.x, hole.cup.y);
+    const up = new THREE.Vector3(0, 1, 0);
+    if (cupRamp) {
+      const a = ((cupRamp.angle ?? 0) * Math.PI) / 180, gr = rampGrade(cupRamp);
+      up.set(Math.cos(a) * gr, 1, Math.sin(a) * gr).normalize(); // the felt falls away downhill
+    }
+    const lay = (m: THREE.Object3D, lift: number) => {
+      m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), up);
+      m.position.set(hole.cup.x - holeCX + up.x * lift, cy + up.y * lift, hole.cup.y - holeCY + up.z * lift);
+    };
+    lay(cup, 0.02);
     holeGroup.add(cup);
     const rim = new THREE.Mesh(new THREE.RingGeometry(CUP_R, CUP_R + 0.14, 28), gloss({ color: 0xf0f0f0, roughness: 0.4 }));
-    rim.rotation.x = -Math.PI / 2;
-    rim.position.set(hole.cup.x - holeCX, cy + 0.021, hole.cup.y - holeCY);
+    lay(rim, 0.021);
     holeGroup.add(rim);
     const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, 5, 8), gloss({ color: 0xf4f4f4, roughness: 0.4 }));
     stick.position.set(hole.cup.x - holeCX, cy + 2.5, hole.cup.y - holeCY);
@@ -3326,7 +3365,7 @@ function setHole(hole: Hole) {
     // tee marker
     const tee = new THREE.Mesh(new THREE.RingGeometry(0.85, 1.0, 28), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 }));
     tee.rotation.x = -Math.PI / 2;
-    tee.position.set(hole.tee.x - holeCX, FLOOR_Y + floorZ(hole, hole.tee.x, hole.tee.y) + 0.012, hole.tee.y - holeCY);
+    tee.position.set(hole.tee.x - holeCX, FLOOR_Y + groundZ(geom, hole.tee.x, hole.tee.y) + 0.012, hole.tee.y - holeCY);
     holeGroup.add(tee);
   }
 }
@@ -3657,7 +3696,7 @@ export function drawScene(scene: GolfScene) {
     wantLook.set(myBall.x + camDir.x * 5, myBall.y + 0.4, myBall.z + camDir.z * 5);
     rate = scene.aim ? 6 : 3.2;
   } else if (scene.cam === 'cup' && hole) {
-    const c = toThree(hole.cup.x, hole.cup.y, 0);
+    const c = toThree(hole.cup.x, hole.cup.y, builtGeom ? groundZ(builtGeom, hole.cup.x, hole.cup.y) : 0);
     const ang = now / 5000;
     wantPos.set(c.x + Math.cos(ang) * 16, c.y + 7.5, c.z + Math.sin(ang) * 16);
     wantLook.set(c.x, c.y + 0.5, c.z);

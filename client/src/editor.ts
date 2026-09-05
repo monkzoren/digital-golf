@@ -4,7 +4,7 @@
 // here is local until Save.
 import {
   type Block, type Bumper, type Hole, type Rect, type Zone, type ZoneKind,
-  WALL_H, barPts, holeBounds, pointInFloor, pointInPoly, pointInRect, rectPts, windmillPts,
+  TUNNEL_LID, TUNNEL_MIN_CLEAR, WALL_H, barPts, holeBounds, pointInFloor, pointInPoly, pointInRect, rectPts, tunnelLevel, windmillPts,
 } from '@shared/courses';
 import { cleanHole, LIMITS, THEME_NAMES } from '@shared/mapformat';
 import {
@@ -46,6 +46,7 @@ const TOOL_DEFS: { id: Tool; label: string; color: string; group: string; hint: 
   { id: 'floor', key: 'f', label: 'Floor', color: '#3fae4f', group: 'Layout', hint: 'Drag a rectangle of green. Touching floors join up; give one a height and it is a platform.' },
   { id: 'tee', label: 'Tee', color: '#ffffff', group: 'Layout', hint: 'Click where the ball starts' },
   { id: 'cup', label: 'Cup', color: '#0b1a10', group: 'Layout', hint: 'Click where the hole is' },
+  { id: 'tunnel', label: 'Tunnel', color: '#2b1d10', group: 'Layout', hint: 'Drag across a platform, green to green: the ball rolls under it while another rolls over' },
   { id: 'block', key: 'b', label: 'Wall block', color: '#c9a36b', group: 'Obstacles', hint: 'Drag a solid block' },
   { id: 'lowblock', label: 'Low wall (jumpable)', color: '#e0c391', group: 'Obstacles', hint: 'Drag a low wall a jumping ball clears' },
   { id: 'tri', label: 'Triangle wall', color: '#c9a36b', group: 'Obstacles', hint: 'Drag from the right-angle corner: a triangle fills the box (a corner mirror caroms the ball)' },
@@ -674,6 +675,7 @@ function wheelAdjust(e: WheelEvent): boolean {
     const z = h.zones![sel.i];
     if (e.shiftKey && DIRECTIONAL.includes(z.kind)) adjust(() => { z.angle = norm360((z.angle ?? 0) + 5 * d); });
     else if (e.altKey && POWER_FIELDS[z.kind]) { const pf = POWER_FIELDS[z.kind]!; adjust(() => { z.power = Math.max(pf[2], Math.min(pf[3], round2((z.power ?? ZONE_DEFAULT_POWER[z.kind] ?? 0) + pf[1] * d))); }); }
+    else if (e.altKey && z.kind === 'tunnel') adjust(() => { z.level = Math.max(0, Math.min(LIMITS.floorZ, round2(tunnelLevel(h, z) + 0.25 * d))); });
   } else if (sel.kind === 'floor' && e.altKey) {
     const r = h.floor[sel.i];
     adjust(() => { setFloorZ(r, (r.z ?? 0) + 0.25 * d); });
@@ -977,6 +979,12 @@ function renderPropsInto(el: HTMLElement) {
       if (z.kind === 'trampoline') html += '<div class="tiny">Only a FALLING ball bounces — pair it with a ramp, jump pad or cannon.</div>';
       if (z.kind === 'gravity') html += `<div class="tiny">Sideways gravity: pulls the ball on the ground and in the air. Above ${FRICTION} (the felt's grip) nothing rests in it — the ball rolls until a wall holds it.</div>`;
       if (z.kind === 'tele') html += `<div class="grid2">${field('Exit X', posIn('p-tx', z.tx ?? 0, 'x'))}${field('Exit Y', posIn('p-ty', z.ty ?? 0, 'y'))}</div><div class="tiny">Drag the dashed ring to move the exit.</div>`;
+      if (z.kind === 'tunnel') {
+        const auto = z.level === undefined;
+        html += field(`Passage floor height${auto ? ' (auto)' : ''}`, numIn('p-level', tunnelLevel(h, z), 0.25, 0, LIMITS.floorZ, [0, 8]))
+          + (auto ? '' : '<button class="btn small" id="p-level-auto" title="Follow the lower green the tunnel touches">Auto</button>')
+          + `<div class="tiny">Draw it across a platform from the green on one side to the green on the other. The platform keeps a ${TUNNEL_LID} thick roof over the passage and needs ${TUNNEL_MIN_CLEAR} of headroom under it (a lower platform is not bored). Left on auto the floor is the highest lower green the tunnel touches; a ball rolling over the top and one rolling through never meet. Alt+wheel raises the floor.</div>`;
+      }
     }
     el.innerHTML = html + delBtn;
     bind('p-x', v => { r.x = v; }); bind('p-y', v => { r.y = v; }); bind('p-w', v => { r.w = Math.max(0.5, v); }); bind('p-h', v => { r.h = Math.max(0.5, v); });
@@ -986,6 +994,9 @@ function renderPropsInto(el: HTMLElement) {
       bind('p-power', v => { z.power = v; });
       bind('p-lift', v => { z.lift = v; });
       bind('p-tx', v => { z.tx = v; }); bind('p-ty', v => { z.ty = v; });
+      bind('p-level', v => { z.level = Math.max(0, Math.min(LIMITS.floorZ, v)); });
+      const autoBtn = document.getElementById('p-level-auto');
+      if (autoBtn) autoBtn.onclick = () => { pushUndo(); delete z.level; renderProps(); };
     }
     $('p-delete').onclick = deleteSel; $('p-duplicate').onclick = duplicateSel;
     return;

@@ -22,7 +22,10 @@ export interface Rect {
 
 export type ZoneKind =
   | 'sand' | 'ice' | 'water' | 'slope' | 'boost' | 'jump' | 'tele'
-  | 'conveyor' | 'spinner' | 'fan' | 'trampoline' | 'magnet' | 'cannon' | 'gravity';
+  | 'conveyor' | 'spinner' | 'fan' | 'trampoline' | 'magnet' | 'cannon' | 'gravity'
+  /** a passage bored through a raised platform: the ball rolls under it at
+   *  `level` while another ball rolls over the top */
+  | 'tunnel';
 
 export interface Zone extends Rect {
   kind: ZoneKind;
@@ -40,6 +43,10 @@ export interface Zone extends Rect {
   /** tele: where the ball comes out. */
   tx?: number;
   ty?: number;
+  /** tunnel: the floor height the passage runs at. Left out, it is the
+   *  highest lower green the tunnel touches (the lawn, 0, if none) — see
+   *  `tunnelLevel`. */
+  level?: number;
 }
 
 export interface Bumper {
@@ -128,6 +135,12 @@ export interface Seg {
 export const WALL_H = 1.1;
 /** Downward gravity (u/s²) — here, not in physics.ts, so course helpers can size ramps. */
 export const GRAVITY = 32;
+/** A tunnel's roof: the platform keeps this much of its thickness over the
+ *  passage (drawn and simulated — a ball in the tunnel bumps its head on it). */
+export const TUNNEL_LID = 0.4;
+/** Headroom a tunnel needs under the roof to be a tunnel at all (ball
+ *  diameter 0.72 plus a little); a platform lower than that is not bored. */
+export const TUNNEL_MIN_CLEAR = 1;
 
 /** Height of the floor under (x, y): the tallest slab covering the point
  *  (a platform laid over a lower floor wins), 0 off the floor. */
@@ -135,6 +148,128 @@ export function floorZ(hole: Hole, x: number, y: number): number {
   let z = 0;
   for (const r of hole.floor) if (r.z && r.z > z && pointInRect(x, y, r)) z = r.z;
   return z;
+}
+
+const rectsTouch = (a: Rect, b: Rect, eps = 0.01) =>
+  a.x < b.x + b.w + eps && b.x < a.x + a.w + eps && a.y < b.y + b.h + eps && b.y < a.y + a.h + eps;
+
+/** The floor height a tunnel's passage runs at: its `level` when set,
+ *  else the highest floor rect it touches that is lower than the slab over
+ *  its centre (a tunnel drawn from one green across a platform picks up
+ *  that green's height), else 0. */
+export function tunnelLevel(hole: Hole, t: Zone): number {
+  if (t.level !== undefined) return t.level;
+  const top = floorZ(hole, t.x + t.w / 2, t.y + t.h / 2);
+  let level = 0;
+  for (const r of hole.floor) {
+    const rz = r.z ?? 0;
+    if (rz < top - 1e-6 && rz > level && rectsTouch(r, t)) level = rz;
+  }
+  return level;
+}
+
+/** Does a slab this high get a passage bored through it by a tunnel running at `level`? */
+export const tunnelBores = (slabZ: number, level: number) => slabZ - TUNNEL_LID - level >= TUNNEL_MIN_CLEAR - 1e-6;
+
+/** The walls of the tunnels: each tunnel edge, split where floor rects and
+ *  other tunnels cross it, is a wall wherever a slab higher than the
+ *  passage stands just outside it (the platform's mass to either side) and
+ *  open where the outside is a green at the passage's level or lower (the
+ *  mouths) or another tunnel at the same level. The wall is as tall as
+ *  that slab (absolute), so a ball rolling over the top ignores it. */
+export function tunnelWalls(hole: Hole, tunnels: Zone[]): Seg[] {
+  const out: Seg[] = [];
+  const EPS = 1e-6, PROBE = 1e-3;
+  const floor = hole.floor;
+  const levels = new Map<Zone, number>();
+  for (const t of tunnels) levels.set(t, tunnelLevel(hole, t));
+  for (const t of tunnels) {
+    const lv = levels.get(t)!;
+    const edges: [number, number, number, number, number, number][] = [
+      [t.x, t.y, t.x + t.w, t.y, 0, -1],
+      [t.x + t.w, t.y, t.x + t.w, t.y + t.h, 1, 0],
+      [t.x + t.w, t.y + t.h, t.x, t.y + t.h, 0, 1],
+      [t.x, t.y + t.h, t.x, t.y, -1, 0],
+    ];
+    for (const [ax, ay, bx, by, nx, ny] of edges) {
+      const horizontal = Math.abs(ay - by) < EPS;
+      const len = horizontal ? bx - ax : by - ay;
+      const ts = new Set<number>([0, 1]);
+      for (const o of [...floor, ...tunnels]) {
+        if (o === t) continue;
+        for (const v of horizontal ? [o.x, o.x + o.w] : [o.y, o.y + o.h]) {
+          const tt = (v - (horizontal ? ax : ay)) / len;
+          if (tt > EPS && tt < 1 - EPS) ts.add(tt);
+        }
+      }
+      const sorted = [...ts].sort((a, b) => a - b);
+      let run: { t0: number; t1: number; h: number } | null = null;
+      const flush = () => {
+        if (!run) return;
+        out.push({ ax: ax + (bx - ax) * run.t0, ay: ay + (by - ay) * run.t0, bx: ax + (bx - ax) * run.t1, by: ay + (by - ay) * run.t1, h: run.h });
+        run = null;
+      };
+      for (let i = 0; i + 1 < sorted.length; i++) {
+        const t0 = sorted[i], t1 = sorted[i + 1];
+        const tm = (t0 + t1) / 2;
+        const mx = ax + (bx - ax) * tm + nx * PROBE, my = ay + (by - ay) * tm + ny * PROBE;
+        const zIn = floorZ(hole, mx - nx * 2 * PROBE, my - ny * 2 * PROBE);
+        const zOut = floorZ(hole, mx, my);
+        let h = 0;
+        // only where the passage is really bored on our side, and the outside is solid platform
+        if (tunnelBores(zIn, lv) && zOut > lv + EPS) {
+          h = zOut;
+          for (const o of tunnels) if (o !== t && pointInRect(mx, my, o) && Math.abs(levels.get(o)! - lv) < 0.05 && tunnelBores(zOut, lv)) h = 0;
+        }
+        if (h > 0 && run && Math.abs(run.h - h) < EPS && Math.abs(run.t1 - t0) < EPS) run.t1 = t1;
+        else { flush(); if (h > 0) run = { t0, t1, h }; }
+      }
+      flush();
+    }
+  }
+  return out;
+}
+
+/** A platform's cliff faces with the tunnel mouths cut out of them: the
+ *  part of a cliff that lies inside a tunnel bored through that slab is
+ *  the mouth, open to a ball at the passage's level. */
+export function cutTunnelMouths(hole: Hole, segs: Seg[], tunnels: Zone[]): Seg[] {
+  if (!tunnels.length) return segs;
+  const EPS = 0.01;
+  const out: Seg[] = [];
+  for (const s of segs) {
+    if (!s.cliff) { out.push(s); continue; }
+    let pieces: Seg[] = [s];
+    for (const t of tunnels) {
+      const lv = tunnelLevel(hole, t);
+      if (!tunnelBores(s.h, lv)) continue;
+      pieces = pieces.flatMap(p => {
+        const horizontal = Math.abs(p.ay - p.by) < 1e-6;
+        // the segment must lie along the tunnel's span in the other axis
+        const across = horizontal ? p.ay : p.ax;
+        const lo = horizontal ? t.y : t.x, hi = horizontal ? t.y + t.h : t.x + t.w;
+        if (across < lo - EPS || across > hi + EPS) return [p];
+        const a = horizontal ? p.ax : p.ay, b = horizontal ? p.bx : p.by;
+        const c0 = horizontal ? t.x : t.y, c1 = horizontal ? t.x + t.w : t.y + t.h;
+        const min = Math.min(a, b), max = Math.max(a, b);
+        if (max <= c0 + EPS || min >= c1 - EPS) return [p];
+        const keep: Seg[] = [];
+        const mk = (u0: number, u1: number): Seg => {
+          const q: Seg = horizontal ? { ...p, ax: u0, bx: u1 } : { ...p, ay: u0, by: u1 };
+          return q;
+        };
+        // keep the parts outside [c0, c1], in the segment's own direction
+        const dir = b >= a ? 1 : -1;
+        const parts: [number, number][] = [];
+        if (min < c0 - EPS) parts.push([min, c0]);
+        if (max > c1 + EPS) parts.push([c1, max]);
+        for (const [u0, u1] of parts) keep.push(dir > 0 ? mk(u0, u1) : mk(u1, u0));
+        return keep;
+      });
+    }
+    out.push(...pieces);
+  }
+  return out;
 }
 
 export const R = (x: number, y: number, w: number, h: number, z?: number): Rect => (z ? { x, y, w, h, z } : { x, y, w, h });
@@ -403,6 +538,10 @@ export const cannon = (x: number, y: number, w: number, h: number, angle: number
 /** A gravity field: the ball is pulled toward `angle` at `power` u/s², rolling or flying. */
 export const gfield = (x: number, y: number, w: number, h: number, angle: number, power = 12): Zone =>
   ({ kind: 'gravity', x, y, w, h, angle, power });
+/** A tunnel under a platform: draw it across the platform from the green
+ *  on one side to the green on the other; `level` pins the passage's floor. */
+export const tunnel = (x: number, y: number, w: number, h: number, level?: number): Zone =>
+  (level === undefined ? { kind: 'tunnel', x, y, w, h } : { kind: 'tunnel', x, y, w, h, level });
 /** A pendulum arm hanging from (cx, cy), swinging ±amp degrees every `period` s. */
 export function pendulum(cx: number, cy: number, len: number, width: number, amp: number, period: number, phase = 0): Block {
   return {
@@ -758,6 +897,16 @@ export const TOYBOX: Course = {
       floor: [R(0, 0, 50, 12), R(18, 0, 18, 12, 1.5)],
       zones: [slopeTo(12, 0, 6, 12, 180, 1.5), sand(40, 0, 3, 12)],
       bumpers: [post(27, 3, 0.6), post(27, 9, 0.6)],
+    },
+    {
+      name: 'Underpass',
+      par: 3,
+      tip: 'A tunnel runs under the raised green. Roll through it — or climb the ramp and putt over the top.',
+      tee: { x: 4, y: 6 },
+      cup: { x: 44, y: 6 },
+      floor: [R(0, 0, 48, 12), R(16, 0, 16, 12, 2)],
+      zones: [tunnel(16, 4, 16, 4), slopeTo(10, 0, 6, 3, 180, 2), slopeTo(32, 9, 6, 3, 0, 2)],
+      blocks: [polyRect(9, 3, 1, 1), polyRect(38, 8, 1, 1)],
     },
   ],
 };

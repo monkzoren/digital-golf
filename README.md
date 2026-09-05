@@ -49,7 +49,10 @@ TypeScript three.js game with a built-in course editor.
   walls that return the ball harder than it arrived, per-hole gravity
   (moon holes), and **gravity fields** — patches of warped space that pull
   the ball sideways whether it is rolling or flying, strong enough that
-  nothing rests in them. Every piece has its own hole on the built-in *Toy
+  nothing rests in them. Raised platforms can be **tunnelled**: draw a
+  tunnel across one from the green on one side to the green on the other
+  and the ball rolls through underneath while another rolls over the top.
+  Every piece has its own hole on the built-in *Toy
   Box* course — duplicate it in the editor to see how each one is set up.
 - **Rounds, not holes.** A room plays a whole course: intro card, timed hole,
   scorecard, next hole, podium. Round options: max strokes, time per hole,

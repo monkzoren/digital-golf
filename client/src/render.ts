@@ -2,8 +2,8 @@
 // surfaces, animated obstacles, balls with height, particles. Shared by the
 // game and the editor.
 import type { Hole, Zone, Block } from '@shared/courses';
-import { WALL_H, blockPtsAt, floorWalls, holeBounds, moverActive, polySegs, rampFrac, rectPts } from '@shared/courses';
-import { BALL_R, CUP_R, geomOf, MAX_SHOT, MIN_SHOT, rampRise, zonePower } from '@shared/physics';
+import { WALL_H, blockPtsAt, floorWalls, holeBounds, moverActive, polySegs, rampFrac, rectPts, tunnelWalls } from '@shared/courses';
+import { BALL_R, CUP_R, baseOf, geomOf, MAX_SHOT, MIN_SHOT, rampRise, zonePower } from '@shared/physics';
 
 export interface Camera { x: number; y: number; scale: number }
 
@@ -158,6 +158,27 @@ export function drawHole(g: CanvasRenderingContext2D, hole: Hole, cam: Camera, W
   }
   // zones
   for (const z of hole.zones ?? []) drawZone(g, z, cam, W, H, o);
+  // tunnels: the passage's side walls (its mouths are open)
+  if (geom.tunnels.length) {
+    g.strokeStyle = th.wallSide;
+    g.lineWidth = Math.max(2, 0.3 * s);
+    g.lineCap = 'butt';
+    g.beginPath();
+    for (const seg of tunnelWalls(hole, geom.tunnels)) {
+      const a = w2s(cam, W, H, seg.ax, seg.ay), b = w2s(cam, W, H, seg.bx, seg.by);
+      g.moveTo(a.x, a.y); g.lineTo(b.x, b.y);
+    }
+    g.stroke();
+    if (o.editor) {
+      g.fillStyle = '#fff';
+      g.font = `700 ${Math.max(9, s * 0.45)}px Chakra Petch, sans-serif`;
+      g.textAlign = 'center';
+      for (const z of geom.tunnels) {
+        const p = w2s(cam, W, H, z.x + z.w / 2, z.y + z.h / 2);
+        g.fillText(`TUNNEL ▼ ${baseOf(geom, z).toFixed(1)}`, p.x, p.y + s * 0.2);
+      }
+    }
+  }
   // cup shadow ring on the felt
   g.restore();
 
@@ -546,6 +567,24 @@ function drawZone(g: CanvasRenderingContext2D, z: Zone, cam: Camera, W: number, 
         g.textAlign = 'center';
         g.fillText(`GRAVITY ${sp.toFixed(1)}`, p.x + w / 2, p.y + h / 2 + s * 0.2);
       }
+      break;
+    }
+    case 'tunnel': {
+      // an underpass: the platform's roof over it in shadow, hatched like a
+      // grating so it reads as "under", with the dark of the passage showing
+      g.fillStyle = 'rgba(0,0,0,0.42)';
+      g.fillRect(p.x, p.y, w, h);
+      g.strokeStyle = 'rgba(0,0,0,0.35)';
+      g.lineWidth = Math.max(1, 0.12 * s);
+      g.beginPath();
+      const stepPx = 1.1 * s;
+      for (let k = -h; k < w; k += stepPx) { g.moveTo(p.x + k, p.y + h); g.lineTo(p.x + k + h, p.y); }
+      g.stroke();
+      g.strokeStyle = 'rgba(255,255,255,0.45)';
+      g.lineWidth = Math.max(1, 0.08 * s);
+      g.setLineDash([Math.max(3, 0.4 * s), Math.max(3, 0.4 * s)]);
+      g.strokeRect(p.x + 1, p.y + 1, w - 2, h - 2);
+      g.setLineDash([]);
       break;
     }
     case 'jump': {
