@@ -7,7 +7,9 @@ import {
 import { tri, low, mirrorTR, corner, star, open, lowRail, pond } from '../pieces';
 
 // ---------------------------------------------------------------------------
-// FROST & FLAME — ice and lava. Neon. Long slides and hot landings.
+// FROST & FLAME — ice and lava on a big scale. A frozen lake, a lava river,
+// a volcano, an ice cave, a glacier, a moated castle, steam vents, an icefall
+// and a meltdown that runs through all of it. Neon.
 // ---------------------------------------------------------------------------
 export const FROST: Course = {
   id: 7,
@@ -15,101 +17,174 @@ export const FROST: Course = {
   theme: 'neon',
   holes: [
     {
-      name: 'Ice Bank',
-      par: 4,
-      tip: 'All ice, a post field, and a cup in an alcove that only opens off the far wall.',
-      tee: { x: 4, y: 11 },
-      cup: { x: 76, y: 3 },
-      floor: [R(0, 0, 80, 14)],
-      zones: [ice(0, 0, 80, 14)],
-      bumpers: [post(20, 7, 0.8), post(12, 3, 0.6), post(34, 11, 0.6), post(46, 5, 0.7), post(58, 9, 0.7), post(70, 3, 0.7), post(73, 7, 0.7)],
-    },
-    {
-      name: 'Lava Leaps',
+      // A huge ice sheet with sand stepping stones to stop on, rocks in the
+      // way, lava in the corners and a green shore round the cup. Hop the
+      // stones or send one long slide across the lot.
+      name: 'Frozen Lake',
       par: 3,
-      tip: 'Jump the lava, slide the ice, jump the lava again, then land in sand.',
-      tee: { x: 4, y: 5 },
-      cup: { x: 76, y: 5 },
-      floor: [R(0, 0, 80, 10)],
-      zones: [jump(9, 2, 4, 6, 11), water(13, 0, 7, 10), ice(24, 0, 20, 10), jump(46, 2, 4, 6, 13), water(50, 0, 5, 10), sand(66, 0, 5, 10)],
-      bumpers: [post(29, 3.4, 0.6), post(29, 6.6, 0.6), post(73, 3, 0.5), post(73, 7, 0.5)],
-    },
-    {
-      name: 'Boost Tunnel',
-      par: 4,
-      tip: 'Boost pads between lava strips, a long way. Fast is fine — until the sand.',
-      tee: { x: 4, y: 5 },
-      cup: { x: 96, y: 5 },
-      floor: [R(0, 0, 100, 10)],
-      zones: [boost(10, 3, 6, 4, 0, 45), water(14, 0, 30, 2), water(14, 8, 30, 2), boost(28, 3, 6, 4, 0, 45), boost(46, 3, 6, 4, 0, 45), sand(66, 0, 6, 10), sand(84, 0, 3, 10)],
-      bumpers: [post(92, 2, 0.5), post(92, 8, 0.5), post(60, 5, 0.5)],
-    },
-    {
-      name: 'Portal Putts',
-      par: 3,
-      tip: 'Lava blocks the way twice. The first teleporter is behind you; the second is not where you think.',
-      tee: { x: 4, y: 6 },
-      cup: { x: 66, y: 4 },
-      floor: [R(0, 0, 70, 20)],
-      zones: [water(13, 0, 4, 20), tele(3, 15, 3, 3, 26, 12), water(44, 0, 4, 20), tele(34, 2, 3, 3, 56, 14), sand(50, 8, 20, 4)],
-      bumpers: [post(22, 4, 0.5), post(62, 4, 0.5), post(58, 8, 0.5)],
-    },
-    {
-      name: 'Glacier',
-      par: 2,
-      tip: 'An ice sheet that leans toward the lava. Everything slides downhill, slowly, for a long way.',
-      tee: { x: 4, y: 4 },
-      cup: { x: 74, y: 14 },
-      floor: [R(0, 0, 80, 18)],
-      zones: [slope(0, 0, 80, 18, 90, 1), ice(0, 0, 80, 18), sand(46, 4, 6, 6), sand(28, 15, 24, 3)],
-      bumpers: [post(72, 12.5, 0.6), post(72, 15.5, 0.6), post(75, 16.5, 0.6), post(24, 10, 0.7), post(38, 6, 0.6), post(60, 9, 0.6), post(12, 12, 0.6)],
-    },
-    {
-      name: 'Firewalk',
-      par: 4,
-      tip: 'A long ice bridge over lava, with gaps. Stay on the bridge or start again.',
-      tee: { x: 3, y: 10 },
-      cup: { x: 86, y: 10 },
-      floor: [R(0, 0, 90, 20)],
+      tip: 'A hundred units of ice. Stop on the sand stones, or slide the whole lake in one.',
+      tee: { x: 6, y: 25 },
+      cup: { x: 100, y: 36 },
+      floor: [R(0, 0, 110, 50)],
       zones: [
-        water(8, 0, 74, 7), water(8, 13, 74, 7),
-        ice(8, 7, 74, 6),
-        water(28, 7, 2, 1.2), water(28, 11.8, 2, 1.2),
-        water(56, 7, 2, 1.2), water(56, 11.8, 2, 1.2),
-        sand(82, 0, 3, 20),
+        ice(8, 0, 82, 50),
+        sand(28, 18, 6, 6), sand(50, 30, 6, 6), sand(72, 12, 6, 6),
+        water(0, 0, 8, 8), water(0, 42, 8, 8), water(92, 0, 18, 6),
       ],
-      bumpers: [post(86, 6, 0.6), post(86, 14, 0.6)],
+      bumpers: [post(40, 10, 0.8), post(60, 40, 0.8), post(80, 24, 0.8), post(94, 30, 0.5), post(94, 42, 0.5)],
     },
     {
-      name: 'Snowball',
+      // A lava river across the hole with two ice bridges: a wide one up the
+      // top (a dogleg to reach it) and a needle straight ahead of the tee.
+      name: 'Lava River',
       par: 3,
-      tip: 'Ice, bumpers, and a sand gate before the cup. The ball never slows down on its own.',
-      tee: { x: 4, y: 12 },
-      cup: { x: 76, y: 12 },
-      floor: [R(0, 0, 80, 24)],
-      zones: [ice(8, 3, 56, 18), sand(64, 9, 4, 6)],
-      bumpers: [bumper(16, 8), bumper(16, 16), bumper(30, 12), bumper(44, 7), bumper(44, 17), post(56, 12, 0.7), post(71, 8, 0.6), post(71, 16, 0.6), post(73, 12, 0.6)],
+      tip: 'Two ice bridges over the lava: wide and far up, or three units wide dead ahead.',
+      tee: { x: 4, y: 38 },
+      cup: { x: 94, y: 14 },
+      floor: [R(0, 0, 100, 44)],
+      zones: [
+        water(40, 12, 12, 18), water(40, 33, 12, 11),
+        ice(34, 2, 24, 10), ice(34, 30, 24, 3),
+        sand(52, 29, 6, 5), sand(72, 0, 3, 22), sand(14, 8, 6, 12),
+      ],
+      blocks: [polyRect(40, 12, 12, 0.8), corner(100, 0, 10, -1, 1)],
+      bumpers: [post(66, 22, 0.7), post(86, 20, 0.5), post(80, 8, 0.5), post(26, 24, 0.6)],
     },
     {
+      // A volcano: two terraces up to a crater of lava round the cup on a
+      // sand island, open on one side. Climb the ramps and walk round — or
+      // roll into the cannon by the tee and fire straight into the crater.
       name: 'Volcano',
-      par: 3,
-      tip: 'Ice, a lava moat, then the cup sits on a long ramp. Climb it and stop before the top.',
-      tee: { x: 4, y: 10 },
-      cup: { x: 72, y: 10 },
-      floor: [R(0, 0, 80, 20)],
-      zones: [ice(8, 5, 12, 10), water(24, 0, 10, 5), water(24, 15, 10, 5), sand(38, 0, 4, 20), slope(48, 5, 32, 10, 180, 1.4)],
-      bumpers: [post(44, 6, 0.5), post(44, 14, 0.5)],
+      par: 4,
+      tip: 'Two ramps up and round to the crater mouth, or the cannon fires you straight in.',
+      tee: { x: 6, y: 10 },
+      cup: { x: 63, y: 30 },
+      floor: [R(0, 0, 120, 64), R(30, 8, 70, 56, 2), R(44, 14, 48, 36, 4)],
+      zones: [
+        cannon(20, 27, 6, 6, 0, 34, 20),
+        slopeTo(22, 40, 8, 8, 180, 2), slopeTo(70, 50, 8, 6, 90, 2),
+        water(50, 18, 22, 4), water(50, 22, 4, 16), water(50, 38, 22, 4), sand(54, 22, 18, 16),
+        water(0, 54, 14, 10), water(104, 0, 16, 8), water(34, 10, 10, 4),
+        sand(50, 56, 4, 8), sand(94, 30, 6, 20), sand(84, 42, 3, 8),
+      ],
+      blocks: [polyRect(21, 39, 1, 1), polyRect(21, 48, 1, 1), polyRect(69, 56, 1, 1), polyRect(78, 56, 1, 1)],
+      bumpers: [post(38, 26, 0.6), post(40, 58, 0.6), post(80, 22, 0.6), post(76, 34, 0.5), post(14, 30, 0.5)],
     },
     {
-      name: 'Meltdown',
+      // A cave: a raised block of ice with a long tunnel straight through it
+      // and a crossing tunnel that lets you out the sides. Ice on the low
+      // green either end. Over the top by the ramp, or through the dark.
+      name: 'Ice Cave',
       par: 3,
-      tip: 'Ice, lava, a boost, a windmill, sand, more lava. The exit is narrower than it looks.',
-      tee: { x: 4, y: 14 },
-      cup: { x: 94, y: 5 },
-      floor: [R(0, 0, 100, 28)],
-      zones: [ice(0, 0, 30, 28), sand(30, 8, 8, 20), boost(30, 2, 8, 5, 0, 40), sand(62, 10, 10, 8), water(76, 4, 5, 12), sand(84, 18, 16, 10)],
-      blocks: [...windmill(48, 14, 6, 1.4, 3, 0.8)],
-      bumpers: [post(90, 9, 0.6), post(86, 4, 0.5), post(70, 4, 0.6)],
+      tip: 'Through the cave (mind the crossing) or up the ramp and over the top of it.',
+      tee: { x: 4, y: 30 },
+      cup: { x: 122, y: 28 },
+      floor: [R(0, 0, 130, 56), R(30, 8, 70, 40, 3)],
+      zones: [
+        tunnel(30, 26, 70, 4), tunnel(62, 8, 4, 40),
+        ice(0, 8, 30, 40), ice(100, 8, 20, 40),
+        slopeTo(22, 12, 8, 8, 180, 3),
+        sand(46, 8, 4, 18), sand(80, 30, 4, 18), sand(36, 34, 8, 14),
+        sand(70, 0, 4, 8), sand(70, 48, 4, 8), water(0, 0, 8, 8), water(0, 48, 8, 8),
+      ],
+      blocks: [polyRect(21, 11, 1, 1), polyRect(21, 20, 1, 1)],
+      bumpers: [post(14, 22, 0.7), post(112, 40, 0.7), post(112, 14, 0.7), post(118, 22, 0.4), post(118, 34, 0.4)],
+    },
+    {
+      // The glacier: from the summit, a steep ice slope straight into a field
+      // of kickers, or the long gentle side ramp into a walled corridor with
+      // sand gates. Both come out above the moraine before the cup.
+      name: 'Glacier',
+      par: 3,
+      tip: 'Straight down the glacier into the kickers, or the long ramp and the corridor.',
+      tee: { x: 10, y: 15 },
+      cup: { x: 118, y: 15 },
+      floor: [R(0, 0, 20, 30, 4), R(20, 0, 110, 30)],
+      zones: [
+        slopeTo(20, 8, 30, 14, 0, 4), slopeTo(20, 0, 50, 6, 0, 4),
+        sand(74, 0, 3, 6), sand(100, 8, 4, 22), water(0, 0, 6, 6), water(0, 24, 6, 6), water(20, 24, 30, 6),
+      ],
+      blocks: [polyRect(20, 6, 70, 1.2), polyRect(20, 22, 1, 1)],
+      bumpers: [bumper(60, 14), bumper(60, 24), bumper(72, 19), bumper(84, 12), bumper(84, 24), post(110, 9, 0.5), post(110, 21, 0.5)],
+    },
+    {
+      // A castle: a walled keep on a mound with a lava moat all round it. In
+      // by the drawbridge ramp and the blinking portcullis, or hop the pad
+      // over the moat and the wall onto the sand in the ward.
+      name: 'Lava Moat',
+      par: 4,
+      tip: 'Over the drawbridge when the portcullis blinks, or jump the moat and the wall.',
+      tee: { x: 6, y: 70 },
+      cup: { x: 116, y: 40 },
+      floor: [R(0, 0, 140, 80), R(66, 16, 58, 48, 3)],
+      zones: [
+        ...pond(60, 10, 70, 60, R(66, 16, 58, 48), R(60, 34, 6, 12)),
+        slopeTo(60, 34, 6, 12, 180, 3), jump(48, 46, 4, 6, 18),
+        sand(74, 30, 12, 12), sand(34, 36, 4, 16), sand(104, 18, 3, 12), sand(104, 50, 3, 12), water(0, 0, 20, 10),
+      ],
+      blocks: [
+        laser(66, 34, 1, 12, 3, 0.5),
+        polyRect(66, 16, 58, 1), polyRect(66, 63, 58, 1), polyRect(123, 16, 1, 48), polyRect(66, 16, 1, 18), polyRect(66, 46, 1, 18),
+        polyRect(59, 33, 1, 1), polyRect(59, 46, 1, 1),
+      ],
+      bumpers: [post(96, 32, 0.6), post(96, 48, 0.6), post(106, 46, 0.5), post(110, 24, 0.6), post(30, 60, 0.6)],
+    },
+    {
+      // Steam vents: a Z of three legs, each with a lava channel and a vent
+      // (fan) that floats you across it. A portal in the first corner sucks
+      // you past the second leg altogether.
+      name: 'Steam Vents',
+      par: 4,
+      tip: 'Three lava channels, a steam vent before each. The corner portal skips one.',
+      tee: { x: 4, y: 10 },
+      cup: { x: 112, y: 60 },
+      floor: [R(0, 0, 60, 20), R(48, 20, 12, 30), R(48, 50, 70, 20)],
+      zones: [
+        fan(20, 4, 6, 12, 0, 30), water(28, 0, 8, 20), sand(40, 0, 4, 20),
+        fan(50, 24, 8, 6, 90, 30), water(48, 32, 12, 8), sand(48, 44, 12, 3),
+        fan(72, 54, 6, 12, 0, 30), water(80, 50, 8, 20), sand(94, 50, 4, 20),
+        tele(56, 1, 3, 3, 54, 62), ice(6, 4, 8, 12),
+      ],
+      bumpers: [post(52, 12, 0.5), post(66, 66, 0.6), post(106, 54, 0.5), post(106, 66, 0.5)],
+    },
+    {
+      // An icefall: three steps of ice with a crevasse of lava in the middle
+      // of each. Slide the middle and fly the crevasses, or walk the green
+      // edges step by step. A sand gate at the bottom before the cup.
+      name: 'Icefall',
+      par: 3,
+      tip: 'Three ice steps down. Fly the crevasses at pace, or creep down the green edges.',
+      tee: { x: 6, y: 10 },
+      cup: { x: 128, y: 10 },
+      floor: [R(0, 0, 30, 20, 6), R(30, 0, 30, 20, 4), R(60, 0, 30, 20, 2), R(90, 0, 50, 20)],
+      zones: [
+        ice(8, 4, 22, 12), ice(34, 4, 26, 12), ice(64, 4, 26, 12),
+        water(30, 8, 4, 4), water(60, 8, 4, 4),
+        sand(100, 0, 4, 20), sand(24, 0, 6, 4), sand(24, 16, 6, 4), sand(54, 0, 6, 4), sand(54, 16, 6, 4),
+        sand(132, 0, 8, 4), sand(132, 16, 8, 4),
+      ],
+      bumpers: [post(114, 6, 0.5), post(114, 14, 0.5), post(122, 3, 0.5), post(122, 17, 0.5)],
+    },
+    {
+      // The meltdown: the frozen lake, the lava river (ice bridge or pad),
+      // up the volcano and down the glacier (or the tunnel through it), the
+      // ice field of rocks and the castle moat with a gap. Everything.
+      name: 'Meltdown',
+      par: 5,
+      tip: 'Lake, river, volcano, glacier, moat. The pad and the tunnel are the short cuts.',
+      tee: { x: 6, y: 30 },
+      cup: { x: 152, y: 30 },
+      floor: [R(0, 0, 160, 60), R(70, 10, 40, 40, 3)],
+      zones: [
+        ice(0, 0, 40, 60), sand(20, 26, 6, 8), sand(34, 12, 4, 8),
+        water(44, 0, 8, 26), water(44, 34, 8, 26), ice(40, 26, 16, 8), jump(38, 42, 4, 6, 12),
+        slopeTo(62, 26, 8, 8, 180, 3), water(80, 12, 20, 8), sand(80, 36, 20, 6), slopeTo(110, 26, 12, 8, 0, 3),
+        tunnel(70, 44, 40, 4),
+        ice(122, 10, 20, 40), water(142, 0, 4, 22), water(142, 38, 4, 22), sand(58, 46, 4, 10),
+        water(0, 0, 10, 6), water(150, 52, 10, 8),
+      ],
+      blocks: [polyRect(61, 25, 1, 1), polyRect(61, 34, 1, 1)],
+      bumpers: [post(130, 20, 0.7), post(134, 40, 0.7), post(148, 24, 0.5), post(148, 36, 0.5), post(66, 52, 0.6), post(26, 44, 0.6)],
     },
   ],
 };
