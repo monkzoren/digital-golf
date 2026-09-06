@@ -69,6 +69,9 @@ README.md for architecture and run instructions. Key facts:
   passage with a roof slab (`carvedFloor`, `bottom`). The cup and tee are
   drawn at `groundZ` (up a ramp, tilted with it), never at the slab under
   it.
+- Building or changing a course: read `.claude/course-guidelines.md` first
+  (ramp orientation, platforms and tunnels, gadget numbers, the two-route
+  rule, what each checker flag means and how to fix it).
 - `spacetimedb/src/shared/expansion.ts` holds the expansion set (six
   courses, ids 12–17: Highland Terraces, Rooftops, Millpond, Pinball
   Palace, Asteroid Belt, Crossroads), every hole a fork with at least two
