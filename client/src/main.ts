@@ -304,7 +304,7 @@ let intent: Intent = null;
 let joinCode = '';
 let selectedChar = Number(store.get('dg_char') ?? 0) || 0;
 let selectedCourse: bigint | null = null;
-let courseTab: 'featured' | 'community' | 'mine' = 'featured';
+let courseTab: 'featured' | 'community' | 'recent' | 'mine' = 'featured';
 let rules = {
   isPublic: false,
   maxStrokes: Number(store.get('dg_strokes') ?? 10) || 10,
@@ -628,25 +628,71 @@ $('char-confirm').onclick = () => {
 // ---------------------------------------------------------------------------
 // Course select
 // ---------------------------------------------------------------------------
+type CourseSort = 'top' | 'new' | 'plays' | 'name' | 'par';
+let courseSort: CourseSort = 'top';
+const courseMs = (c: Course) => Number(c.createdAt.microsSinceUnixEpoch / 1000n);
+const NEW_DAYS = 7;
+const isNewCourse = (c: Course) => !c.builtin && Date.now() - courseMs(c) < NEW_DAYS * 864e5;
+// Recently played courses (this browser): most recent first, capped.
+const RECENT_MAX = 24;
+function recentIds(): string[] {
+  try { const v = JSON.parse(store.get('dg_recent') ?? '[]'); return Array.isArray(v) ? v.map(String) : []; } catch { return []; }
+}
+function rememberRecent(id: bigint) {
+  const key = id.toString();
+  store.set('dg_recent', JSON.stringify([key, ...recentIds().filter(k => k !== key)].slice(0, RECENT_MAX)));
+}
+function courseCompare(sort: CourseSort): (a: Course, b: Course) => number {
+  const byId = (a: Course, b: Course) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
+  switch (sort) {
+    case 'top': return (a, b) => ratingScore(b) - ratingScore(a) || b.plays - a.plays || byId(a, b);
+    case 'new': return (a, b) => courseMs(b) - courseMs(a) || byId(a, b);
+    case 'plays': return (a, b) => b.plays - a.plays || ratingScore(b) - ratingScore(a) || byId(a, b);
+    case 'name': return (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }) || byId(a, b);
+    case 'par': return (a, b) => a.totalPar - b.totalPar || a.holeCount - b.holeCount || byId(a, b);
+  }
+}
 function coursesFor(tab: typeof courseTab): Course[] {
   const all: Course[] = [];
   for (const c of conn.db.course.iter()) all.push(c);
-  if (tab === 'featured') return all.filter(c => c.builtin).sort((a, b) => (a.id < b.id ? -1 : 1));
-  if (tab === 'community') return all.filter(c => !c.builtin && c.published).sort((a, b) => ratingScore(b) - ratingScore(a) || b.plays - a.plays || (a.id < b.id ? 1 : -1));
+  if (tab === 'recent') {
+    const order = recentIds();
+    const rank = new Map(order.map((k, i) => [k, i]));
+    const seen = new Set<string>();
+    const out: Course[] = [];
+    for (const c of [...all, ...[...conn.db.myCourses.iter()] as unknown as Course[]]) {
+      const k = c.id.toString();
+      if (rank.has(k) && !seen.has(k)) { seen.add(k); out.push(c); }
+    }
+    return out.sort((a, b) => rank.get(a.id.toString())! - rank.get(b.id.toString())!); // recency, never re-sorted
+  }
+  // Featured keeps its designed order under TOP (the seed order is the
+  // difficulty ramp); any other sort applies to every tab.
+  if (tab === 'featured') return all.filter(c => c.builtin).sort(courseSort === 'top' ? (a, b) => (a.id < b.id ? -1 : 1) : courseCompare(courseSort));
+  if (tab === 'community') return all.filter(c => !c.builtin && c.published).sort(courseCompare(courseSort));
   const mine: Course[] = [];
   for (const c of conn.db.myCourses.iter()) mine.push(c as unknown as Course);
-  return mine.sort((a, b) => (a.id < b.id ? 1 : -1));
+  return mine.sort(courseSort === 'top' ? courseCompare('new') : courseCompare(courseSort));
 }
-// The picker: a scrolling list of courses (any number — rows are cheap and
-// their thumbnails load only as they scroll into view) beside a detail pane
-// for the chosen course: hole 1 large, every hole small, the round options.
+// The picker: a scrolling list of courses (any number — rows are cheap,
+// only a window of them is in the DOM at once and their thumbnails load only
+// as they scroll into view) beside a detail pane for the chosen course:
+// hole 1 large, the facts, every hole small, the round options.
 let courseSearch = '';
 const courseRows = new Map<string, HTMLButtonElement>(); // course id → row element
 let courseListOrder = '';
 let courseDetailSig = '';
+const LIST_PAGE = 40; // rows shown before "more" — the window grows as you scroll
+let listLimit = LIST_PAGE;
 const thumbWatcher = typeof IntersectionObserver !== 'undefined'
   ? new IntersectionObserver(entries => {
-    for (const e of entries) if (e.isIntersecting) { const id = (e.target as HTMLElement).dataset.id; if (id) subscribeCourse(BigInt(id)); }
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      const el = e.target as HTMLElement;
+      if (el.classList.contains('course-more')) { listLimit += LIST_PAGE; renderCourseGrid(true); continue; }
+      const id = el.dataset.id;
+      if (id) subscribeCourse(BigInt(id));
+    }
   }, { root: null, rootMargin: '120px' })
   : null;
 
@@ -661,13 +707,25 @@ function matchesSearch(c: Course): boolean {
   const q = courseSearch.toLowerCase();
   return c.name.toLowerCase().includes(q) || c.authorName.toLowerCase().includes(q);
 }
+/** "★★★★☆" for a rated course, "" for one nobody has rated yet. */
+function starRow(c: Course): string {
+  if (!c.ratingCount) return '';
+  const n = Math.round(ratingAvg(c));
+  return `<span class="stars-inline">${'★'.repeat(n)}<span class="off">${'★'.repeat(5 - n)}</span></span> ${ratingAvg(c).toFixed(1)}`;
+}
 
 function renderCourseGrid(force = false) {
   document.querySelectorAll('#course-tabs .sel-card').forEach(b => b.classList.toggle('selected', (b as HTMLElement).dataset.tab === courseTab));
+  document.querySelectorAll('#course-sort .sort-btn').forEach(b => b.classList.toggle('selected', (b as HTMLElement).dataset.sort === courseSort));
+  $('course-sort').classList.toggle('hidden', courseTab === 'recent');
   const list = $('course-list');
   const all = coursesFor(courseTab);
-  const rows = all.filter(matchesSearch);
-  if (selectedCourse === null || !rows.some(c => c.id === selectedCourse)) selectedCourse = rows[0]?.id ?? null;
+  const matching = all.filter(matchesSearch);
+  if (selectedCourse === null || !matching.some(c => c.id === selectedCourse)) selectedCourse = matching[0]?.id ?? null;
+  // the DOM carries a window of the list; a selection past it widens it
+  const selIx = matching.findIndex(c => c.id === selectedCourse);
+  if (selIx >= listLimit) listLimit = Math.ceil((selIx + 1) / LIST_PAGE) * LIST_PAGE;
+  const rows = matching.slice(0, listLimit);
   // rows are keyed by course id and updated in place, so a hole row arriving
   // (thumbnail) or a selection change never rebuilds the list or loses scroll
   const order = rows.map(c => c.id.toString()).join(',');
@@ -675,10 +733,14 @@ function renderCourseGrid(force = false) {
     courseListOrder = order;
     for (const [id, el] of courseRows) if (!rows.some(c => c.id.toString() === id)) { thumbWatcher?.unobserve(el); el.remove(); courseRows.delete(id); }
     list.querySelector('.course-empty')?.remove();
+    const oldMore = list.querySelector('.course-more'); if (oldMore) { thumbWatcher?.unobserve(oldMore); oldMore.remove(); }
     if (!rows.length) {
       const empty = document.createElement('div');
       empty.className = 'course-empty';
-      empty.textContent = courseSearch ? 'NO COURSE MATCHES THAT' : courseTab === 'mine' ? 'YOU HAVE NO COURSES YET — OPEN THE COURSE EDITOR' : 'NOTHING HERE YET — BE THE FIRST TO PUBLISH ONE';
+      empty.textContent = courseSearch ? 'NO COURSE MATCHES THAT'
+        : courseTab === 'mine' ? 'YOU HAVE NO COURSES YET — OPEN THE COURSE EDITOR'
+        : courseTab === 'recent' ? 'NOTHING PLAYED YET — YOUR LAST ROUNDS LAND HERE'
+        : 'NOTHING HERE YET — BE THE FIRST TO PUBLISH ONE';
       list.appendChild(empty);
     }
     for (const c of rows) {
@@ -688,41 +750,76 @@ function renderCourseGrid(force = false) {
         row = document.createElement('button');
         row.className = 'sel-card course-row';
         row.dataset.id = key;
-        row.innerHTML = `<span class="course-art"></span><span class="course-text"><div class="cname"></div><div class="cmeta"></div></span>`;
+        row.innerHTML = `<span class="course-art"><span class="art-holes"></span></span><span class="course-text"><div class="cname"><span class="nm"></span></div><div class="cmeta"></div></span>`;
         row.onclick = () => { selectedCourse = c.id; sfx.ui(); renderCourseGrid(); };
+        row.ondblclick = () => { if (!($('course-confirm') as HTMLButtonElement).disabled) $('course-confirm').click(); };
         courseRows.set(key, row);
         thumbWatcher?.observe(row);
       }
       list.appendChild(row); // (re)append in order
+    }
+    if (matching.length > rows.length) {
+      const more = document.createElement('button');
+      more.className = 'course-more';
+      more.textContent = `SHOW MORE · ${matching.length - rows.length} LEFT`;
+      more.onclick = () => { listLimit += LIST_PAGE; renderCourseGrid(true); };
+      list.appendChild(more);
+      thumbWatcher?.observe(more);
     }
     if (!thumbWatcher) for (const c of rows.slice(0, 12)) subscribeCourse(c.id);
   }
   for (const c of rows) {
     const row = courseRows.get(c.id.toString())!;
     row.classList.toggle('selected', c.id === selectedCourse);
-    (row.querySelector('.cname') as HTMLElement).textContent = c.name;
-    (row.querySelector('.cmeta') as HTMLElement).textContent = `${c.holeCount} HOLES · PAR ${c.totalPar}${c.ratingCount ? ` · ${ratingText(c)}` : ''}${c.builtin ? ' · FEATURED' : ` · ${c.authorName}`}${c.published ? '' : ' · DRAFT'}`;
+    (row.querySelector('.nm') as HTMLElement).textContent = c.name;
+    const tag = c.builtin ? (courseTab === 'featured' ? '' : 'feat') : !c.published ? 'draft' : isNewCourse(c) ? 'new' : '';
+    const cname = row.querySelector('.cname') as HTMLElement;
+    let tagEl = cname.querySelector('.tag') as HTMLElement | null;
+    if (tag) {
+      if (!tagEl) { tagEl = document.createElement('span'); cname.appendChild(tagEl); }
+      tagEl.className = `tag ${tag}`; tagEl.textContent = tag === 'feat' ? '★' : tag.toUpperCase();
+    } else tagEl?.remove();
+    const bits = [`PAR ${c.totalPar}`];
+    if (c.ratingCount) bits.push(starRow(c));
+    if (!c.builtin) bits.push(esc(c.authorName));
+    if (c.plays && courseTab !== 'featured') bits.push(`${c.plays} PLAYS`);
+    (row.querySelector('.cmeta') as HTMLElement).innerHTML = bits.join(' · ');
+    (row.querySelector('.art-holes') as HTMLElement).textContent = `${c.holeCount}H`;
     const art = row.querySelector('.course-art') as HTMLElement;
-    art.classList.toggle('neon', c.name.toLowerCase().includes('neon'));
     if (!art.classList.contains('has-art')) {
       const first = holeRows(c.id)[0];
       const h0 = first ? parsedHole(first) : null;
-      if (h0) { const cv = document.createElement('canvas'); drawThumb(cv, h0, 168, 84); art.appendChild(cv); art.classList.add('has-art'); }
+      if (h0) {
+        art.classList.toggle('neon', h0.theme === 'neon'); art.classList.toggle('space', h0.theme === 'space');
+        const cv = document.createElement('canvas'); drawThumb(cv, h0, 192, 100); art.prepend(cv); art.classList.add('has-art');
+      }
     }
   }
-  $('course-count').textContent = rows.length === all.length ? `${all.length} COURSE${all.length === 1 ? '' : 'S'}` : `${rows.length} OF ${all.length} COURSES`;
+  const total = matching.length === all.length ? `${all.length} COURSE${all.length === 1 ? '' : 'S'}` : `${matching.length} OF ${all.length} COURSES`;
+  $('course-count').innerHTML = `<span>${total}</span><span class="keys">▲▼ PICK · ENTER PLAY</span>`;
   renderCourseDetail();
   $('mode-options').classList.toggle('hidden', intent === 'change');
   document.querySelectorAll('#visibility-grid .sel-card').forEach(b => b.classList.toggle('selected', ((b as HTMLElement).dataset.vis === '1') === rules.isPublic));
   renderRuleSegs();
   ($('course-confirm') as HTMLButtonElement).disabled = selectedCourse === null;
 }
+/** Move the selection by `d` rows (keyboard) and keep it in view. */
+function stepCourse(d: number) {
+  const matching = coursesFor(courseTab).filter(matchesSearch);
+  if (!matching.length) return;
+  const ix = Math.max(0, matching.findIndex(c => c.id === selectedCourse));
+  const next = Math.min(matching.length - 1, Math.max(0, ix + d));
+  selectedCourse = matching[next].id;
+  sfx.ui();
+  renderCourseGrid();
+  courseRows.get(selectedCourse.toString())?.scrollIntoView({ block: 'nearest' });
+}
 
 function renderCourseDetail() {
   const c = selectedCourse !== null ? courseById(selectedCourse) : undefined;
   const hero = $('course-hero');
   if (!c) {
-    if (courseDetailSig !== '') { courseDetailSig = ''; hero.classList.remove('has-art'); $('course-detail-name').textContent = '—'; $('course-detail-meta').textContent = ''; $('course-holes').innerHTML = ''; }
+    if (courseDetailSig !== '') { courseDetailSig = ''; hero.classList.remove('has-art'); $('course-detail-name').textContent = '—'; $('course-detail-meta').textContent = ''; $('course-facts').innerHTML = ''; $('course-holes').innerHTML = ''; }
     return;
   }
   subscribeCourse(c.id);
@@ -732,23 +829,32 @@ function renderCourseDetail() {
   if (sig === courseDetailSig) return;
   courseDetailSig = sig;
   $('course-detail-name').textContent = c.name.toUpperCase();
-  const rated = c.ratingCount ? ` · ${ratingText(c)} FROM ${plural(c.ratingCount, 'PLAYER')}` : '';
-  $('course-detail-meta').textContent = `${c.holeCount} HOLES · PAR ${c.totalPar} · ${c.builtin ? '★ FEATURED' : `BY ${c.authorName.toUpperCase()} · ${c.plays} PLAYS`}${rated}${c.published ? '' : ' · DRAFT'}`;
+  $('course-detail-meta').textContent = `${c.holeCount} HOLES · PAR ${c.totalPar} · ${c.builtin ? '★ FEATURED' : `BY ${c.authorName.toUpperCase()}`}${c.published ? '' : ' · DRAFT'}`;
   // my stars: revisable here once given (the gameover screen is where a
   // first rating happens — the server wants a round played)
   const rate = $('course-rate');
   rate.classList.toggle('hidden', !canRate(c));
   renderStars(rate, mine?.stars ?? 0, !!mine, n => { sfx.ui(); rd().rateCourse({ courseId: c.id, stars: n }); });
   rate.title = mine ? 'YOUR RATING — CLICK TO CHANGE IT' : 'PLAY A ROUND HERE TO RATE IT';
-  const first = rows[0] ? parsedHole(rows[0]) : null;
+  const holes = rows.map(parsedHole).filter((h): h is Hole => !!h);
+  const themes = [...new Set(holes.map(h => h.theme ?? 'park'))];
+  const pars = holes.map(h => h.par);
+  const facts: [string, string, boolean?][] = [
+    ['HOLES', String(c.holeCount)],
+    ['PAR', String(c.totalPar), true],
+    [c.ratingCount ? `RATING · ${c.ratingCount}` : 'RATING', c.ratingCount ? `★ ${ratingAvg(c).toFixed(1)}` : 'UNRATED'],
+    ['PLAYS', String(c.plays)],
+    ['WORLD', themes.length ? themes.join(' / ').toUpperCase() : '…'],
+    ['SPREAD', pars.length ? `PAR ${Math.min(...pars)}–${Math.max(...pars)}` : '…'],
+  ];
+  $('course-facts').innerHTML = facts.map(([k, v, gold]) => `<div class="fact"><div class="fk">${k}</div><div class="fv${gold ? ' gold' : ''}">${esc(v)}</div></div>`).join('');
+  const first = holes[0];
   if (first) { drawThumb($('course-hero-canvas') as HTMLCanvasElement, first, 960, 360, 2.5); hero.classList.add('has-art'); }
   else hero.classList.remove('has-art');
   const strip = $('course-holes');
   strip.innerHTML = '';
   if (!rows.length) { strip.innerHTML = `<div class="course-empty">${c.holeCount ? 'LOADING HOLES…' : 'NO HOLES YET'}</div>`; return; }
-  rows.forEach((r, i) => {
-    const h = parsedHole(r);
-    if (!h) return;
+  holes.forEach((h, i) => {
     const chip = document.createElement('div');
     chip.className = 'hole-chip';
     const cv = document.createElement('canvas');
@@ -759,14 +865,47 @@ function renderCourseDetail() {
     strip.appendChild(chip);
   });
 }
-document.querySelectorAll('#course-tabs .sel-card').forEach(b => { (b as HTMLButtonElement).onclick = () => { courseTab = (b as HTMLElement).dataset.tab as any; selectedCourse = null; sfx.ui(); renderCourseGrid(true); }; });
-$('course-search').addEventListener('input', () => { courseSearch = ($('course-search') as HTMLInputElement).value.trim(); renderCourseGrid(); });
-$('course-search').addEventListener('keydown', e => { if (e.key === 'Escape') { ($('course-search') as HTMLInputElement).value = ''; courseSearch = ''; renderCourseGrid(); } e.stopPropagation(); });
+document.querySelectorAll('#course-tabs .sel-card').forEach(b => { (b as HTMLButtonElement).onclick = () => { courseTab = (b as HTMLElement).dataset.tab as any; selectedCourse = null; listLimit = LIST_PAGE; $('course-list').scrollTop = 0; sfx.ui(); renderCourseGrid(true); }; });
+document.querySelectorAll('#course-sort .sort-btn').forEach(b => { (b as HTMLButtonElement).onclick = () => { courseSort = (b as HTMLElement).dataset.sort as CourseSort; listLimit = LIST_PAGE; $('course-list').scrollTop = 0; sfx.ui(); renderCourseGrid(true); }; });
+$('course-search').addEventListener('input', () => { courseSearch = ($('course-search') as HTMLInputElement).value.trim(); listLimit = LIST_PAGE; renderCourseGrid(); });
+$('course-search').addEventListener('keydown', e => {
+  if (e.key === 'Escape') { ($('course-search') as HTMLInputElement).value = ''; courseSearch = ''; renderCourseGrid(); }
+  else if (e.key === 'ArrowDown') { stepCourse(1); e.preventDefault(); }
+  else if (e.key === 'ArrowUp') { stepCourse(-1); e.preventDefault(); }
+  else if (e.key === 'Enter') { $('course-confirm').click(); e.preventDefault(); }
+  e.stopPropagation();
+});
+$('course-random').onclick = () => {
+  const pool = coursesFor(courseTab).filter(matchesSearch).filter(c => c.id !== selectedCourse);
+  if (!pool.length) return;
+  selectedCourse = pool[Math.floor(Math.random() * pool.length)].id;
+  sfx.ui();
+  renderCourseGrid();
+  courseRows.get(selectedCourse.toString())?.scrollIntoView({ block: 'center' });
+};
+// Whole-screen keys while the picker is up: arrows walk the list, Enter
+// plays, letters go to the search box.
+window.addEventListener('keydown', e => {
+  if (overlayTarget !== 'select-course' || editorIsOpen() || e.ctrlKey || e.metaKey || e.altKey) return;
+  const tag = (e.target as HTMLElement)?.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+  if (e.key === 'ArrowDown') { stepCourse(1); e.preventDefault(); }
+  else if (e.key === 'ArrowUp') { stepCourse(-1); e.preventDefault(); }
+  else if (e.key === 'PageDown') { stepCourse(8); e.preventDefault(); }
+  else if (e.key === 'PageUp') { stepCourse(-8); e.preventDefault(); }
+  else if (e.key === 'Home') { stepCourse(-1e9); e.preventDefault(); }
+  else if (e.key === 'End') { stepCourse(1e9); e.preventDefault(); }
+  else if (e.key === 'Enter') { if (!($('course-confirm') as HTMLButtonElement).disabled) $('course-confirm').click(); e.preventDefault(); }
+  else if (e.key.length === 1 && /[a-z0-9 ]/i.test(e.key)) ($('course-search') as HTMLInputElement).focus(); // the letter lands in the box
+  else return;
+  e.stopImmediatePropagation(); // ahead of the game's own key map (G, F, M…)
+});
 document.querySelectorAll('#visibility-grid .sel-card').forEach(b => { (b as HTMLButtonElement).onclick = () => { rules.isPublic = (b as HTMLElement).dataset.vis === '1'; renderCourseGrid(); }; });
 $('course-back').onclick = () => { if (intent === 'change') { intent = null; showOverlay('waiting'); } else showOverlay('select-player'); };
 $('course-confirm').onclick = () => {
   if (selectedCourse === null) return;
   sfx.ui();
+  rememberRecent(selectedCourse);
   if (intent === 'change') {
     const l = myLobby();
     if (l) rd().setSettings({ courseId: selectedCourse, isPublic: l.isPublic, maxStrokes: l.maxStrokes, holeSecs: l.holeSecs, collisions: l.collisions, waterPenalty: l.waterPenalty, powerMul: l.powerMul });

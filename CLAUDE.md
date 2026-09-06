@@ -223,7 +223,13 @@ README.md for architecture and run instructions. Key facts:
   `create_championship_room` (gated on `RELAY_ISSUER`, a token minted with
   this server's key; the hub and every sibling game carry the same issuer
   string). The venue is a course NAME; the championship host is the room
-  host and starts the round as usual. The finishing order is written ONCE
+  host and starts the round as usual (alone is a solo round). The
+  reducer's `settings` arg is the director's JSON with the room screen's
+  knobs (`maxStrokes`, `holeSecs`, `collisions`, `waterPenalty`,
+  `powerMul`), parsed by `legOptions`/`legNum`/`legBool` with the room
+  defaults for anything missing. The hub's relay also reads the public
+  `course` table to fill its venue picker (published courses, player-made
+  included). The finishing order is written ONCE
   to the public `leg_result` table (`recordLegResult`, from the tick's
   last-hole finish and from `abortRound`); PLAY AGAIN never rescores. The
   relay carries it to the hub, which scores it.
