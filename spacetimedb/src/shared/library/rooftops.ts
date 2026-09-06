@@ -1,0 +1,112 @@
+// Built-in course. See .claude/course-guidelines.md before editing.
+import {
+  type Course, R, polyRect, polyNgon, polyStar,
+  bumper, post, windmill, slider, pendulum, laser, rubber,
+  sand, ice, water, slope, slopeTo, boost, jump, tele, conveyor, spinner, fan, trampoline, magnet, cannon, gfield, tunnel,
+} from '../courses';
+import { tri, low, mirrorTR, corner, star, open, lowRail, pond } from '../pieces';
+
+// ---------------------------------------------------------------------------
+// ROOFTOPS — neon roofs with no rails, gaps between them, and the alley
+// below. Hop the roofs or take the alley and climb back up at the end.
+// ---------------------------------------------------------------------------
+export const ROOFTOPS: Course = {
+  id: 13,
+  name: 'Rooftops',
+  theme: 'neon',
+  holes: [
+    {
+      name: 'Alley or Roof',
+      par: 3,
+      tip: 'Three roofs, two gaps, no rails. The jump pads are off the line; the alley below has a ramp back up at the end.',
+      tee: { x: 4, y: 5 },
+      cup: { x: 64, y: 4 },
+      floor: [open(0, 0, 20, 10, 2), open(26, 0, 20, 10, 2), open(52, 0, 18, 10, 2), R(0, 10, 70, 10)],
+      zones: [jump(15, 0, 3, 3, 9), jump(41, 7, 3, 3, 9), slopeTo(58, 10, 8, 6, 90, 2), sand(20, 12, 6, 8), sand(40, 10, 4, 6), sand(60, 0, 3, 10)],
+      bumpers: [post(32, 14, 0.6), post(50, 12, 0.6), post(66, 8, 0.5), post(36, 4, 0.5)],
+    },
+    {
+      name: 'Fire Escape',
+      par: 4,
+      tip: 'Each roof is higher than the last and the pads are in the far corners. The alley ramp is long and gentle.',
+      tee: { x: 4, y: 5 },
+      cup: { x: 78, y: 5 },
+      floor: [open(0, 0, 24, 10, 1.5), open(29, 0, 24, 10, 3), open(58, 0, 26, 10, 4.5), R(0, 10, 84, 10)],
+      zones: [jump(20, 0, 3, 3, 12), jump(49, 7, 3, 3, 12), slopeTo(58, 10, 26, 6, 90, 4.5), sand(26, 12, 6, 8), sand(50, 10, 4, 6), sand(70, 0, 3, 10)],
+      bumpers: [post(36, 14, 0.6), post(74, 8, 0.5), post(74, 2, 0.5), post(40, 5, 0.5)],
+    },
+    {
+      name: 'Skylight',
+      par: 2,
+      tip: 'A hole in the roof. Round it on the ledges, jump it, or drop in on purpose: the pit has a ramp out toward the cup.',
+      tee: { x: 4, y: 8 },
+      cup: { x: 56, y: 8 },
+      floor: [open(0, 0, 60, 4, 2), open(0, 12, 60, 4, 2), open(0, 4, 20, 8, 2), open(40, 4, 20, 8, 2), R(20, 4, 20, 8)],
+      zones: [jump(13, 5, 3, 6, 11), slopeTo(32, 6, 8, 4, 180, 2), sand(20, 4, 4, 8), sand(48, 0, 4, 4), sand(48, 12, 4, 4)],
+      blocks: [low(31, 4, 1, 2, 1), low(31, 10, 1, 2, 1)],
+      bumpers: [post(50, 5.5, 0.5), post(50, 10.5, 0.5), post(28, 1.8, 0.5), post(28, 14.2, 0.5)],
+    },
+    {
+      name: 'Gap Year',
+      par: 4,
+      tip: 'Two gaps with trampolines in the pits under them: fall in with pace and bounce straight back up onto the next roof.',
+      tee: { x: 4, y: 5 },
+      cup: { x: 84, y: 5 },
+      floor: [open(0, 0, 22, 10, 2), open(28, 0, 26, 10, 2), open(60, 0, 28, 10, 2), R(22, 0, 6, 10), R(54, 0, 6, 10)],
+      zones: [trampoline(22, 0, 6, 6, 15), slopeTo(22, 6, 6, 4, 180, 2), trampoline(54, 0, 6, 6, 15), slopeTo(54, 6, 6, 4, 180, 2), sand(36, 0, 3, 10), sand(70, 0, 3, 10)],
+      bumpers: [post(44, 3, 0.6), post(44, 7, 0.6), post(78, 5, 0.6), post(80, 1.5, 0.5), post(80, 8.5, 0.5)],
+    },
+    {
+      name: 'Penthouse',
+      par: 3,
+      tip: 'You start loaded. The cup is on the tallest roof: fire straight up there, or bail out and take the long ramp along the top.',
+      tee: { x: 16.5, y: 6.5 },
+      cup: { x: 70, y: 5 },
+      floor: [R(0, 0, 84, 18), open(52, 0, 32, 10, 4)],
+      zones: [cannon(14, 4, 5, 5, 0, 32, 20), slopeTo(20, 2, 32, 8, 180, 4), sand(30, 11, 6, 7), sand(40, 12, 8, 6), sand(76, 0, 6, 10), sand(6, 10, 10, 2)],
+      blocks: [polyRect(19, 1, 1, 1), polyRect(19, 10, 1, 1)],
+      bumpers: [post(60, 8, 0.6), post(66, 2, 0.5), post(56, 14, 0.6), post(70, 14, 0.6)],
+    },
+    {
+      name: 'Water Tower',
+      par: 3,
+      tip: 'A tank has flooded the roof. Jump the water, or take the alley and come up the ramp behind it.',
+      tee: { x: 4, y: 7 },
+      cup: { x: 72, y: 7 },
+      floor: [open(0, 0, 78, 14, 2), R(0, 14, 78, 10)],
+      zones: [jump(26, 4, 4, 6, 10), water(34, 0, 12, 14), slopeTo(52, 14, 12, 6, 90, 2), sand(6, 16, 8, 8), sand(66, 0, 3, 14), sand(24, 14, 4, 6), sand(40, 20, 6, 4)],
+      bumpers: [post(52, 3, 0.5), post(52, 11, 0.5), post(34, 19, 0.6), post(14, 5, 0.5)],
+    },
+    {
+      name: 'Neon Ledge',
+      par: 2,
+      tip: 'A narrow ledge of ice, no rails, two floors up. The alley below is slow but it is not a long way down.',
+      tee: { x: 4, y: 2.5 },
+      cup: { x: 72, y: 6 },
+      floor: [open(0, 0, 64, 5, 2), R(0, 5, 76, 8)],
+      zones: [ice(8, 0, 56, 5), sand(10, 7, 6, 6), sand(30, 5, 4, 8), sand(50, 8, 8, 5), sand(66, 0, 3, 5)],
+      bumpers: [post(20, 10, 0.6), post(40, 9, 0.6), post(60, 7, 0.6), post(69, 4, 0.5), post(69, 9, 0.5)],
+    },
+    {
+      name: 'Crane',
+      par: 3,
+      tip: 'A crane arm sweeps the roof and knocks slow balls off the edge. The alley has laser gates instead.',
+      tee: { x: 4, y: 6 },
+      cup: { x: 74, y: 6 },
+      floor: [open(0, 0, 60, 12, 2), R(0, 12, 80, 8), R(60, 0, 20, 12)],
+      blocks: [...windmill(30, 6, 5.5, 1.4, 2, 0.8), laser(24, 12, 1, 8, 2.5, 0.5, 0), laser(48, 12, 1, 8, 2.5, 0.5, 0.5)],
+      zones: [sand(12, 0, 4, 12), sand(44, 0, 4, 12), sand(60, 8, 6, 4), sand(64, 12, 4, 8), sand(68, 0, 4, 4)],
+      bumpers: [post(70, 3, 0.5), post(70, 9, 0.5), post(36, 16, 0.6)],
+    },
+    {
+      name: 'Skyline',
+      par: 5,
+      tip: 'Roof, gap, roof, gap, penthouse. The alley runs under it all with a ramp to the top — the cannon is the shortcut.',
+      tee: { x: 4, y: 5 },
+      cup: { x: 92, y: 5 },
+      floor: [open(0, 0, 24, 10, 2), open(30, 0, 24, 10, 2), open(60, 0, 40, 10, 4), R(0, 10, 100, 12)],
+      zones: [jump(19, 0, 3, 3, 9), jump(49, 7, 3, 3, 12), cannon(30, 14, 5, 6, 0, 32, 20), slopeTo(66, 10, 20, 6, 90, 4), sand(12, 12, 6, 10), sand(40, 0, 3, 10), sand(74, 0, 4, 10), sand(84, 6, 6, 4), sand(88, 16, 12, 6)],
+      bumpers: [post(52, 14, 0.6), post(80, 3, 0.5), post(88, 8, 0.5), post(20, 16, 0.6), post(60, 18, 0.6)],
+    },
+  ],
+};
