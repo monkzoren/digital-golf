@@ -221,8 +221,7 @@ README.md for architecture and run instructions. Key facts:
   u64 hub leg id, 0 = ordinary room) marks a room the hub's relay opened via
   `create_championship_room` (gated on `RELAY_ISSUER`, a token minted with
   this server's key; the hub and every sibling game carry the same issuer
-  string). The venue is a course NAME; the championship host is the room
-  host and starts the round as usual (alone is a solo round). The
+  string). The venue is a course NAME; the championship host is the room host (or, when that identity never turns up — a guest here, another account — whoever joins first takes the host seat: `claimChampionshipHost` in `join_lobby`) and starts the round as usual (alone is a solo round). The
   reducer's `settings` arg is the director's JSON with the room screen's
   knobs (`maxStrokes`, `holeSecs`, `collisions`, `waterPenalty`,
   `powerMul`), parsed by `legOptions`/`legNum`/`legBool` with the room
