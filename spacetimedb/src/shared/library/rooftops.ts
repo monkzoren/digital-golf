@@ -7,8 +7,9 @@ import {
 import { tri, low, mirrorTR, corner, star, open, lowRail, pond } from '../pieces';
 
 // ---------------------------------------------------------------------------
-// ROOFTOPS — neon roofs with no rails, gaps between them, and the alley
-// below. Hop the roofs or take the alley and climb back up at the end.
+// ROOFTOPS — a city block at night. Roofs are open platforms with no rails
+// and gaps between them; the alleys below have fire escapes (short ramps)
+// back up. Hop the roofs, or take the alley and climb at the end.
 // ---------------------------------------------------------------------------
 export const ROOFTOPS: Course = {
   id: 13,
@@ -16,97 +17,151 @@ export const ROOFTOPS: Course = {
   theme: 'neon',
   holes: [
     {
-      name: 'Alley or Roof',
-      par: 3,
-      tip: 'Three roofs, two gaps, no rails. The jump pads are off the line; the alley below has a ramp back up at the end.',
-      tee: { x: 4, y: 5 },
-      cup: { x: 64, y: 4 },
-      floor: [open(0, 0, 20, 10, 2), open(26, 0, 20, 10, 2), open(52, 0, 18, 10, 2), R(0, 10, 70, 10)],
-      zones: [jump(15, 0, 3, 3, 9), jump(41, 7, 3, 3, 9), slopeTo(58, 10, 8, 6, 90, 2), sand(20, 12, 6, 8), sand(40, 10, 4, 6), sand(60, 0, 3, 10)],
-      bumpers: [post(32, 14, 0.6), post(50, 12, 0.6), post(66, 8, 0.5), post(36, 4, 0.5)],
+      // Three roofs in a row over one long alley. The pads sit in the far
+      // corners, trampolines in the pits under the gaps, and the fire
+      // escape climbs out of the alley's end onto the cup roof.
+      name: 'The Block',
+      par: 4,
+      tip: 'Hop three roofs by the corner pads, or take the alley and the fire escape.',
+      tee: { x: 5, y: 8 },
+      cup: { x: 114, y: 20 },
+      floor: [open(0, 0, 24, 16, 2), R(24, 0, 6, 16), open(30, 0, 30, 16, 2), R(60, 0, 6, 16), open(66, 0, 30, 16, 2), R(0, 16, 96, 10), open(96, 10, 30, 20, 2)],
+      zones: [
+        jump(18, 0, 4, 5, 11), trampoline(24, 2, 6, 8, 15), jump(54, 11, 4, 5, 11), trampoline(60, 2, 6, 8, 15), slopeTo(88, 16, 8, 10, 180, 2),
+        sand(40, 18, 6, 8), sand(70, 20, 6, 6), sand(100, 10, 3, 8),
+      ],
+      blocks: [low(96, 10, 30, 1, 1.2), low(125, 10, 1, 20, 1.2), low(96, 29, 30, 1, 1.2), polyRect(87, 15, 1, 1)],
+      bumpers: [post(46, 8, 0.5), post(84, 5, 0.5), post(108, 16, 0.5), post(108, 25, 0.5), post(120, 14, 0.5)],
     },
     {
+      // Two tall roofs joined by a narrow skybridge over an alley of lasers.
+      // Fall off the bridge and you are in the alley: through the gates,
+      // into the pocket and up the long ramp.
+      name: 'Skybridge',
+      par: 3,
+      tip: 'The bridge is five wide and straight. The alley runs under it to a ramp.',
+      tee: { x: 6, y: 15 },
+      cup: { x: 96, y: 15 },
+      floor: [open(0, 0, 20, 30, 4), open(20, 12.5, 40, 5, 4), open(60, 0, 44, 30, 4), R(20, 0, 40, 46), R(60, 30, 20, 16)],
+      zones: [tunnel(36, 12, 8, 6), slopeTo(66, 30, 10, 10, 90, 4), sand(24, 32, 6, 14), sand(50, 2, 4, 9), sand(50, 19, 4, 9), sand(84, 20, 4, 10), sand(70, 2, 4, 8)],
+      blocks: [laser(28, 0, 1, 11, 2.5, 0.5, 0), laser(28, 19, 1, 11, 2.5, 0.5, 0), low(103, 0, 1, 30, 1.2), low(60, 0, 44, 1, 1.2), polyRect(60, 30, 6, 10), polyRect(76, 30, 4, 10)],
+      bumpers: [post(40, 36, 0.6), post(88, 9, 0.5), post(88, 21, 0.5), post(78, 26, 0.5)],
+    },
+    {
+      // Three roofs, each higher than the last: a trampoline pit, then a pad,
+      // then a trampoline pit again. The alley below ends in a pocket with
+      // a steep fire escape straight up to the top roof.
       name: 'Fire Escape',
       par: 4,
-      tip: 'Each roof is higher than the last and the pads are in the far corners. The alley ramp is long and gentle.',
-      tee: { x: 4, y: 5 },
-      cup: { x: 78, y: 5 },
-      floor: [open(0, 0, 24, 10, 1.5), open(29, 0, 24, 10, 3), open(58, 0, 26, 10, 4.5), R(0, 10, 84, 10)],
-      zones: [jump(20, 0, 3, 3, 12), jump(49, 7, 3, 3, 12), slopeTo(58, 10, 26, 6, 90, 4.5), sand(26, 12, 6, 8), sand(50, 10, 4, 6), sand(70, 0, 3, 10)],
-      bumpers: [post(36, 14, 0.6), post(74, 8, 0.5), post(74, 2, 0.5), post(40, 5, 0.5)],
+      tip: 'Bounce and hop up three roofs, or take the alley to the steep ramp.',
+      tee: { x: 5, y: 10 },
+      cup: { x: 98, y: 6 },
+      floor: [open(0, 0, 24, 20, 2), R(24, 0, 8, 20), open(32, 0, 40, 20, 3.5), R(72, 0, 8, 20), open(80, 0, 30, 20, 5), R(0, 20, 80, 16), R(80, 20, 10, 20)],
+      zones: [
+        trampoline(24, 4, 8, 10, 17), jump(66, 0, 4, 5, 14), trampoline(72, 4, 8, 10, 19), slopeTo(80, 20, 10, 10, 90, 5),
+        sand(30, 22, 6, 14), sand(56, 24, 6, 12), sand(86, 6, 3, 14),
+      ],
+      blocks: [low(80, 0, 30, 1, 1.2), low(109, 0, 1, 20, 1.2), low(89, 30, 1, 10, 1.2)],
+      bumpers: [post(50, 5, 0.5), post(94, 12, 0.5), post(102, 14, 0.5), post(70, 30, 0.6)],
     },
     {
-      name: 'Skylight',
-      par: 2,
-      tip: 'A hole in the roof. Round it on the ledges, jump it, or drop in on purpose: the pit has a ramp out toward the cup.',
-      tee: { x: 4, y: 8 },
-      cup: { x: 56, y: 8 },
-      floor: [open(0, 0, 60, 4, 2), open(0, 12, 60, 4, 2), open(0, 4, 20, 8, 2), open(40, 4, 20, 8, 2), R(20, 4, 20, 8)],
-      zones: [jump(13, 5, 3, 6, 11), slopeTo(32, 6, 8, 4, 180, 2), sand(20, 4, 4, 8), sand(48, 0, 4, 4), sand(48, 12, 4, 4)],
-      blocks: [low(31, 4, 1, 2, 1), low(31, 10, 1, 2, 1)],
-      bumpers: [post(50, 5.5, 0.5), post(50, 10.5, 0.5), post(28, 1.8, 0.5), post(28, 14.2, 0.5)],
-    },
-    {
-      name: 'Gap Year',
-      par: 4,
-      tip: 'Two gaps with trampolines in the pits under them: fall in with pace and bounce straight back up onto the next roof.',
-      tee: { x: 4, y: 5 },
-      cup: { x: 84, y: 5 },
-      floor: [open(0, 0, 22, 10, 2), open(28, 0, 26, 10, 2), open(60, 0, 28, 10, 2), R(22, 0, 6, 10), R(54, 0, 6, 10)],
-      zones: [trampoline(22, 0, 6, 6, 15), slopeTo(22, 6, 6, 4, 180, 2), trampoline(54, 0, 6, 6, 15), slopeTo(54, 6, 6, 4, 180, 2), sand(36, 0, 3, 10), sand(70, 0, 3, 10)],
-      bumpers: [post(44, 3, 0.6), post(44, 7, 0.6), post(78, 5, 0.6), post(80, 1.5, 0.5), post(80, 8.5, 0.5)],
-    },
-    {
-      name: 'Penthouse',
-      par: 3,
-      tip: 'You start loaded. The cup is on the tallest roof: fire straight up there, or bail out and take the long ramp along the top.',
-      tee: { x: 16.5, y: 6.5 },
-      cup: { x: 70, y: 5 },
-      floor: [R(0, 0, 84, 18), open(52, 0, 32, 10, 4)],
-      zones: [cannon(14, 4, 5, 5, 0, 32, 20), slopeTo(20, 2, 32, 8, 180, 4), sand(30, 11, 6, 7), sand(40, 12, 8, 6), sand(76, 0, 6, 10), sand(6, 10, 10, 2)],
-      blocks: [polyRect(19, 1, 1, 1), polyRect(19, 10, 1, 1)],
-      bumpers: [post(60, 8, 0.6), post(66, 2, 0.5), post(56, 14, 0.6), post(70, 14, 0.6)],
-    },
-    {
+      // A burst water tower has flooded the roof round the cup: a causeway
+      // crosses the pond to the island. The corner pad flies you straight to
+      // the island; the alley climbs onto the far end of the roof.
       name: 'Water Tower',
+      par: 4,
+      tip: 'Alley, fire escape, quay, causeway, island. The pocket pad flies straight in.',
+      tee: { x: 5, y: 12 },
+      cup: { x: 60, y: 15 },
+      floor: [open(0, 0, 30, 28, 2), R(30, 0, 6, 28), open(36, 0, 50, 28, 2), R(0, 28, 100, 8), open(86, 10, 14, 26, 2), R(48, 36, 6, 6)],
+      zones: [
+        ...pond(36, 0, 50, 28, R(54, 11, 12, 8), R(66, 13, 12, 4), R(78, 4, 8, 24)), jump(48, 36, 6, 6, 15),
+        slopeTo(76, 28, 10, 8, 180, 2), sand(60, 30, 6, 6), sand(88, 28, 11, 6), sand(80, 4, 6, 4), sand(80, 24, 6, 4), sand(16, 29, 6, 7),
+      ],
+      blocks: [
+        low(36, 0, 64, 1, 1.2), low(99, 10, 1, 26, 1.2), polyRect(75, 27, 1, 1), low(77.5, 4, 0.5, 9, 1), low(77.5, 17, 0.5, 11, 1), low(66, 12.5, 12, 0.5, 0.6), low(66, 17, 12, 0.5, 0.6),
+        low(54, 11, 12, 0.5, 1), low(54, 18.5, 12, 0.5, 1), low(54, 11.5, 0.5, 1.5, 1), low(54, 17, 0.5, 1.5, 1), low(65.5, 11.5, 0.5, 1.5, 1), low(65.5, 17, 0.5, 1.5, 1),
+      ],
+      bumpers: [post(92, 20, 0.5), post(40, 33, 0.5), post(72, 11, 0.4), post(72, 19, 0.4)],
+    },
+    {
+      // A rubber billboard on the tee roof throws the ball back across the
+      // gap by way of the pad behind the tee. The alley below runs west to a
+      // pocket and a fire escape onto the cup roof.
+      name: 'Billboard',
       par: 3,
-      tip: 'A tank has flooded the roof. Jump the water, or take the alley and come up the ramp behind it.',
-      tee: { x: 4, y: 7 },
-      cup: { x: 72, y: 7 },
-      floor: [open(0, 0, 78, 14, 2), R(0, 14, 78, 10)],
-      zones: [jump(26, 4, 4, 6, 10), water(34, 0, 12, 14), slopeTo(52, 14, 12, 6, 90, 2), sand(6, 16, 8, 8), sand(66, 0, 3, 14), sand(24, 14, 4, 6), sand(40, 20, 6, 4)],
-      bumpers: [post(52, 3, 0.5), post(52, 11, 0.5), post(34, 19, 0.6), post(14, 5, 0.5)],
+      tip: 'Drive INTO the billboard: it throws you back over the gap. Or take the alley.',
+      tee: { x: 62, y: 12 },
+      cup: { x: 10, y: 4 },
+      floor: [open(50, 0, 30, 24, 2), R(40, 0, 10, 24), open(0, 0, 40, 24, 2), R(0, 24, 80, 16)],
+      zones: [jump(51, 8, 4, 8, 11), slopeTo(0, 24, 10, 10, 90, 2), sand(30, 4, 4, 20), sand(20, 26, 6, 14), sand(56, 28, 6, 12)],
+      blocks: [rubber(77, 2, 2, 20, 2), low(0, 0, 40, 1, 1.2), low(0, 1, 1, 23, 1.2), low(50, 0, 30, 1, 1.2), polyRect(10, 33, 1, 1)],
+      bumpers: [post(14, 10, 0.5), post(6, 12, 0.5), post(66, 5, 0.5), post(66, 19, 0.5)],
     },
     {
-      name: 'Neon Ledge',
-      par: 2,
-      tip: 'A narrow ledge of ice, no rails, two floors up. The alley below is slow but it is not a long way down.',
-      tee: { x: 4, y: 2.5 },
-      cup: { x: 72, y: 6 },
-      floor: [open(0, 0, 64, 5, 2), R(0, 5, 76, 8)],
-      zones: [ice(8, 0, 56, 5), sand(10, 7, 6, 6), sand(30, 5, 4, 8), sand(50, 8, 8, 5), sand(66, 0, 3, 5)],
-      bumpers: [post(20, 10, 0.6), post(40, 9, 0.6), post(60, 7, 0.6), post(69, 4, 0.5), post(69, 9, 0.5)],
-    },
-    {
+      // A crane arm sweeps the long roof and shoves slow balls off into the
+      // alley. The alley has laser gates; the pit at the roof's end has a
+      // trampoline; the fire escape climbs onto the cup roof.
       name: 'Crane',
-      par: 3,
-      tip: 'A crane arm sweeps the roof and knocks slow balls off the edge. The alley has laser gates instead.',
-      tee: { x: 4, y: 6 },
-      cup: { x: 74, y: 6 },
-      floor: [open(0, 0, 60, 12, 2), R(0, 12, 80, 8), R(60, 0, 20, 12)],
-      blocks: [...windmill(30, 6, 5.5, 1.4, 2, 0.8), laser(24, 12, 1, 8, 2.5, 0.5, 0), laser(48, 12, 1, 8, 2.5, 0.5, 0.5)],
-      zones: [sand(12, 0, 4, 12), sand(44, 0, 4, 12), sand(60, 8, 6, 4), sand(64, 12, 4, 8), sand(68, 0, 4, 4)],
-      bumpers: [post(70, 3, 0.5), post(70, 9, 0.5), post(36, 16, 0.6)],
+      par: 4,
+      tip: 'Time the crane along the roof, or take the laser alley and the fire escape.',
+      tee: { x: 5, y: 7 },
+      cup: { x: 104, y: 12 },
+      floor: [open(0, 0, 80, 14, 2), R(80, 0, 10, 14), R(0, 14, 90, 10), open(90, 4, 20, 20, 2)],
+      zones: [trampoline(80, 2, 10, 10, 15), slopeTo(82, 14, 8, 10, 180, 2), sand(24, 16, 4, 8), sand(56, 16, 4, 8), sand(94, 4, 3, 14)],
+      blocks: [...windmill(40, 7, 6, 1.4, 2, 0.8), laser(30, 14, 1, 10, 2.5, 0.5, 0), laser(64, 14, 1, 10, 2.5, 0.5, 0.5), low(90, 4, 20, 1, 1.2), low(109, 4, 1, 20, 1.2), low(90, 23, 20, 1, 1.2), polyRect(81, 23, 1, 1)],
+      bumpers: [post(20, 3, 0.5), post(60, 11, 0.5), post(100, 8, 0.5), post(100, 17, 0.5)],
     },
     {
+      // A whole building in the middle of the block. Round it by the street
+      // (honest), over it by the ramp and its open roof, or under it through
+      // the subway tunnel — the one straight line to the cup.
+      name: 'Subway',
+      par: 2,
+      tip: 'Round the block by the street, over the roof, or straight through the subway.',
+      tee: { x: 6, y: 23 },
+      cup: { x: 95, y: 23 },
+      floor: [R(0, 0, 20, 40), R(20, 0, 70, 30, 2), R(90, 0, 20, 40), R(20, 30, 70, 10)],
+      zones: [tunnel(20, 20, 70, 6), slopeTo(12, 6, 8, 10, 180, 2), sand(36, 32, 4, 8), sand(66, 32, 4, 8), sand(94, 30, 4, 10), sand(92, 12, 4, 6), sand(50, 2, 4, 16)],
+      blocks: [polyRect(11, 5, 1, 1), polyRect(11, 16, 1, 1)],
+      bumpers: [post(16, 19, 0.5), post(16, 27, 0.5), post(90.5, 19, 0.5), post(90.5, 27, 0.5), post(52, 36, 0.6), post(100, 34, 0.5), post(104, 12, 0.5)],
+    },
+    {
+      // The cup is on the penthouse, two storeys up. The street ends at a
+      // ramp onto the mid roof; a second ramp climbs north to the penthouse.
+      // The cannon in the street lobs you straight onto the top.
+      name: 'Penthouse',
+      par: 4,
+      tip: 'Street, mid roof, penthouse by two ramps — or load the street cannon and fly.',
+      tee: { x: 5, y: 39 },
+      cup: { x: 90, y: 6 },
+      floor: [R(0, 30, 70, 12), open(70, 20, 30, 22, 3), open(80, 0, 20, 20, 6)],
+      zones: [slopeTo(60, 30, 10, 12, 180, 3), slopeTo(84, 20, 12, 10, 90, 3), cannon(30, 30, 6, 5, 300, 40, 22), sand(44, 36, 4, 6), sand(74, 22, 3, 8), sand(90, 10, 4, 10)],
+      blocks: [low(99, 20, 1, 22, 1.2), low(70, 41, 30, 1, 1.2), low(80, 0, 20, 1, 1.2), low(80, 1, 1, 19, 1.2), low(99, 1, 1, 19, 1.2), polyRect(83, 30, 1, 1), polyRect(96, 30, 1, 1)],
+      bumpers: [post(76, 36, 0.5), post(86, 12, 0.5), post(20, 34, 0.5), post(86, 12, 0.4)],
+    },
+    {
+      // The finale: roof, pit, roof, pit, penthouse — each higher than the
+      // last — over one long alley with laser gates, a cannon and a fire
+      // escape onto the penthouse annex.
       name: 'Skyline',
       par: 5,
-      tip: 'Roof, gap, roof, gap, penthouse. The alley runs under it all with a ramp to the top — the cannon is the shortcut.',
-      tee: { x: 4, y: 5 },
-      cup: { x: 92, y: 5 },
-      floor: [open(0, 0, 24, 10, 2), open(30, 0, 24, 10, 2), open(60, 0, 40, 10, 4), R(0, 10, 100, 12)],
-      zones: [jump(19, 0, 3, 3, 9), jump(49, 7, 3, 3, 12), cannon(30, 14, 5, 6, 0, 32, 20), slopeTo(66, 10, 20, 6, 90, 4), sand(12, 12, 6, 10), sand(40, 0, 3, 10), sand(74, 0, 4, 10), sand(84, 6, 6, 4), sand(88, 16, 12, 6)],
-      bumpers: [post(52, 14, 0.6), post(80, 3, 0.5), post(88, 8, 0.5), post(20, 16, 0.6), post(60, 18, 0.6)],
+      tip: 'Bounce and hop the skyline, or take the alley: lasers, fire escapes, cannon.',
+      tee: { x: 5, y: 10 },
+      cup: { x: 104, y: 6 },
+      floor: [
+        open(0, 0, 40, 20, 2), R(40, 0, 8, 20), open(48, 0, 42, 20, 3.5), R(90, 0, 8, 20), open(98, 0, 42, 20, 5), R(0, 20, 140, 16),
+      ],
+      zones: [
+        trampoline(40, 4, 8, 12, 17), jump(84, 0, 4, 5, 14), trampoline(90, 4, 8, 12, 19),
+        slopeTo(60, 20, 10, 10, 90, 3.5), slopeTo(120, 20, 10, 10, 90, 5), cannon(30, 22, 6, 6, 330, 40, 24),
+        sand(76, 22, 4, 10), sand(110, 22, 4, 10), sand(116, 4, 4, 12), sand(14, 24, 6, 8),
+      ],
+      blocks: [
+        laser(100, 20, 1, 16, 2.5, 0.5, 0), low(98, 0, 42, 1, 1.2), low(139, 1, 1, 19, 1.2),
+        polyRect(59, 20, 1, 10), polyRect(70, 20, 1, 10), polyRect(119, 20, 1, 10), polyRect(130, 20, 1, 10),
+      ],
+      bumpers: [post(70, 6, 0.5), post(110, 14, 0.5), post(126, 8, 0.5), post(126, 14, 0.5), post(30, 5, 0.5), post(90, 32, 0.6)],
     },
   ],
 };
