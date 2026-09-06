@@ -241,7 +241,7 @@ function routeTo(h: Hole): (x: number, y: number, z?: number) => number {
 function holeLength(h: Hole): number {
   return Math.max(Math.hypot(h.cup.x - h.tee.x, h.cup.y - h.tee.y), routeTo(h)(h.tee.x, h.tee.y));
 }
-const MIN_LENGTH: Record<number, number> = { 1: 0, 2: 30, 3: 55, 4: 75, 5: 95 };
+const MIN_LENGTH: Record<number, number> = { 1: 0, 2: 50, 3: 80, 4: 110, 5: 140 }; // a hole is a JOURNEY: a full drive rolls ~92 units
 const NOISE_DEG = 3; // the "decent player": ±3° and ±6% power
 const NOISY_TRIALS = 6;
 
@@ -277,7 +277,7 @@ for (const course of ALL) {
     if (!gr.holed) flags.push(`NOT FINISHED in ${gr.strokes}`);
     else if (gr.strokes > h.par + 1) flags.push(`HARD (greedy ${gr.strokes} vs par ${h.par})`);
     if (!SHOWCASE.has(course.name)) {
-      if (length < (MIN_LENGTH[h.par] ?? 95)) flags.push(`SHORT (${length.toFixed(0)} u for par ${h.par})`);
+      if (length < (MIN_LENGTH[h.par] ?? 170)) flags.push(`SHORT (${length.toFixed(0)} u for par ${h.par})`);
       if (noisy < h.par - 0.6) flags.push(`EASY (decent player ${noisy.toFixed(1)} vs par ${h.par})`);
       if (noisy > h.par + 1.5) flags.push(`PAR TOO LOW (decent player ${noisy.toFixed(1)})`);
       if (noisyDone < NOISY_TRIALS - 1) flags.push(`${NOISY_TRIALS - noisyDone}/${NOISY_TRIALS} decent-player runs never finished`);

@@ -2,7 +2,7 @@
 
 How to build a built-in course for Digital Golf that plays well AND passes
 `npm run check-courses`. Read this before touching `shared/library.ts`,
-`shared/expansion.ts` or adding a course file. Everything here was learned
+any file under `shared/library/` or adding a course file. Everything here was learned
 the hard way while building the expansion set (Highland Terraces, Rooftops,
 Millpond, Pinball Palace, Asteroid Belt, Crossroads).
 
@@ -19,13 +19,15 @@ Millpond, Pinball Palace, Asteroid Belt, Crossroads).
   `mirrorTR`, `corner` (45° mirror in a corner), `star`, `open` (a floor
   rect with NO rails), `lowRail`, `pond(x, y, w, h, ...islands)` (water
   minus island rects). Course files import from here, never from each other.
-- `spacetimedb/src/shared/library.ts` — the launch nine (ids 3–11),
-  exports `LAUNCH` and `LIBRARY = [...LAUNCH, ...EXPANSION]`.
-- `spacetimedb/src/shared/expansion.ts` — the expansion six (ids 12–17).
-- A new course: a new `Course` in one of those files (or a new file
-  imported by `library.ts`), unique `id` (next free: 18), `theme` of
-  `park` | `neon` | `space`, nine holes. It is seeded into the DB by
-  `seed_builtins` (publish.sh runs it) — no schema change, no bindings.
+- `spacetimedb/src/shared/library/<slug>.ts` — ONE FILE PER COURSE (the
+  launch nine, ids 3–11: bank, clockwork, ridge, machine, frost, grand,
+  galaxy, hairpin, labyrinth; the expansion six, ids 12–17: terraces,
+  rooftops, millpond, pinball, asteroids, crossroads). `library.ts` just
+  imports them and exports `LAUNCH`, `EXPANSION` and `LIBRARY`.
+- A new course: a new file under `library/`, imported and listed in
+  `library.ts`, unique `id` (next free: 18), `theme` of `park` | `neon` |
+  `space`, nine holes. It is seeded into the DB by `seed_builtins`
+  (publish.sh runs it) — no schema change, no bindings.
 - `spacetimedb/scripts/course-check.ts` — the checker. Run it on the course
   you touched (`npm run check-courses -- "Millpond"`), then on everything
   before committing (about 10 minutes; run it in the background).
@@ -33,14 +35,18 @@ Millpond, Pinball Palace, Asteroid Belt, Crossroads).
 ## Coordinates and units
 
 - x right, y DOWN, z up. Ball radius 0.36. A comfortable lane is 8–12
-  wide; a whole hole is 50–120 units long. Keep coordinates ≥ 0 for
+  wide; a whole hole is 100–200 units of route. Keep coordinates ≥ 0 for
   readability (negatives are legal).
 - Speed: MAX_SHOT 34 u/s, FRICTION 6.3. A full drive rolls about 92 units
   on green, about 17 on sand (FRICTION_SAND 34), a very long way on ice.
 - Angles: 0 = +x (right), 90 = +y (DOWN), 180 = −x, 270 = −y (up).
-- A hole should take several shots. Par 2 needs ≥ 30 units of route,
-  par 3 ≥ 55, par 4 ≥ 75, par 5 ≥ 95 ("route" = tee to cup through the
-  floor rects' doorways and up ramps, so a fork or loop counts).
+- A hole is a JOURNEY of three to five stages. The checker demands a
+  route of ≥ 50 units for par 2, ≥ 80 for par 3, ≥ 110 for par 4, ≥ 140
+  for par 5 ("route" = tee to cup through the floor rects' doorways and
+  up ramps, so a fork or loop counts); most holes should be 100–180 and
+  a finale 200+. Short straight lanes with a hazard dropped in were the
+  owner's main complaint about the first drafts — build set pieces that
+  look like something (a clock face, a harbour, a keep, a table).
 
 ## Floors, platforms, cliffs, tunnels
 
@@ -161,8 +167,8 @@ Millpond, Pinball Palace, Asteroid Belt, Crossroads).
 9. Three of nine holes need a hidden ace (cluster ≥ 4, under 4.5% of
    random shots). Give every course a couple of holes where a straight
    line at the right pace goes in through a 4-wide tunnel or over a pad.
-10. Tips are one line (≤ 80 chars is the limit, aim for two sentences)
-    and name both routes.
+10. Tips are ONE line of at most 80 characters (`LIMITS.tipLen`; longer
+    is silently truncated) and name both routes.
 
 ## Working with the checker
 
