@@ -3590,25 +3590,50 @@
     #course-grid .sel-card { min-width: 190px; max-width: 220px; }
     /* ---- course picker: a scrolling list on the left, the chosen course on
        the right (its holes + the round options). Nothing here grows with the
-       number of courses: both panes scroll inside the screen. ---- */
+       number of courses: both panes scroll inside the screen, the list only
+       carries a window of rows (more are appended as you scroll) and each
+       row's thumbnail loads as it comes into view. ---- */
     #select-course { justify-content: flex-start; gap: 12px; padding: 14px 0 12px; }
     #select-course .screen-head { flex-shrink: 0; }
-    #course-picker { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 14px; width: 94%; flex: 1 1 auto; min-height: 0; }
+    #course-picker { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 16px; width: 94%; flex: 1 1 auto; min-height: 0; }
     #course-list-pane { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
-    .course-tabs { display: flex; gap: 6px; justify-content: stretch; }
-    .course-tabs .sel-card { padding: 7px 6px; min-width: 0; flex: 1; font-size: 11px; letter-spacing: 1px; }
-    #course-search { width: 100%; padding: 8px 12px; font-family: var(--font); font-style: italic; font-size: 12px; letter-spacing: 1px; border-radius: 999px; border: 1px solid var(--line-2); background: rgba(4, 7, 28, 0.8); color: var(--ink); }
-    #course-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding: 4px 6px 4px 2px; }
-    #course-count { color: var(--dim-2); font-size: 10px; letter-spacing: 2px; text-align: left; padding-left: 4px; }
-    .course-row, .course-row:active { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 10px; align-items: center; min-width: 0; padding: 6px; text-align: left; border-radius: 10px; }
+    .course-tabs { display: flex; gap: 5px; justify-content: stretch; }
+    .course-tabs .sel-card { padding: 7px 4px; min-width: 0; flex: 1; font-size: 10px; letter-spacing: 1px; }
+    .course-search-row { display: flex; gap: 6px; align-items: stretch; }
+    #course-search { flex: 1 1 auto; min-width: 0; padding: 8px 14px; font-family: var(--font); font-style: italic; font-size: 12px; letter-spacing: 1px; border-radius: 999px; border: 1px solid var(--line-2); background: rgba(4, 7, 28, 0.8); color: var(--ink); }
+    #course-search:focus { outline: none; border-color: rgba(255, 214, 10, 0.6); box-shadow: 0 0 0 3px rgba(255, 214, 10, 0.12); }
+    #course-random { padding: 0 12px; font-size: 16px; line-height: 1; border-radius: 999px; }
+    .course-sort { display: flex; align-items: center; gap: 4px; padding: 0 2px; }
+    .course-sort .sort-label { font-size: 9px; letter-spacing: 3px; color: var(--dim-2); font-style: italic; font-weight: 600; margin-right: 4px; }
+    .course-sort .sort-btn { all: unset; cursor: pointer; font-family: var(--font); font-size: 9px; font-weight: 700; font-style: italic; letter-spacing: 1.5px; color: var(--dim); padding: 4px 8px; border-radius: 999px; border: 1px solid transparent; transition: color 0.12s, border-color 0.12s, background 0.12s; }
+    .course-sort .sort-btn:hover { color: var(--ink); border-color: var(--line-2); }
+    .course-sort .sort-btn.selected { color: var(--gold); border-color: rgba(255, 214, 10, 0.45); background: rgba(255, 214, 10, 0.08); }
+    #course-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding: 4px 6px 4px 2px; scroll-padding: 8px; outline: none; }
+    #course-list:focus-visible { box-shadow: inset 0 0 0 1px rgba(255, 214, 10, 0.35); border-radius: 12px; }
+    #course-count { display: flex; justify-content: space-between; color: var(--dim-2); font-size: 10px; letter-spacing: 2px; text-align: left; padding: 0 4px; }
+    #course-count .keys { letter-spacing: 1px; opacity: 0.8; }
+    .course-row, .course-row:active { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 10px; align-items: center; min-width: 0; padding: 6px; text-align: left; border-radius: 12px; }
     .course-row:hover { transform: none; }
-    .course-row .course-art { display: block; width: 84px; height: 42px; border-radius: 6px; background: linear-gradient(135deg, #2c8a3d, #1b5a2a); position: relative; overflow: hidden; }
+    .course-row .course-art { display: block; width: 96px; height: 50px; border-radius: 8px; background: linear-gradient(135deg, #2c8a3d, #1b5a2a); position: relative; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08); }
     .course-row .course-art.neon { background: linear-gradient(135deg, #2b2b6e, #101040); }
+    .course-row .course-art.space { background: linear-gradient(135deg, #31257a, #040211); }
     .course-row .course-art canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
-    .course-row .cname { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .course-row .cmeta { font-size: 9px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .course-row .course-art .art-holes { position: absolute; right: 3px; bottom: 3px; font-size: 8px; font-weight: 700; letter-spacing: 1px; color: #fff; background: rgba(0, 0, 0, 0.55); padding: 1px 5px; border-radius: 999px; font-style: italic; }
+    .course-row .course-text { min-width: 0; }
+    .course-row .cname { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 6px; }
+    .course-row .cname .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    .course-row .cname .tag { flex: 0 0 auto; font-size: 8px; letter-spacing: 1.5px; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--dim); font-weight: 700; font-style: italic; }
+    .course-row .cname .tag.new { color: #7dffb0; border-color: rgba(125, 255, 176, 0.5); }
+    .course-row .cname .tag.draft { color: #ffb0a5; border-color: rgba(255, 176, 165, 0.5); }
+    .course-row .cname .tag.feat { color: var(--gold); border-color: rgba(255, 214, 10, 0.5); }
+    .course-row .cmeta { font-size: 9px; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .course-row .cmeta .stars-inline { color: var(--gold); letter-spacing: 0; }
+    .course-row .cmeta .stars-inline .off { color: var(--dim-2); }
     .course-row.selected::after { top: 4px; right: 4px; }
-    .course-empty { color: var(--dim-2); font-style: italic; letter-spacing: 1px; padding: 20px; font-size: 12px; }
+    .course-row.selected .cname { color: var(--gold); }
+    .course-empty { color: var(--dim-2); font-style: italic; letter-spacing: 1px; padding: 20px; font-size: 12px; text-align: center; line-height: 1.6; }
+    .course-more { all: unset; cursor: pointer; font-family: var(--font); text-align: center; padding: 10px; font-size: 10px; letter-spacing: 2px; color: var(--dim); font-style: italic; font-weight: 700; border: 1px dashed var(--line-2); border-radius: 10px; }
+    .course-more:hover { color: var(--gold); border-color: rgba(255, 214, 10, 0.5); }
     /* Star ratings: the rate card on the gameover screen and the revisable
        row in the course detail pane. Hovering lights every star up to it. */
     .stars { display: inline-flex; gap: 2px; }
@@ -3630,6 +3655,12 @@
     #course-detail-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; text-align: left; }
     #course-detail-name { font-size: 20px; font-weight: 700; font-style: italic; letter-spacing: 2px; color: var(--gold); }
     #course-detail-meta { font-size: 11px; color: var(--dim); letter-spacing: 2px; }
+    #course-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(78px, 1fr)); gap: 8px; flex-shrink: 0; }
+    #course-facts:empty { display: none; }
+    #course-facts .fact { min-width: 0; padding: 6px 9px; border-radius: 10px; background: rgba(6, 10, 42, 0.7); border: 1px solid var(--line); text-align: left; }
+    #course-facts .fact .fk { font-size: 8px; letter-spacing: 3px; color: var(--dim-2); font-style: italic; font-weight: 600; }
+    #course-facts .fact .fv { font-size: 13px; font-weight: 700; font-style: italic; letter-spacing: 1px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+    #course-facts .fact .fv.gold { color: var(--gold); }
     #course-holes { display: flex; gap: 8px; overflow-x: auto; flex-shrink: 0; padding: 4px 2px 6px; }
     .hole-chip { flex: 0 0 auto; width: 118px; text-align: left; }
     .hole-chip canvas { display: block; width: 118px; height: 62px; border-radius: 6px; background: #1b5a2a; border: 1px solid var(--line); }
@@ -3637,8 +3668,10 @@
     .hole-chip .hpar { font-size: 9px; color: var(--dim); letter-spacing: 2px; }
     #course-detail #mode-options { width: 100%; flex-shrink: 0; }
     @media (max-width: 760px) {
-      #course-picker { grid-template-columns: 1fr; grid-template-rows: minmax(0, 42%) minmax(0, 1fr); width: 100%; }
+      #course-picker { grid-template-columns: 1fr; grid-template-rows: minmax(0, 45%) minmax(0, 1fr); width: 100%; }
       #course-hero { aspect-ratio: 16 / 5; }
+      #course-count .keys { display: none; }
+      .course-sort .sort-label { display: none; }
     }
     .rules-cta { display: flex; gap: 10px; align-items: center; }
     .rules-summary { color: var(--dim); font-size: 12px; font-style: italic; letter-spacing: 1px; }
@@ -3872,10 +3905,22 @@
           <div class="seg course-tabs" id="course-tabs">
             <button class="sel-card selected" data-tab="featured">FEATURED</button>
             <button class="sel-card" data-tab="community">COMMUNITY</button>
+            <button class="sel-card" data-tab="recent">RECENT</button>
             <button class="sel-card" data-tab="mine">MINE</button>
           </div>
-          <input id="course-search" type="text" placeholder="SEARCH COURSES…" autocomplete="off" />
-          <div id="course-list"></div>
+          <div class="course-search-row">
+            <input id="course-search" type="text" placeholder="SEARCH COURSES OR AUTHORS…" autocomplete="off" />
+            <button id="course-random" class="util-btn" title="Surprise me — pick a course at random">🎲</button>
+          </div>
+          <div class="course-sort" id="course-sort">
+            <span class="sort-label">SORT</span>
+            <button class="sort-btn selected" data-sort="top">TOP</button>
+            <button class="sort-btn" data-sort="new">NEW</button>
+            <button class="sort-btn" data-sort="plays">PLAYED</button>
+            <button class="sort-btn" data-sort="name">A–Z</button>
+            <button class="sort-btn" data-sort="par">PAR</button>
+          </div>
+          <div id="course-list" tabindex="0"></div>
           <div id="course-count" class="tiny"></div>
         </aside>
         <section id="course-detail">
@@ -3885,6 +3930,7 @@
             <div id="course-detail-meta"></div>
             <div id="course-rate" class="stars small hidden"></div>
           </div>
+          <div id="course-facts"></div>
           <div id="course-holes"></div>
       <div id="mode-options">
         <div class="opt-row" id="visibility-section">
