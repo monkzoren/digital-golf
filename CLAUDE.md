@@ -72,11 +72,12 @@ README.md for architecture and run instructions. Key facts:
 - Building or changing a course: read `.claude/course-guidelines.md` first
   (ramp orientation, platforms and tunnels, gadget numbers, the two-route
   rule, what each checker flag means and how to fix it).
-- `spacetimedb/src/shared/expansion.ts` holds the expansion set (six
-  courses, ids 12–17: Highland Terraces, Rooftops, Millpond, Pinball
-  Palace, Asteroid Belt, Crossroads), every hole a fork with at least two
-  real routes to the cup; `library.ts` exports `LAUNCH` (the nine below)
-  and `LIBRARY = [...LAUNCH, ...EXPANSION]`. The small block/floor
+- The library is one file per course under `spacetimedb/src/shared/
+  library/` (the launch nine, ids 3–11, and the expansion six, ids 12–17:
+  Highland Terraces, Rooftops, Millpond, Pinball Palace, Asteroid Belt,
+  Crossroads — every hole a fork with at least two real routes to the
+  cup); `library.ts` imports them and exports `LAUNCH`, `EXPANSION` and
+  `LIBRARY`. The small block/floor
   builders both files share (`tri`, `low`, `corner`, `star`, `open` — a
   rail-less rect, `lowRail`, `pond` — water minus islands) live in
   `shared/pieces.ts` so the two course files never import each other.
@@ -87,7 +88,7 @@ README.md for architecture and run instructions. Key facts:
   a belt over a tunnel; the greedy checker player mimics the best line,
   so a fragile "best" line (a launch over a black hole) makes the decent
   player drown — give the honest route a better landing than the gamble.
-- `spacetimedb/src/shared/library.ts` holds the launch courses (nine, all
+- The launch courses (nine, all
   designed around hidden holes-in-one; Galaxy Road is the `space` one;
   Hairpin Hollow and Neon Labyrinth are the corner courses — `corner()`
   mirrors sit in every outer corner and the cups sit where a perfect carom
@@ -95,7 +96,7 @@ README.md for architecture and run instructions. Key facts:
   (`npm run check-courses` in spacetimedb/) verifies every built-in hole
   with the real physics: ace exists, is narrow (< 4.5% of shots) and
   hittable, greedy play finishes within par + 1, a ±3° "decent player"
-  averages about par, the ball travels ≥ 55/75/95 units for par 3/4/5, no
+  averages about par, the route is ≥ 50/80/110/140 units for par 2/3/4/5, no
   shot rolls for ever. MAX_SHOT is 34 and FRICTION 6.3 with a low-speed
   trickle (≈ 92 units of roll on green; BALL_R 0.36): a hole should take
   several shots. Speed and friction scale together — change one, change both.

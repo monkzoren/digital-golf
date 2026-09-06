@@ -76,7 +76,7 @@ TypeScript three.js game with a built-in course editor.
   is a rainbow road floating in deep space: gravity fields that flip half
   way down a hole, wormholes across the void, a black hole to slingshot
   round, star jumps in moon gravity and gold star obstacles. The
-  **expansion set** (six more courses, 54 holes, `shared/expansion.ts`)
+  **expansion set** (six more courses, 54 holes)
   is built on forks: every hole has at least two real ways to the cup —
   over the platform or through the tunnel under it (**Highland
   Terraces**), across the rail-less roofs or down in the alley and up a
@@ -188,8 +188,8 @@ VERBOSE=1 npm run check-courses -- "Grand"          # print the ace lines
 A library hole passes when an ace exists, spans at least a few fine-grid
 cells (humanly hittable), covers under ~4.5% of random shots (hidden), a
 "decent player" (the greedy line with ±3° / ±6% wobble) averages about
-par, the ball travels far enough for the par (55 / 75 / 95 units for par
-3 / 4 / 5) and nothing rolls for ever. Ramps are wedges: enter them from
+par, the ball travels far enough for the par (50 / 80 / 110 / 140 units
+of route for par 2 / 3 / 4 / 5) and nothing rolls for ever. Ramps are wedges: enter them from
 the low edge — a ramp met side-on or from its top is a step the ball
 bounces off. The greedy player routes through the floor rects with their
 heights in mind (a platform is only entered up a ramp standing on the
