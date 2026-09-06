@@ -697,17 +697,41 @@ export const create_lobby = spacetimedb.reducer(
   }
 );
 
+
+// The director's game-native rules for a championship leg arrive as JSON
+// (see the hub's client/src/games.ts for the shape). Anything missing or
+// malformed falls back to the room default — a leg always opens.
+function legOptions(settings: string): Record<string, unknown> {
+  try {
+    const v = JSON.parse(settings || '{}');
+    return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+function legNum(o: Record<string, unknown>, key: string, def: number, lo: number, hi: number): number {
+  const v = o[key];
+  return typeof v === 'number' && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : def;
+}
+function legBool(o: Record<string, unknown>, key: string, def: boolean): boolean {
+  const v = o[key];
+  return typeof v === 'boolean' ? v : def;
+}
+
 /**
  * Open a room for a championship leg. Relay only. The hub picked the code
  * (six letters, so it can never clash with a five-letter one of ours) and
  * the championship host becomes the room host — the same identity here as
  * on the hub, because every game shares one Firebase project. Everyone
- * joins with the code and the host starts the round as usual. `venue` is a
- * course NAME (built-in, or any published course).
+ * joins with the code and the host starts the round as usual (alone is
+ * fine — a solo round). `venue` is a course NAME (built-in, or any
+ * published course); `settings` is the director's JSON with the same
+ * knobs as the room screen: { maxStrokes, holeSecs, collisions,
+ * waterPenalty, powerMul }.
  */
 export const create_championship_room = spacetimedb.reducer(
-  { legId: t.u64(), code: t.string(), venue: t.string(), hostId: t.identity(), players: t.u8() },
-  (ctx, { legId, code, venue, hostId, players }) => {
+  { legId: t.u64(), code: t.string(), venue: t.string(), hostId: t.identity(), players: t.u8(), settings: t.string() },
+  (ctx, { legId, code, venue, hostId, players, settings }) => {
     requireRelay(ctx);
     if (legId === 0n) throw new SenderError('Bad leg id');
     for (const l of ctx.db.lobby.iter()) {
@@ -724,6 +748,7 @@ export const create_championship_room = spacetimedb.reducer(
     }
     if (!course) throw new SenderError(`No published course called "${venue.trim()}"`);
     void players; // a round holds up to MAX_PLAYERS; nothing to size
+    const o = legOptions(settings);
     ctx.db.lobby.insert({
       id: 0n,
       code: clean,
@@ -738,14 +763,14 @@ export const create_championship_room = spacetimedb.reducer(
       holeIndex: 0,
       phaseTicks: 0,
       holeTick: 0,
-      maxStrokes: DEFAULT_MAX_STROKES,
-      holeSecs: DEFAULT_HOLE_SECS,
-      collisions: true,
+      maxStrokes: Math.round(legNum(o, 'maxStrokes', DEFAULT_MAX_STROKES, 3, 30)),
+      holeSecs: Math.round(legNum(o, 'holeSecs', DEFAULT_HOLE_SECS, 30, 600)),
+      collisions: legBool(o, 'collisions', true),
       round: 0,
       championName: '',
       createdAt: ctx.timestamp,
-      waterPenalty: true,
-      powerMul: 100,
+      waterPenalty: legBool(o, 'waterPenalty', true),
+      powerMul: cleanPowerMul(Math.round(legNum(o, 'powerMul', 100, 1, 255))),
       championshipLeg: legId,
     });
   }
