@@ -438,6 +438,16 @@ function setSignInMode(mode: 'signin' | 'create') {
   $('si-mode').textContent = mode === 'create' ? 'Already have one? Sign in' : 'New here? Create an account';
   siPassword.autocomplete = mode === 'create' ? 'new-password' : 'current-password';
 }
+
+// A championship room entered as a guest: the result can never be matched
+// to a hub entrant (a guest is a different identity on every site), so say
+// so where the player is looking, with the sign-in one click away.
+function refreshLegGuestWarning(isLeg: boolean) {
+  const el = document.getElementById('leg-guest-warning');
+  if (el) el.classList.toggle('hidden', !(isLeg && accountKind() === 'guest'));
+}
+document.getElementById('leg-guest-signin')?.addEventListener('click', () => openSignInModal());
+
 function openSignInModal() {
   siMessage('');
   siPassword.value = '';
@@ -951,6 +961,7 @@ function renderRoom() {
   $('lobby-code').textContent = lobby.code;
   $('lobby-link').textContent = `${location.origin}${location.pathname}?lobby=${lobby.code}`;
   const isLeg = (lobby.championshipLeg ?? 0n) !== 0n;
+  refreshLegGuestWarning(isLeg);
   $('waiting-title').textContent = isLeg ? 'CHAMPIONSHIP LEG' : lobby.isPublic ? 'PUBLIC ROUND' : 'PRIVATE ROUND';
   const membersNow = lobbyPlayers(lobby.id);
   const waitingOn = membersNow.filter(q => q.online && !q.ready);
