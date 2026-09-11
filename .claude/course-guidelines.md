@@ -101,6 +101,14 @@ Millpond, Pinball Palace, Asteroid Belt, Crossroads).
   "Underpass".
 - A small 1×1 block at the ramp's low corner (`polyRect(13, 3.5, 1, 1)`)
   stops balls sliding along the ramp's side face.
+- Lessons from the worlds set: a ramp whose CENTRE lies exactly on a
+  taller rect's edge counts as standing on that rect (the lower rect
+  becomes unroutable) — keep the centre strictly inside the lower rect; a
+  ramp narrower than its lane launches a diagonal ball off its side face
+  over the lane's rail — extend it to the rail; a sliding block that
+  shoves a ball into a rail pushes it through onto the lawn; a tunnel-line
+  ace usually forces par 2 (the decent player takes ~3.2) — set the tee
+  so the route still clears the par-2 length.
 
 ## Gadgets — numbers that work
 
