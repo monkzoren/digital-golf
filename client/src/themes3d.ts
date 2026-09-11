@@ -724,7 +724,7 @@ const feltIsland: Painter = (g, W, H) => {
 };
 /** Stage deck: dark boards with a cyan edge glow-line. */
 const feltStage: Painter = (g, W, H) => {
-  g.fillStyle = '#2a2140';
+  g.fillStyle = '#342a58';
   g.fillRect(0, 0, W, H);
   for (let i = 0; i < 10; i++) {
     g.fillStyle = i % 2 ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.1)';
@@ -805,7 +805,6 @@ function festival(group: THREE.Group, radius: number) {
     beam.position.set(Math.cos(a) * r, 25, Math.sin(a) * r);
     beam.lookAt(Math.cos(a + 2.5) * radius * 0.5, 60, Math.sin(a + 2.5) * radius * 0.5);
     beam.rotateX(Math.PI / 2);
-    beam.name = 'decor-spin';
     group.add(beam);
   }
 }
