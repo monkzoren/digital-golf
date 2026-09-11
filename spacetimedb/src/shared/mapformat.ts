@@ -3,7 +3,8 @@
 // (before it lets you publish) validate through here, so a map that passes
 // in the browser passes on the server.
 import type { Block, Bumper, Hole, Motion, Rect, Zone, ZoneKind } from './courses';
-import { WALL_H, pointInFloor } from './courses';
+import type { Prop } from './courses';
+import { PROP_KINDS, WALL_H, pointInFloor } from './courses';
 
 export const LIMITS = {
   holesPerCourse: 18,
@@ -12,6 +13,7 @@ export const LIMITS = {
   blockPts: 24,
   zones: 48,
   bumpers: 32,
+  props: 40,
   holeBytes: 14_000,
   courseNameLen: 28,
   holeNameLen: 24,
@@ -23,7 +25,7 @@ export const LIMITS = {
   wallH: 6, // tallest floor rail
 };
 
-export const THEME_NAMES = ['park', 'neon', 'space'];
+export const THEME_NAMES = ['park', 'neon', 'space', 'cinema', 'pirate', 'music', 'kitchen', 'zoo'];
 const ZONE_KINDS: ZoneKind[] = ['sand', 'ice', 'water', 'slope', 'boost', 'jump', 'tele', 'conveyor', 'spinner', 'fan', 'trampoline', 'magnet', 'cannon', 'gravity', 'tunnel'];
 /** zones whose `power` may be negative (it flips their direction) */
 const SIGNED_POWER: ZoneKind[] = ['spinner', 'magnet'];
@@ -137,6 +139,10 @@ export function cleanHole(raw: any): Hole {
         const bo = r2(clampN(b.bounce, 0.2, 2.5));
         if (bo !== 1) out.bounce = bo;
       }
+      if (b.look != null) {
+        const look = String(b.look);
+        if ((PROP_KINDS as readonly string[]).includes(look)) out.look = look;
+      }
       if (b.gen && typeof b.gen === 'object') {
         if (b.gen.kind === 'windmill' && num(b.gen.len) && num(b.gen.width) && num(b.gen.blades)) {
           out.gen = { kind: 'windmill', len: r2(clampN(b.gen.len, 0.5, 60)), width: r2(clampN(b.gen.width, 0.2, 10)), blades: clampN(Math.round(b.gen.blades), 2, 6) };
@@ -181,6 +187,18 @@ export function cleanHole(raw: any): Hole {
     hole.bumpers = raw.bumpers.map((b: any, i: number): Bumper => {
       if (!num(b?.x) || !num(b?.y) || !num(b?.r)) throw new Error(`bumper ${i + 1}: bad values`);
       return { x: r2(b.x), y: r2(b.y), r: r2(clampN(b.r, 0.3, 6)), kick: num(b.kick) ? r2(clampN(b.kick, 0, 25)) : 0 };
+    });
+  }
+  if (raw.props != null) {
+    if (!Array.isArray(raw.props)) throw new Error('props must be a list');
+    if (raw.props.length > LIMITS.props) throw new Error(`too many props (max ${LIMITS.props})`);
+    hole.props = raw.props.map((p: any, i: number): Prop => {
+      if (!p || !(PROP_KINDS as readonly string[]).includes(p.kind)) throw new Error(`prop ${i + 1}: unknown kind`);
+      if (!num(p.x) || !num(p.y) || Math.abs(p.x) > LIMITS.coord || Math.abs(p.y) > LIMITS.coord) throw new Error(`prop ${i + 1}: bad position`);
+      const out: Prop = { kind: p.kind, x: r2(p.x), y: r2(p.y) };
+      if (p.rot != null) { if (!num(p.rot)) throw new Error(`prop ${i + 1}: bad rotation`); const rot = r2(((p.rot % 360) + 360) % 360); if (rot) out.rot = rot; }
+      if (p.s != null) { if (!num(p.s)) throw new Error(`prop ${i + 1}: bad scale`); const sc = r2(clampN(p.s, 0.2, 6)); if (sc !== 1) out.s = sc; }
+      return out;
     });
   }
   return hole;

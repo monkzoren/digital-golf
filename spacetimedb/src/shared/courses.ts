@@ -78,6 +78,11 @@ export interface Block {
   hub?: number;
   /** wall bounciness multiplier (1 = a normal wall, 2 = rubber that fires the ball back harder) */
   bounce?: number;
+  /** a themed 3D model drawn in place of the plain extruded block (one of
+   *  PROP_KINDS): a crate, a barrel, a speaker stack, a cheese wedge… The
+   *  model is fitted to the polygon's bounding box and to `h`, so what
+   *  collides is still exactly what is drawn. Render-only. */
+  look?: string;
   /** editor metadata: how the polygon was generated (so it can be re-generated) */
   gen?:
     | { kind: 'windmill'; len: number; width: number; blades: number }
@@ -85,6 +90,35 @@ export interface Block {
     | { kind: 'tri'; w: number; h: number; rot: number } // a right triangle: pts[0] is the right-angle corner, legs w (along +x) and h (along +y) turned by rot
     | { kind: 'bar'; len: number; width: number }; // a pendulum arm hanging (+y) from its pivot
 }
+
+/** Scenery: a themed 3D model (one of PROP_KINDS) standing at (x, y) on
+ *  whatever floor is there (the lawn, a slab, a platform). Props never
+ *  collide — put them beside the course, not on the playing line; a solid
+ *  themed piece is a block with a `look`. `rot` turns it (degrees, 0 faces
+ *  +x), `s` scales its default size. */
+export interface Prop {
+  kind: string;
+  x: number;
+  y: number;
+  rot?: number;
+  s?: number;
+}
+
+/** Every prop model the 3D renderer can build (and every block `look`),
+ *  grouped by the theme that introduced them; any theme may use any kind. */
+export const PROP_KINDS = [
+  // cinema
+  'screen', 'projector', 'reel', 'popcorn', 'clapper', 'spotlight', 'seats', 'camera',
+  // pirate
+  'palm', 'barrel', 'chest', 'anchor', 'mast', 'crate', 'skull', 'rock',
+  // music
+  'speaker', 'drum', 'note', 'mic', 'keys', 'amp', 'cymbal', 'guitar',
+  // kitchen (the miniature world)
+  'cheese', 'mousetrap', 'can', 'book', 'mug', 'fork', 'rat', 'plate',
+  // zoo
+  'tree', 'fence', 'giraffe', 'elephant', 'sign', 'bush', 'cage', 'flamingo',
+] as const;
+export type PropKind = (typeof PROP_KINDS)[number];
 
 export interface Hole {
   name: string;
@@ -97,6 +131,8 @@ export interface Hole {
   blocks?: Block[];
   zones?: Zone[];
   bumpers?: Bumper[];
+  /** Scenery models (never collide). */
+  props?: Prop[];
   /** One-line hint shown on the hole intro card. */
   tip?: string;
   /** Visual theme (see client THEMES); defaults to the course's. */
@@ -105,10 +141,12 @@ export interface Hole {
   gravity?: number;
 }
 
+export type ThemeName = 'park' | 'neon' | 'space' | 'cinema' | 'pirate' | 'music' | 'kitchen' | 'zoo';
+
 export interface Course {
   id: number;
   name: string;
-  theme: 'park' | 'neon' | 'space';
+  theme: ThemeName;
   holes: Hole[];
 }
 
@@ -563,6 +601,16 @@ export function pendulum(cx: number, cy: number, len: number, width: number, amp
 export function laser(x: number, y: number, w: number, h: number, period = 2.5, duty = 0.5, phase = 0): Block {
   return { pts: rectPts(R(x, y, w, h)), motion: { type: 'blink', period, duty, phase }, gen: { kind: 'rect', w, h, rot: 0 } };
 }
+/** A scenery prop: a themed model at (x, y), turned `rot` degrees, `s` × its default size. */
+export const prop = (kind: PropKind, x: number, y: number, rot?: number, s?: number): Prop => {
+  const p: Prop = { kind, x, y };
+  if (rot) p.rot = rot;
+  if (s !== undefined && s !== 1) p.s = s;
+  return p;
+};
+/** Dress a block as a themed model (a crate, a barrel, a speaker…) — it
+ *  still collides exactly as the polygon and height say. */
+export const dress = (b: Block, look: PropKind): Block => ({ ...b, look });
 /** A rubber wall block: bounces the ball back harder than it arrived. */
 export function rubber(x: number, y: number, w: number, h: number, bounce = 2): Block {
   return { pts: rectPts(R(x, y, w, h)), bounce, gen: { kind: 'rect', w, h, rot: 0 } };
