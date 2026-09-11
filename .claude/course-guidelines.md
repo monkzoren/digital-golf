@@ -25,8 +25,11 @@ Millpond, Pinball Palace, Asteroid Belt, Crossroads).
   rooftops, millpond, pinball, asteroids, crossroads). `library.ts` just
   imports them and exports `LAUNCH`, `EXPANSION` and `LIBRARY`.
 - A new course: a new file under `library/`, imported and listed in
-  `library.ts`, unique `id` (next free: 18), `theme` of `park` | `neon` |
-  `space`, nine holes. It is seeded into the DB by `seed_builtins`
+  `library.ts`, unique `id` (next free: 23), `theme` of `park` | `neon` |
+  `space` | `cinema` | `pirate` | `music` | `kitchen` | `zoo`, nine holes.
+  The worlds set (ids 18–22: cinema, pirate, music, ratz, zoo) is the
+  model for a themed course: every hole a vertical set piece dressed
+  with props. It is seeded into the DB by `seed_builtins`
   (publish.sh runs it) — no schema change, no bindings.
 - `spacetimedb/scripts/course-check.ts` — the checker. Run it on the course
   you touched (`npm run check-courses -- "Millpond"`), then on everything
@@ -130,6 +133,30 @@ Millpond, Pinball Palace, Asteroid Belt, Crossroads).
   ball back harder, `corner(px, py, s, ix, iy)` is a 45° mirror in a
   corner, `star(cx, cy, r, bounce?)` a rock. Movers: `windmill`,
   `pendulum`, `slider`, `laser` (blink gate).
+
+## Props and looks (dressing a hole)
+
+- `prop(kind, x, y, rot?, s?)` in the hole's `props` stands a themed 3D
+  model there (one of `PROP_KINDS`, forty kinds: screen, projector, reel,
+  popcorn, clapper, spotlight, seats, camera · palm, barrel, chest,
+  anchor, mast, crate, skull, rock · speaker, drum, note, mic, keys, amp,
+  cymbal, guitar · cheese, mousetrap, can, book, mug, fork, rat, plate ·
+  tree, fence, giraffe, elephant, sign, bush, cage, flamingo). Props NEVER
+  collide, so they go OFF the playing floor — on the lawn round the hole
+  (three or more units outside the rects) — where nothing is played. `rot`
+  is degrees (0 faces +x), `s` scales the default size (`PROP_SIZE`).
+  Six to fourteen per hole dress a scene; `LIMITS.props` is 40.
+- `dress(block, kind)` gives a collidable block a `look`: the same model
+  fitted to the polygon's bounding box and the block's `h`, so it collides
+  exactly as drawn. Round looks (barrel, can, drum, mug, reel, cymbal, tree,
+  bush) suit a `polyNgon` block; box looks (crate, chest, speaker, amp,
+  book, seats, screen, cage, keys, cheese, mousetrap, plate, projector,
+  rock) any rectangle; `fence` a `low()` wall. Give a dressed block the
+  height the model wants (a barrel 1.6, a speaker stack 3) — a look on a
+  0.5-high low wall is a squashed model.
+- The checker ignores both (they are render-only); the 3D look is
+  `client/preview.html?course=Skull&hole=3&cam=play`, and
+  `?showcase=1&theme=pirate` shows every prop and a row of dressed blocks.
 
 ## Design rules
 

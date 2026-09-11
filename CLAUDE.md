@@ -73,11 +73,29 @@ README.md for architecture and run instructions. Key facts:
   (ramp orientation, platforms and tunnels, gadget numbers, the two-route
   rule, what each checker flag means and how to fix it).
 - The library is one file per course under `spacetimedb/src/shared/
-  library/` (the launch nine, ids 3–11, and the expansion six, ids 12–17:
+  library/` (the launch nine, ids 3–11; the expansion six, ids 12–17:
   Highland Terraces, Rooftops, Millpond, Pinball Palace, Asteroid Belt,
   Crossroads — every hole a fork with at least two real routes to the
-  cup); `library.ts` imports them and exports `LAUNCH`, `EXPANSION` and
-  `LIBRARY`. The small block/floor
+  cup; the worlds five, ids 18–22: Silver Screen (`cinema`), Skull Cove
+  (`pirate`), Main Stage (`music`), Ratz (`kitchen`, a de_rats-style
+  miniature), Safari Park (`zoo`) — each in its own theme with its own
+  props, every hole a vertical set piece); `library.ts` imports them and
+  exports `LAUNCH`, `EXPANSION`, `WORLDS` and `LIBRARY`.
+  Props: `Hole.props` is scenery (`prop(kind, x, y, rot?, s?)`, never
+  collides, stands at `groundZ` on the floor or on the lawn — keep it off
+  the playing line) and `Block.look` dresses a collidable block as the
+  same model fitted to its polygon's bounding box and `h` (`dress(block,
+  kind)`), so what is drawn is still exactly what collides. The forty
+  kinds are `PROP_KINDS` (courses.ts); the models are built from three.js
+  primitives in a unit box in `client/src/props3d.ts` (`buildProp`,
+  `PROP_SIZE` defaults), their materials shared across holes
+  (`userData.shared` — `disposeHole` skips them). render3d fits them in
+  `setHole` (`lookModel`); render.ts draws props as labelled footprint
+  discs in the editor only; mapformat validates both (`LIMITS.props`);
+  the editor has a Prop tool (click to place; the panel picks the model,
+  the gold knob turns it, the rim square scales it, Shift/Alt+wheel too)
+  and a Look menu on every wall block. `client/preview.html?showcase=1
+  &theme=zoo` lays every prop and a row of dressed blocks on one floor. The small block/floor
   builders both files share (`tri`, `low`, `corner`, `star`, `open` — a
   rail-less rect, `lowRail`, `pond` — water minus islands) live in
   `shared/pieces.ts` so the two course files never import each other.
@@ -154,9 +172,13 @@ README.md for architecture and run instructions. Key facts:
   (`themeMats`, built once per theme and never disposed with a hole),
   sand/water/slope tints and optional decor. `applySceneTheme` swaps the
   scene when the hole's `theme` changes (back to park when there is no
-  hole). A new theme is one record there + a `THEMES` palette in
-  render.ts + its name in `THEME_NAMES` (mapformat.ts) — the editor's
-  theme picker reads `THEME_NAMES`. `client/preview.html` (`src/preview.ts`)
+  hole). Eight themes: park / neon / space / cinema / pirate / music /
+  kitchen / zoo (`ThemeName` in courses.ts). A new theme is one record
+  there + a `THEMES` palette in render.ts + its name in `THEME_NAMES`
+  (mapformat.ts) + a `.course-art.<name>` gradient in index.html and the
+  class list in `renderCourseList` (main.ts) — the editor's theme picker
+  reads `THEME_NAMES`. A theme's `decor` may stand props round the hole
+  (`ringOfProps` in themes3d.ts). `client/preview.html` (`src/preview.ts`)
   shows any built-in hole on the 3D stage with no server running
   (`?course=Galaxy&hole=3&cam=play&look=1`) — use it (headless Chromium
   works) to check a theme or material change. Free look (`orbitLook`,

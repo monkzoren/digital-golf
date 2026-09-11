@@ -61,7 +61,7 @@ TypeScript three.js game with a built-in course editor.
   Late joiners drop straight onto the tee. Refreshing mid-round keeps your
   seat for 25 s. The host can only start once everyone in the lobby has
   readied up.
-- **Eighteen built-in courses, 164 holes.** Sunny Park (the tutorial), Neon
+- **Twenty-three built-in courses, 209 holes.** Sunny Park (the tutorial), Neon
   Orbit and Toy Box (one hole per gadget) show the pieces off; the launch
   library — Bank Shot Alley, Clockwork, Ramp Ridge, Machine Works, Frost &
   Flame, the championship Grand Tour, **Galaxy Road**, and the two corner
@@ -84,14 +84,41 @@ TypeScript three.js game with a built-in course editor.
   bumper field or the outlane (**Pinball Palace**), round the black hole
   or along the rim (**Asteroid Belt**), left lane or right lane
   (**Crossroads**) — and the hidden ace usually sits on the one nobody
-  takes first. Plus **unlimited player-made courses.**
+  takes first. The **worlds set** (five more courses, 45 holes) puts each
+  course in its own world with its own props and models, and builds every
+  hole as a vertical set piece: a premiere night at the movies (**Silver
+  Screen** — a red-carpet conveyor, projection-booth tunnels, a stepped
+  auditorium, a marquee roof), a buccaneers' island (**Skull Cove** — a
+  plank onto the galleon's deck, a cannon to the crow's nest, a kraken
+  windmill, a whirlpool, a sea cave), a festival stage (**Main Stage** —
+  piano-key platforms, trampoline drums, turntable spinners, a lighting
+  rig five units up), a kitchen at a mouse's height in the spirit of
+  de_rats (**Ratz** — book stairs, a sink lake with a drain, a mousetrap,
+  a toaster's jump pads, a soda-can tower, a drainpipe tunnel) and a zoo
+  (**Safari Park** — turnstile windmills, a penguin pool, monkey-bar
+  trampolines, an aviary of fans, the giraffe walk). Plus **unlimited
+  player-made courses.**
 - **Worlds, not just palettes.** A course (or any hole) picks a theme and
   the whole 3D scene follows it — sky and the light it casts, the ground
   (or none: space holes float), fog, felt, rails, blocks, what "sand" and
-  "water" are. Three ship: the park, a synthwave neon night over a gridded
-  plain, and deep space with nebulae, planets and a drifting star cloud.
-  Adding a fantastical world is one record in `client/src/themes3d.ts` plus
-  a 2D palette (`THEMES` in `render.ts`) and its name in `THEME_NAMES`.
+  "water" are. Eight ship: the park, a synthwave neon night over a gridded
+  plain, deep space with nebulae, planets and a drifting star cloud, a
+  studio lot on premiere night (searchlights, spotlight towers, cola for
+  water), a tropical cove at sunset (a beach for a lawn, palms, a jolly
+  roger flag), a festival at night (laser fans, a lit crowd, a speaker
+  ring), a kitchen seen from the lino (cupboards and a strip light for a
+  sky, checkerboard tiles, giant crockery) and a savanna zoo (acacias on
+  the skyline, animals round the paddock). Every world comes with
+  **props**: forty procedurally built 3D models — palms, barrels, treasure
+  chests, speaker stacks, drum kits, a cheese wedge, a mousetrap, a
+  giraffe, an elephant… — that a hole can stand round itself as scenery
+  (`props`) or wear as a solid piece (a block's `look`: the model is
+  fitted to the block's footprint and height, so it collides exactly as
+  drawn). The editor places props with the Prop tool and dresses any
+  wall block from its Look menu. Adding a world is one record in
+  `client/src/themes3d.ts` plus a 2D palette (`THEMES` in `render.ts`)
+  and its name in `THEME_NAMES`; a new prop is one builder in
+  `client/src/props3d.ts` plus its name in `PROP_KINDS`.
 - **Course editor.** Draw floors, walls, movers, surfaces and hazards on a
   grid, then shape them in place: grips on the selection resize, rotate,
   aim and stretch it (Shift+wheel turns, Alt+wheel raises), and every

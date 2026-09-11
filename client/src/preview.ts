@@ -8,7 +8,7 @@
 // free-look camera by that many radians. `?theme=space` overrides the hole's
 // theme; `pitch` tilts it. `?mode=2d` draws the editor's top-down view
 // instead. The page sets `window.previewReady` once the first frames are drawn.
-import { COURSES } from '@shared/courses';
+import { COURSES, PROP_KINDS, R, polyNgon, polyRect, type Hole } from '@shared/courses';
 import { LIBRARY } from '@shared/library';
 import { drawScene, initRenderer, orbitLook, type GolfScene } from './render3d';
 import { drawHole, fitCamera, themeFor } from './render';
@@ -17,7 +17,15 @@ const q = new URLSearchParams(location.search);
 const all = [...COURSES, ...LIBRARY];
 const want = (q.get('course') ?? 'Galaxy').toLowerCase();
 const course = all.find(c => c.name.toLowerCase().includes(want)) ?? all[0];
-const hole = { ...course.holes[Math.max(0, Math.min(course.holes.length - 1, Number(q.get('hole') ?? 1) - 1))] };
+/** `?showcase=1`: a synthetic hole with every prop kind in a grid on the
+ *  lawn and a row of dressed blocks on the felt — for checking the models. */
+function showcase(): Hole {
+  const props = PROP_KINDS.map((kind, i) => ({ kind, x: 6 + (i % 10) * 10, y: 7 + Math.floor(i / 10) * 11, rot: 90 }));
+  const looks = ['crate', 'barrel', 'speaker', 'book', 'can', 'cheese', 'seats', 'cage', 'chest', 'drum', 'amp', 'mug'];
+  const blocks = looks.map((look, i) => ({ ...(i % 2 ? { pts: polyNgon(8 + i * 8, 51, 1.4, 12) } : polyRect(6.5 + i * 8, 49.5, 3, 3)), h: 1.6, look }));
+  return { name: 'Showcase', par: 2, tee: { x: 4, y: 56 }, cup: { x: 100, y: 56 }, floor: [R(0, 0, 104, 60)], blocks, props };
+}
+const hole = q.get('showcase') ? showcase() : { ...course.holes[Math.max(0, Math.min(course.holes.length - 1, Number(q.get('hole') ?? 1) - 1))] };
 hole.theme = q.get('theme') ?? hole.theme ?? course.theme;
 const cam = (q.get('cam') ?? 'play') as GolfScene['cam'];
 const look = Number(q.get('look') ?? 0);

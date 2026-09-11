@@ -3,8 +3,8 @@
 // stage with the SAME physics the server runs, and save/publish. Everything
 // here is local until Save.
 import {
-  type Block, type Bumper, type Hole, type Rect, type Zone, type ZoneKind,
-  TUNNEL_LID, TUNNEL_MIN_CLEAR, WALL_H, barPts, holeBounds, pointInFloor, pointInPoly, pointInRect, rectPts, tunnelLevel, windmillPts,
+  type Block, type Bumper, type Hole, type Prop, type Rect, type Zone, type ZoneKind,
+  PROP_KINDS, TUNNEL_LID, TUNNEL_MIN_CLEAR, WALL_H, barPts, holeBounds, pointInFloor, pointInPoly, pointInRect, rectPts, tunnelLevel, windmillPts,
 } from '@shared/courses';
 import { cleanHole, LIMITS, THEME_NAMES } from '@shared/mapformat';
 import {
@@ -33,11 +33,11 @@ export interface EditorOpts {
 
 type Tool =
   | 'select' | 'pan' | 'swing' | 'floor' | 'block' | 'lowblock' | 'tri' | 'windmill' | 'slider' | 'pendulum' | 'laser' | 'rubber'
-  | 'bumper' | 'post' | 'tee' | 'cup' | ZoneKind;
+  | 'bumper' | 'post' | 'tee' | 'cup' | 'prop' | ZoneKind;
 
 type Sel =
   | { kind: 'floor'; i: number } | { kind: 'block'; i: number } | { kind: 'zone'; i: number }
-  | { kind: 'bumper'; i: number } | { kind: 'tee' } | { kind: 'cup' } | { kind: 'teleExit'; i: number } | null;
+  | { kind: 'bumper'; i: number } | { kind: 'tee' } | { kind: 'cup' } | { kind: 'teleExit'; i: number } | { kind: 'prop'; i: number } | null;
 
 const TOOL_DEFS: { id: Tool; label: string; color: string; group: string; hint: string; key?: string }[] = [
   { id: 'select', label: 'Select / move', color: '#fff', group: 'Tools', hint: 'Click to select · drag to move · grips resize, knobs turn · Shift+wheel turns · Alt+wheel raises · Del removes' },
@@ -71,7 +71,10 @@ const TOOL_DEFS: { id: Tool; label: string; color: string; group: string; hint: 
   { id: 'magnet', label: 'Magnet', color: '#ff5fb8', group: 'Toy box', hint: 'Drag a field that pulls (or pushes) the ball' },
   { id: 'cannon', label: 'Cannon', color: '#3a3f4a', group: 'Toy box', hint: 'Drag a cannon; roll in, then aim and fire a lofted shot' },
   { id: 'gravity', label: 'Gravity field', color: '#b39cff', group: 'Toy box', hint: 'Drag a field that pulls the ball one way — rolling or flying' },
+  { id: 'prop', label: 'Prop (scenery)', color: '#9fd39f', group: 'Scenery', hint: 'Click to stand a themed model there — a palm, a speaker, a giraffe… Scenery only: it never collides, so keep it off the playing line' },
 ];
+/** the prop kind the Prop tool places next (the last one chosen in the panel) */
+let propKind: string = 'tree';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v));
@@ -325,6 +328,7 @@ function blockName(b: Block): { name: string; tool: Tool } {
   if (b.motion?.type === 'slide') return { name: 'Slider', tool: 'slider' };
   if ((b.bounce ?? 1) > 1) return { name: 'Rubber wall', tool: 'rubber' };
   if (b.gen?.kind === 'tri') return { name: 'Triangle', tool: 'tri' };
+  if (b.look) return { name: `${b.look[0].toUpperCase()}${b.look.slice(1)} (block)`, tool: 'block' };
   if (b.h !== undefined && b.h < WALL_H) return { name: 'Low wall', tool: 'lowblock' };
   return { name: b.motion?.type === 'rotate' ? 'Rotating block' : 'Wall block', tool: 'block' };
 }
@@ -358,11 +362,16 @@ function outlineRows(h: Hole): { group: string; rows: OutlineRow[] }[] {
     sel: { kind: 'bumper', i }, name: b.kick > 0 ? 'Bumper' : 'Post', dim: `r ${round1(b.r)}`, color: toolColor(b.kick > 0 ? 'bumper' : 'post'),
     cx: b.x, cy: b.y, floorHit: floorHitOf(h, [[b.x, b.y]]),
   }));
+  const props: OutlineRow[] = (h.props ?? []).map((p, i) => ({
+    sel: { kind: 'prop', i }, name: p.kind, dim: p.s && p.s !== 1 ? `×${round1(p.s)}` : '', color: toolColor('prop'),
+    cx: p.x, cy: p.y, floorHit: 'na',
+  }));
   return [
     { group: 'Layout', rows: [...layout, ...floors] },
     { group: 'Zones', rows: zones },
     { group: 'Blocks', rows: blocks },
     { group: 'Bumpers', rows: bumpers },
+    { group: 'Scenery', rows: props },
   ];
 }
 let outlineSig = '';
@@ -474,6 +483,14 @@ function onDown(e: PointerEvent) {
       if (h.bumpers.length >= LIMITS.bumpers) { toast('Too many bumpers', true); return; }
       h.bumpers.push({ x: sx, y: sy, r: tool === 'bumper' ? 1.1 : 0.8, kick: tool === 'bumper' ? 9 : 0 });
       sel = { kind: 'bumper', i: h.bumpers.length - 1 }; tool = 'select'; buildTools(); renderProps();
+      return;
+    }
+    case 'prop': {
+      pushUndo();
+      h.props ??= [];
+      if (h.props.length >= LIMITS.props) { toast('Too many props', true); return; }
+      h.props.push({ kind: propKind, x: sx, y: sy });
+      sel = { kind: 'prop', i: h.props.length - 1 }; tool = 'select'; buildTools(); renderProps();
       return;
     }
     case 'windmill': {
@@ -608,7 +625,9 @@ type Handle =
   | { kind: 'bcorner'; i: number } // rect block corner in its own rotated frame (opposite corner stays put)
   | { kind: 'rotate' }            // rect block: the knob above its top edge
   | { kind: 'len' }               // windmill / pendulum arm tip
-  | { kind: 'travel'; sign: 1 | -1 }; // sliding block: either end of its travel
+  | { kind: 'travel'; sign: 1 | -1 } // sliding block: either end of its travel
+  | { kind: 'facing' } // prop: the knob it faces
+  | { kind: 'scale' }; // prop: the square on its footprint rim
 interface Grip { h: Handle; x: number; y: number; shape: 'square' | 'knob'; cursor: string }
 const norm360 = (a: number) => ((a % 360) + 360) % 360;
 const norm180 = (a: number) => norm360(a + 180) - 180;
@@ -634,6 +653,11 @@ function gripsOf(h: Hole, s: Sel): Grip[] {
   } else if (s.kind === 'bumper') {
     const b = h.bumpers![s.i];
     out.push({ h: { kind: 'radius' }, x: b.x + b.r, y: b.y, shape: 'square', cursor: 'ew-resize' });
+  } else if (s.kind === 'prop') {
+    const p = h.props![s.i];
+    const r = 1.1 * (p.s ?? 1), a = rad(p.rot ?? 0);
+    out.push({ h: { kind: 'facing' }, x: p.x + Math.cos(a) * (r + reach), y: p.y + Math.sin(a) * (r + reach), shape: 'knob', cursor: 'grab' });
+    out.push({ h: { kind: 'scale' }, x: p.x + Math.cos(a + Math.PI / 2) * r, y: p.y + Math.sin(a + Math.PI / 2) * r, shape: 'square', cursor: 'nesw-resize' });
   } else if (s.kind === 'block') {
     const b = h.blocks![s.i];
     const g = b.gen;
@@ -713,6 +737,10 @@ function dragGrip(h: Hole, o: Hole, s: Sel, gp: Handle, w: { x: number; y: numbe
   } else if (s.kind === 'bumper' && gp.kind === 'radius') {
     const b = h.bumpers![s.i];
     b.r = Math.max(0.3, Math.min(6, Math.round(Math.hypot(w.x - b.x, w.y - b.y) * 10) / 10));
+  } else if (s.kind === 'prop') {
+    const p = h.props![s.i];
+    if (gp.kind === 'facing') setPropRot(p, snapDeg((Math.atan2(w.y - p.y, w.x - p.x) * 180) / Math.PI));
+    else if (gp.kind === 'scale') setPropScale(p, Math.hypot(w.x - p.x, w.y - p.y) / 1.1);
   } else if (s.kind === 'block') {
     const b = h.blocks![s.i], b0 = o.blocks![s.i];
     const g = b.gen, g0 = b0.gen;
@@ -778,9 +806,21 @@ function wheelAdjust(e: WheelEvent): boolean {
   } else if (sel.kind === 'bumper' && e.altKey) {
     const b = h.bumpers![sel.i];
     adjust(() => { b.r = Math.max(0.3, Math.min(6, Math.round((b.r + 0.1 * d) * 10) / 10)); });
+  } else if (sel.kind === 'prop') {
+    const p = h.props![sel.i];
+    if (e.shiftKey) adjust(() => { setPropRot(p, (p.rot ?? 0) + 5 * d); });
+    else adjust(() => { setPropScale(p, (p.s ?? 1) + 0.1 * d); });
   }
   if (did) settleGesture();
   return did;
+}
+function setPropRot(p: Prop, deg: number) {
+  const r = norm360(Math.round(deg * 100) / 100);
+  if (r) p.rot = r; else delete p.rot;
+}
+function setPropScale(p: Prop, v: number) {
+  const sc = Math.max(0.2, Math.min(6, Math.round(v * 20) / 20));
+  if (Math.abs(sc - 1) < 1e-6) delete p.s; else p.s = sc;
 }
 function setBlockHeight(b: Block, v: number) {
   if (Math.abs(v - WALL_H) < 1e-6) delete b.h; else b.h = Math.max(0.1, Math.min(50, v));
@@ -806,6 +846,8 @@ function pick(w: { x: number; y: number }): Sel {
   }
   const bs = h.bumpers ?? [];
   for (let i = bs.length - 1; i >= 0; i--) if (Math.hypot(bs[i].x - w.x, bs[i].y - w.y) < bs[i].r + tol) return { kind: 'bumper', i };
+  const ps = h.props ?? [];
+  for (let i = ps.length - 1; i >= 0; i--) if (Math.hypot(ps[i].x - w.x, ps[i].y - w.y) < 1.1 * (ps[i].s ?? 1) + tol) return { kind: 'prop', i };
   const bl = h.blocks ?? [];
   for (let i = bl.length - 1; i >= 0; i--) {
     const b = bl[i];
@@ -830,6 +872,7 @@ function moved(orig: Hole, s: Sel, dx: number, dy: number): Hole {
     case 'zone': h.zones![s.i].x += dx; h.zones![s.i].y += dy; if (h.zones![s.i].tx !== undefined) { h.zones![s.i].tx! += dx; h.zones![s.i].ty! += dy; } break;
     case 'teleExit': h.zones![s.i].tx! += dx; h.zones![s.i].ty! += dy; break;
     case 'bumper': h.bumpers![s.i].x += dx; h.bumpers![s.i].y += dy; break;
+    case 'prop': h.props![s.i].x += dx; h.props![s.i].y += dy; break;
     case 'block': {
       const b = h.blocks![s.i];
       for (let i = 0; i < b.pts.length; i += 2) { b.pts[i] += dx; b.pts[i + 1] += dy; }
@@ -848,6 +891,7 @@ function deleteSel() {
     case 'floor': if (h.floor.length > 1) h.floor.splice(sel.i, 1); else toast('A hole needs at least one floor', true); break;
     case 'zone': case 'teleExit': h.zones!.splice(sel.i, 1); break;
     case 'bumper': h.bumpers!.splice(sel.i, 1); break;
+    case 'prop': h.props!.splice(sel.i, 1); break;
     case 'block': h.blocks!.splice(sel.i, 1); break;
     default: toast('Move the tee/cup instead of deleting it'); break;
   }
@@ -900,6 +944,7 @@ function duplicateSel() {
   if (sel.kind === 'floor') { h.floor.push({ ...h.floor[sel.i], x: h.floor[sel.i].x + off, y: h.floor[sel.i].y + off }); sel = { kind: 'floor', i: h.floor.length - 1 }; }
   else if (sel.kind === 'zone' || sel.kind === 'teleExit') { const z = clone(h.zones![sel.i]); z.x += off; z.y += off; if (z.tx !== undefined) { z.tx += off; z.ty! += off; } h.zones!.push(z); sel = { kind: 'zone', i: h.zones!.length - 1 }; }
   else if (sel.kind === 'bumper') { h.bumpers!.push({ ...h.bumpers![sel.i], x: h.bumpers![sel.i].x + off, y: h.bumpers![sel.i].y + off }); sel = { kind: 'bumper', i: h.bumpers!.length - 1 }; }
+  else if (sel.kind === 'prop') { h.props!.push({ ...h.props![sel.i], x: h.props![sel.i].x + off, y: h.props![sel.i].y + off }); sel = { kind: 'prop', i: h.props!.length - 1 }; }
   else if (sel.kind === 'block') { const tmp = moved({ ...h, blocks: [h.blocks![sel.i]] }, { kind: 'block', i: 0 }, off, off); h.blocks!.push(tmp.blocks![0]); sel = { kind: 'block', i: h.blocks!.length - 1 }; }
   renderProps();
 }
@@ -1109,6 +1154,15 @@ function renderPropsInto(el: HTMLElement) {
     bind('p-tx', v => { z.tx = v; }); bind('p-ty', v => { z.ty = v; });
     return;
   }
+  if (s.kind === 'prop') {
+    const p = h.props![s.i];
+    const kinds = PROP_KINDS.map(k => `<option value="${k}"${p.kind === k ? ' selected' : ''}>${k}</option>`).join('');
+    el.innerHTML = `<h3>PROP · ${esc(p.kind.toUpperCase())}</h3>${field('Model', `<select id="p-kind">${kinds}</select>`)}<div class="grid2">${field('X', posIn('p-x', p.x, 'x'))}${field('Y', posIn('p-y', p.y, 'y'))}</div><div class="grid2">${field('Facing °', numIn('p-rot', p.rot ?? 0, 5, 0, 360))}${field('Scale ×', numIn('p-s', p.s ?? 1, 0.05, 0.2, 6, [0.2, 3]))}</div><div class="tiny">Scenery only — the ball rolls straight through it, so stand it beside the course, not on the line. The gold knob turns it, the square on its rim scales it (Shift+wheel / Alt+wheel too). For a solid themed piece make a wall block and give it a Look.</div>${delBtn}`;
+    ($('p-kind') as HTMLSelectElement).onchange = e => { pushUndo(); p.kind = (e.target as HTMLSelectElement).value; propKind = p.kind; renderProps(); };
+    bind('p-x', v => { p.x = v; }); bind('p-y', v => { p.y = v; }); bind('p-rot', v => { setPropRot(p, v); }); bind('p-s', v => { setPropScale(p, v); });
+    $('p-delete').onclick = deleteSel; $('p-duplicate').onclick = duplicateSel;
+    return;
+  }
   if (s.kind === 'bumper') {
     const b = h.bumpers![s.i];
     el.innerHTML = `<h3>${b.kick > 0 ? 'BUMPER' : 'POST'}</h3><div class="grid2">${field('X', posIn('p-x', b.x, 'x'))}${field('Y', posIn('p-y', b.y, 'y'))}</div>${field('Radius', numIn('p-r', b.r, 0.1, 0.3, 6))}${field('Kick (0 = passive post)', numIn('p-kick', b.kick, 1, 0, 25))}<div class="tiny">Drag the grip on its rim to resize · Alt+wheel too.</div>${delBtn}`;
@@ -1137,7 +1191,13 @@ function renderPropsInto(el: HTMLElement) {
     if (b.motion?.type === 'blink') html += `<div class="grid2">${field('Period (s)', numIn('p-period', b.motion.period, 0.5, 0.5, 30, [0.5, 12]))}${field('On for (0–1 of period)', numIn('p-duty', b.motion.duty, 0.05, 0.1, 0.9))}</div>${field('Phase (0–1)', numIn('p-phase', b.motion.phase ?? 0, 0.05, 0, 1))}<div class="tiny">Solid while lit. A ball caught inside when it lights up is reset.</div>`;
     html += field('Bounce (1 = wall · 2 = rubber · 0.5 = dead)', numIn('p-bounce', b.bounce ?? 1, 0.05, 0.2, 2.5));
     html += field(`Height (${WALL_H} = a standard wall; a ball higher than this flies over)`, numIn('p-hgt', b.h ?? WALL_H, 0.1, 0.1, 50, [0.1, 6]));
+    if (b.motion?.type !== 'blink') {
+      html += field('Look (a themed model drawn in the block\'s place)', `<select id="p-look"><option value=""${b.look ? '' : ' selected'}>plain wall</option>${PROP_KINDS.map(k => `<option value="${k}"${b.look === k ? ' selected' : ''}>${k}</option>`).join('')}</select>`);
+      html += '<div class="tiny">The model is fitted to the block\'s footprint and height, so it collides exactly as drawn. Round looks (barrel, can, drum, mug, reel, cymbal) suit a square block; box looks (crate, chest, speaker, amp, book, seats, cage, keys…) any rectangle.</div>';
+    }
     el.innerHTML = html + delBtn;
+    const lookSel = document.getElementById('p-look') as HTMLSelectElement | null;
+    if (lookSel) lookSel.onchange = e => { pushUndo(); const v = (e.target as HTMLSelectElement).value; if (v) b.look = v; else delete b.look; renderProps(); };
     const ox = pivot ? pivot.cx : c.x, oy = pivot ? pivot.cy : c.y;
     bind('p-cx', v => { holes[cur] = moved(h, s, v - ox, 0); });
     bind('p-cy', v => { holes[cur] = moved(h, s, 0, v - oy); });
@@ -1640,6 +1700,7 @@ function selectedObject(): unknown {
   if (!sel) return undefined;
   if (sel.kind === 'block') return h.blocks?.[sel.i];
   if (sel.kind === 'zone' || sel.kind === 'teleExit') return h.zones?.[sel.i];
+  if (sel.kind === 'prop') return h.props?.[sel.i];
   return undefined;
 }
 
@@ -1653,6 +1714,7 @@ function drawSelection(g: CanvasRenderingContext2D, h: Hole) {
     case 'tee': ring(h.tee.x, h.tee.y, 1.2); break;
     case 'cup': ring(h.cup.x, h.cup.y, 1.1); break;
     case 'bumper': { const b: Bumper = h.bumpers![sel.i]; ring(b.x, b.y, b.r + 0.3); break; }
+    case 'prop': { const p = h.props![sel.i]; ring(p.x, p.y, 1.1 * (p.s ?? 1) + 0.3); break; }
     case 'floor': { const r = h.floor[sel.i]; const p = P(r.x, r.y); g.strokeRect(p.x, p.y, r.w * cam.scale, r.h * cam.scale); break; }
     case 'zone': {
       const z = h.zones![sel.i]; const p = P(z.x, z.y); g.strokeRect(p.x, p.y, z.w * cam.scale, z.h * cam.scale);

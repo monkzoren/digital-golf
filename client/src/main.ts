@@ -800,7 +800,7 @@ function renderCourseGrid(force = false) {
       const first = holeRows(c.id)[0];
       const h0 = first ? parsedHole(first) : null;
       if (h0) {
-        art.classList.toggle('neon', h0.theme === 'neon'); art.classList.toggle('space', h0.theme === 'space');
+        for (const t of ['neon', 'space', 'cinema', 'pirate', 'music', 'kitchen', 'zoo']) art.classList.toggle(t, h0.theme === t);
         const cv = document.createElement('canvas'); drawThumb(cv, h0, 192, 100); art.prepend(cv); art.classList.add('has-art');
       }
     }

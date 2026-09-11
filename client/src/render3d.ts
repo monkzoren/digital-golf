@@ -13,6 +13,7 @@ import type { Hole, Zone, Block, Rect } from '@shared/courses';
 import { TUNNEL_LID, WALL_H, floorWalls, floorZ, holeBounds, motionAngle, moverActive, pointInFloor, rampFrac, tunnelBores, tunnelLevel } from '@shared/courses';
 import { BALL_R, CUP_R, baseOf, geomOf, groundZ, rampAt, rampGrade, rampRise, zonePower } from '@shared/physics';
 import { sceneThemeFor, texHash, type MatSpec, type SceneTheme } from './themes3d';
+import { buildProp, PROP_SIZE } from './props3d';
 
 // ---------------------------------------------------------------------------
 // Real-3D Virtua Tennis-style renderer (Three.js / WebGL), inherited from
@@ -2861,6 +2862,19 @@ function conveyorMesh(z: Zone, cx: number, cz: number, topMat: THREE.MeshStandar
   return root;
 }
 
+/** A dressed block: the themed model (`Block.look`) fitted to the polygon's
+ *  bounding box and the block's height — exactly the space it collides in.
+ *  Null when the look is unknown (the caller extrudes the plain block). */
+function lookModel(pts: number[], look: string, ox: number, oy: number, height: number): THREE.Group | null {
+  const model = buildProp(look);
+  if (!model) return null;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (let i = 0; i < pts.length; i += 2) { x0 = Math.min(x0, pts[i]); x1 = Math.max(x1, pts[i]); y0 = Math.min(y0, pts[i + 1]); y1 = Math.max(y1, pts[i + 1]); }
+  model.scale.set(Math.max(0.2, x1 - x0), height, Math.max(0.2, y1 - y0));
+  model.position.set((x0 + x1) / 2 - ox, 0, (y0 + y1) / 2 - oy);
+  return model;
+}
+
 function extrudedBlock(pts: number[], ox: number, oy: number, height: number, mat: THREE.Material): THREE.Mesh {
   const geo = new THREE.ExtrudeGeometry(shapeFromPts(pts, ox, oy), {
     depth: height, bevelEnabled: true, bevelThickness: 0.06, bevelSize: 0.05, bevelOffset: -0.05, bevelSegments: 2,
@@ -3058,7 +3072,7 @@ function disposeHole() {
     mesh.geometry?.dispose();
     const mats = (Array.isArray(mesh.material) ? mesh.material : [mesh.material]) as (THREE.Material & { map?: THREE.Texture | null; normalMap?: THREE.Texture | null; alphaMap?: THREE.Texture | null })[];
     for (const mat of mats) {
-      if (!mat || themeOwned.has(mat) || [...STOCK_MATS, BUMPER_MAT, POST_MAT, CUP_MAT].includes(mat as any)) continue; // shared, lives on
+      if (!mat || themeOwned.has(mat) || mat.userData?.shared || [...STOCK_MATS, BUMPER_MAT, POST_MAT, CUP_MAT].includes(mat as any)) continue; // shared, lives on
       mat.map?.dispose();
       mat.normalMap?.dispose(); // per-zone clones of the tiling normals
       mat.alphaMap?.dispose();
@@ -3181,7 +3195,7 @@ function setHole(hole: Hole) {
     const mat = rubber ? RUBBER_MAT : low ? WALL_LOW_MAT : BLOCK_MAT;
     const bz = baseOf(geom, bl);
     if (!bl.motion) {
-      const m = extrudedBlock(bl.pts, holeCX, holeCY, height, mat);
+      const m = (bl.look && lookModel(bl.pts, bl.look, holeCX, holeCY, height)) || extrudedBlock(bl.pts, holeCX, holeCY, height, mat);
       m.position.y = FLOOR_Y + bz;
       holeGroup.add(m);
       continue;
@@ -3192,7 +3206,8 @@ function setHole(hole: Hole) {
     const group = new THREE.Group();
     group.position.set(px - holeCX, FLOOR_Y + bz, py - holeCY);
     const laser = bl.motion.type === 'blink';
-    const body = extrudedBlock(bl.pts, px, py, laser ? height * 1.3 : height, laser ? LASER_ON_MAT : mat);
+    const dressed = !laser && bl.look ? lookModel(bl.pts, bl.look, px, py, height) : null;
+    const body = dressed ?? extrudedBlock(bl.pts, px, py, laser ? height * 1.3 : height, laser ? LASER_ON_MAT : mat);
     if (laser) { body.castShadow = false; body.receiveShadow = false; }
     group.add(body);
     if (bl.hub && (bl.motion.type === 'rotate' || bl.motion.type === 'swing')) {
@@ -3202,7 +3217,7 @@ function setHole(hole: Hole) {
       group.add(hub);
     }
     holeGroup.add(group);
-    movers.push({ block: bl, group, pivotX: px, pivotY: py, baseZ: bz, mesh: laser ? body : undefined });
+    movers.push({ block: bl, group, pivotX: px, pivotY: py, baseZ: bz, mesh: laser ? (body as THREE.Mesh) : undefined });
   }
   // zones
   (hole.zones ?? []).forEach((z, i) => {
@@ -3340,6 +3355,19 @@ function setHole(hole: Hole) {
       ring.position.set(bp.x - holeCX, by + h + 0.02, bp.y - holeCY);
       holeGroup.add(ring);
     }
+  }
+  // props: scenery models standing on whatever is under them (a slab, a
+  // platform, the lawn); they never collide
+  for (const p of hole.props ?? []) {
+    const model = buildProp(p.kind);
+    if (!model) continue;
+    const size = PROP_SIZE[p.kind as keyof typeof PROP_SIZE] ?? [2, 2, 2];
+    const k = p.s ?? 1;
+    model.scale.set(size[0] * k, size[1] * k, size[2] * k);
+    const onFloor = pointInFloor(p.x, p.y, hole);
+    model.position.set(p.x - holeCX, onFloor ? FLOOR_Y + groundZ(geom, p.x, p.y) : 0, p.y - holeCY);
+    model.rotation.y = -((p.rot ?? 0) * Math.PI) / 180;
+    holeGroup.add(model);
   }
   // cup + flag
   {

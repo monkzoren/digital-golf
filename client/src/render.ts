@@ -54,6 +54,56 @@ export const THEMES: Record<string, Theme> = {
     ...TOYS,
     cup: '#000000', flag: '#ffd60a',
   },
+  // premiere night: red carpet felt, brass rails, black lacquer blocks, popcorn sand, cola water
+  cinema: {
+    bg: '#120818', bgLine: 'rgba(255,200,120,0.05)',
+    felt: '#8a1424', feltStripe: 'rgba(255,255,255,0.05)', feltEdge: '#5a0c18',
+    wallTop: '#d8b04a', wallSide: '#7a6020', wallLow: '#a83a4a',
+    sand: '#f3e2a8', ice: '#dff6ff', water: '#4a2610', waterDeep: '#150801', slope: 'rgba(255,255,255,0.1)',
+    boost: '#ff8a3d', jump: '#ffd60a', tele: '#c77dff', bumper: '#ff4b4b', post: '#e8e0c8',
+    ...TOYS,
+    cup: '#000000', flag: '#ffd35a',
+  },
+  // the cove: island turf, tarred oak, beach sand, turquoise sea
+  pirate: {
+    bg: '#0a3a44', bgLine: 'rgba(255,255,255,0.04)',
+    felt: '#5f9e4a', feltStripe: 'rgba(255,255,200,0.06)', feltEdge: '#3d7a34',
+    wallTop: '#8a6a4a', wallSide: '#4a3020', wallLow: '#d8c49a',
+    sand: '#e6cf98', ice: '#dff6ff', water: '#2fb8c8', waterDeep: '#0e5f80', slope: 'rgba(0,0,0,0.12)',
+    boost: '#ff8a3d', jump: '#ffd60a', tele: '#c77dff', bumper: '#ff4b4b', post: '#6a4a2a',
+    ...TOYS,
+    cup: '#0b1a10', flag: '#111114',
+  },
+  // the main stage: dark boards, chrome truss, glowing speaker blocks, confetti sand
+  music: {
+    bg: '#0c0620', bgLine: 'rgba(255,61,154,0.06)',
+    felt: '#2a2140', feltStripe: 'rgba(255,255,255,0.05)', feltEdge: '#1a1230',
+    wallTop: '#9aa3ad', wallSide: '#4a505a', wallLow: '#e0b23a',
+    sand: '#e6d8ff', ice: '#dff6ff', water: '#6a2ad8', waterDeep: '#1e0a5a', slope: 'rgba(255,255,255,0.08)',
+    boost: '#ff8a3d', jump: '#ffe94b', tele: '#ff5fb8', bumper: '#ff3d3d', post: '#c0c8d8',
+    ...TOYS,
+    cup: '#05051a', flag: '#ff3d9a',
+  },
+  // the kitchen at a mouse's height: a woven placemat, chrome rails, tabletop blocks, sugar sand, dishwater
+  kitchen: {
+    bg: '#3d7b7e', bgLine: 'rgba(255,255,255,0.06)',
+    felt: '#3f9a8a', feltStripe: 'rgba(255,250,230,0.08)', feltEdge: '#2a7a6a',
+    wallTop: '#d8dde4', wallSide: '#7a8088', wallLow: '#c8a878',
+    sand: '#f7f2ea', ice: '#dff6ff', water: '#8ad0e8', waterDeep: '#4a90b0', slope: 'rgba(0,0,0,0.1)',
+    boost: '#ff8a3d', jump: '#ffd60a', tele: '#c77dff', bumper: '#ff4b4b', post: '#8d99b5',
+    ...TOYS,
+    cup: '#0b1a10', flag: '#e0342a',
+  },
+  // the zoo: green felt, painted iron rails, stone blocks, picket low walls, dirt sand
+  zoo: {
+    bg: '#4a5a2a', bgLine: 'rgba(255,255,255,0.04)',
+    felt: '#3fae4f', feltStripe: 'rgba(255,255,255,0.05)', feltEdge: '#2b8a3a',
+    wallTop: '#2e6b3a', wallSide: '#1a4022', wallLow: '#c9a46b',
+    sand: '#c8a070', ice: '#dff6ff', water: '#3a9a8a', waterDeep: '#1a5a50', slope: 'rgba(0,0,0,0.12)',
+    boost: '#ff8a3d', jump: '#ffd60a', tele: '#c77dff', bumper: '#ff4b4b', post: '#8d99b5',
+    ...TOYS,
+    cup: '#0b1a10', flag: '#ff8a2a',
+  },
 };
 
 export function themeFor(hole: Hole, hint?: string): Theme {
@@ -362,6 +412,34 @@ export function drawHole(g: CanvasRenderingContext2D, hole: Hole, cam: Camera, W
       g.fill();
     }
     if (o.editor && o.selected === bl) highlightPoly(g, pts, cam, W, H);
+  }
+  // props: scenery, drawn as footprint discs with the kind's name so the
+  // editor can see and pick them (they never collide, so nothing else
+  // needs them). Thumbnails skip them.
+  if (o.editor) {
+    for (const p of hole.props ?? []) {
+      const c = w2s(cam, W, H, p.x, p.y);
+      const r = Math.max(6, 1.1 * (p.s ?? 1) * s);
+      const a = ((p.rot ?? 0) * Math.PI) / 180;
+      g.beginPath();
+      g.arc(c.x, c.y, r, 0, Math.PI * 2);
+      g.fillStyle = 'rgba(255,255,255,0.14)';
+      g.fill();
+      g.strokeStyle = o.selected === p ? '#a4ff3d' : 'rgba(255,255,255,0.7)';
+      g.lineWidth = o.selected === p ? 2 : 1;
+      g.setLineDash([3, 3]);
+      g.stroke();
+      g.setLineDash([]);
+      g.beginPath();
+      g.moveTo(c.x, c.y);
+      g.lineTo(c.x + Math.cos(a) * r, c.y + Math.sin(a) * r);
+      g.stroke();
+      g.fillStyle = '#ffffff';
+      g.font = `${Math.max(9, Math.min(13, 0.55 * s))}px system-ui, sans-serif`;
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillText(p.kind, c.x, c.y - r - 7);
+    }
   }
 }
 
